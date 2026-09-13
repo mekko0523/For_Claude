@@ -1,0 +1,58 @@
+name: FC27 Discord Notifier
+
+on:
+  schedule:
+    # Time trigger — edit this cron expression to change how often sources
+    # are checked. Default: every 3 hours. (Cron is evaluated in UTC.)
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (fetch + log only, no Discord post)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fc27-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run notifier
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m fc27_notifier.main --dry-run
+          else
+            python -m fc27_notifier.main
+          fi
+
+      - name: Persist seen-items state
+        run: |
+          if ! git diff --quiet -- data/seen_state.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data/seen_state.json
+            git commit -m "chore: update FC27 notifier state [skip ci]"
+            git push
+          else
+            echo "No state changes to commit."
+          fi
