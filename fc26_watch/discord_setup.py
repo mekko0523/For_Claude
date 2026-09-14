@@ -50,6 +50,7 @@ CHANNEL_TYPE_VOICE = 2
 CHANNEL_TYPE_CATEGORY = 4
 PERMISSION_SEND_MESSAGES = 1 << 11
 PERMISSION_MANAGE_CHANNELS = 1 << 4
+PERMISSION_MANAGE_ROLES = 1 << 28
 OVERWRITE_TYPE_ROLE = 0
 OVERWRITE_TYPE_MEMBER = 1
 
@@ -155,6 +156,17 @@ def _get_or_create_role(
 
 def setup_console_roles(guild_id: str) -> dict[str, str]:
     """Creates the self-selectable console roles. Returns {console name: role id}."""
+    bot_user_id = _get_bot_user_id()
+    bot_permissions = _bot_guild_permissions(guild_id, bot_user_id)
+    if not bot_permissions & PERMISSION_MANAGE_ROLES:
+        raise SystemExit(
+            "Bot lacks 'Manage Roles' at the server level, required to create the console "
+            "roles (this is separate from 'Manage Channels'). In Discord: Server Settings "
+            "> Roles > select the bot's role > enable 'Manage Roles', then re-run this "
+            "workflow. Note: the bot's role must also be positioned above any role it "
+            "creates/edits in the role list for this to work."
+        )
+
     existing_roles = _fetch_existing_roles(guild_id)
     return {
         name: _get_or_create_role(name, color, emoji, existing_roles, guild_id)
@@ -247,7 +259,7 @@ def setup_server(guild_id: str) -> dict[str, str]:
         bot_permissions,
         bool(bot_permissions & PERMISSION_SEND_MESSAGES),
         bool(bot_permissions & PERMISSION_MANAGE_CHANNELS),
-        bool(bot_permissions & (1 << 28)),
+        bool(bot_permissions & PERMISSION_MANAGE_ROLES),
         bool(bot_permissions & (1 << 3)),
     )
     if not bot_permissions & PERMISSION_SEND_MESSAGES:
