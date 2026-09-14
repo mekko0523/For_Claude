@@ -141,20 +141,20 @@ def _get_or_create_channel(
 ) -> str:
     for ch in existing:
         if ch["type"] == channel_type and ch["name"] == name and ch.get("parent_id") == parent_id:
-            patch: dict = {}
-            if topic is not None and channel_type != CHANNEL_TYPE_VOICE and ch.get("topic") != topic:
-                patch["topic"] = topic
             if permission_overwrites is not None and ch.get("permission_overwrites") != permission_overwrites:
-                log.info(
-                    "Channel %s current overwrites: %s -- desired: %s",
-                    name,
-                    ch.get("permission_overwrites"),
-                    permission_overwrites,
-                )
-                patch["permission_overwrites"] = permission_overwrites
-            if patch:
-                _request("PATCH", f"/channels/{ch['id']}", json=patch)
-                log.info("Updated channel: %s", name)
+                # Discord requires the MANAGE_ROLES permission to PATCH
+                # permission_overwrites on an existing channel (unlike
+                # creating a channel with them, which only needs
+                # MANAGE_CHANNELS). Delete and recreate instead of asking
+                # for a broader grant just for this.
+                log.info("Recreating channel %s to update its permission overwrites", name)
+                _request("DELETE", f"/channels/{ch['id']}")
+                existing.remove(ch)
+                break
+
+            if topic is not None and channel_type != CHANNEL_TYPE_VOICE and ch.get("topic") != topic:
+                _request("PATCH", f"/channels/{ch['id']}", json={"topic": topic})
+                log.info("Updated topic: %s", name)
             return ch["id"]
 
     payload: dict = {"name": name, "type": channel_type, "parent_id": parent_id}
