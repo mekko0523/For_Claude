@@ -162,7 +162,12 @@ def _get_or_create_channel(
                 # creating a channel with them, which only needs
                 # MANAGE_CHANNELS). Delete and recreate instead of asking
                 # for a broader grant just for this.
-                log.info("Recreating channel %s to update its permission overwrites", name)
+                log.info(
+                    "Recreating channel %s: current=%s desired=%s",
+                    name,
+                    ch.get("permission_overwrites"),
+                    permission_overwrites,
+                )
                 _request("DELETE", f"/channels/{ch['id']}")
                 existing.remove(ch)
                 break
