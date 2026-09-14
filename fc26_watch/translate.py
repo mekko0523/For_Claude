@@ -1,8 +1,7 @@
-"""Shared Japanese translation helper, backed by the DeepL API.
+"""Japanese translation helper, backed by the DeepL API.
 
-Used by both discord_notify.py (news item titles) and x_trends.py (X post
-text) so the community-facing text is Japanese while original links stay
-untouched.
+Used by discord_notify.py to translate news item titles before posting,
+while the original article link stays untouched.
 """
 
 from __future__ import annotations

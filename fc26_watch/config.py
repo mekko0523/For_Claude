@@ -109,11 +109,7 @@ DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID", "")
 # discord_setup.py, read by discord_notify.py.
 DISCORD_CHANNELS_FILE = os.environ.get("DISCORD_CHANNELS_FILE", "discord_channels.json")
 
-# X (Twitter) API v2 bearer token, used to search recent posts for the
-# トレンド roundup. Requires at least the paid "Basic" API tier -- the free
-# tier cannot use the search endpoint at all.
-X_BEARER_TOKEN = os.environ.get("X_BEARER_TOKEN", "")
-
-# DeepL API key, used to translate non-Japanese trend posts to Japanese.
-# Optional: without it, non-Japanese posts are still posted, untranslated.
+# DeepL API key, used to translate non-Japanese news item titles to
+# Japanese before posting to Discord (see translate.py). Optional: without
+# it, titles are posted untranslated.
 DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")
