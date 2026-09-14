@@ -17,12 +17,23 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 
 import requests
 
 from . import discord_structure as layout
 from .config import DISCORD_BOT_TOKEN, DISCORD_CHANNELS_FILE, DISCORD_GUILD_ID, REQUEST_TIMEOUT
+
+# When true, ALL existing channels and categories in the target guild are
+# deleted before the layout below is (re)created. Opt-in and off by default
+# -- this is destructive and irreversible (channel history is lost), so it
+# must be explicitly requested for each run rather than defaulted on.
+DISCORD_WIPE_EXISTING = os.environ.get("DISCORD_WIPE_EXISTING", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +64,23 @@ def _request(method: str, path: str, **kwargs) -> dict:
 
 def _fetch_existing_channels(guild_id: str) -> list[dict]:
     return _request("GET", f"/guilds/{guild_id}/channels")
+
+
+def wipe_channels(guild_id: str) -> None:
+    """Deletes every existing channel and category in the guild.
+
+    Channels are deleted before categories so nothing is left orphaned
+    mid-run if this is interrupted.
+    """
+    channels = _fetch_existing_channels(guild_id)
+    for ch in channels:
+        if ch["type"] != CHANNEL_TYPE_CATEGORY:
+            _request("DELETE", f"/channels/{ch['id']}")
+            log.info("Deleted channel: %s", ch["name"])
+    for ch in channels:
+        if ch["type"] == CHANNEL_TYPE_CATEGORY:
+            _request("DELETE", f"/channels/{ch['id']}")
+            log.info("Deleted category: %s", ch["name"])
 
 
 def _get_or_create_category(name: str, existing: list[dict], guild_id: str) -> str:
@@ -128,6 +156,10 @@ def main() -> None:
         raise SystemExit("DISCORD_BOT_TOKEN is not set.")
     if not DISCORD_GUILD_ID:
         raise SystemExit("DISCORD_GUILD_ID is not set.")
+
+    if DISCORD_WIPE_EXISTING:
+        log.warning("DISCORD_WIPE_EXISTING is set -- deleting all existing channels/categories first.")
+        wipe_channels(DISCORD_GUILD_ID)
 
     news_channel_ids = setup_server(DISCORD_GUILD_ID)
 

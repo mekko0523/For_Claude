@@ -6,6 +6,10 @@ on:
       guild_id:
         description: "Discord server (guild) ID to build the channel layout in"
         required: true
+      wipe_existing:
+        description: "DESTRUCTIVE: delete ALL existing channels/categories in the server first"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,6 +33,7 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_GUILD_ID: ${{ github.event.inputs.guild_id }}
+          DISCORD_WIPE_EXISTING: ${{ github.event.inputs.wipe_existing }}
         run: python -m fc26_watch.discord_setup
 
       - name: Commit channel id mapping
