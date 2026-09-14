@@ -20,8 +20,6 @@ class Source:
     page_url: str
     base_url: str
     link_pattern: re.Pattern
-    # Human label shown in the notification email.
-    category: str
 
 
 SOURCES: list[Source] = [
@@ -30,14 +28,12 @@ SOURCES: list[Source] = [
         page_url="https://www.futbin.com/news",
         base_url="https://www.futbin.com",
         link_pattern=re.compile(r"^/news/articles/\d+/[\w-]+/?$"),
-        category="FUTBIN News",
     ),
     Source(
         name="futgg_news",
         page_url="https://www.fut.gg/news/",
         base_url="https://www.fut.gg",
         link_pattern=re.compile(r"^/news/[a-z0-9][a-z0-9-]{3,}/?$"),
-        category="FUT.GG News",
     ),
     Source(
         name="futgg_whats_new",
@@ -46,16 +42,22 @@ SOURCES: list[Source] = [
         link_pattern=re.compile(
             r"^/(sbc/(upgrades|challenges)|evolutions?|objectives?)/[a-z0-9][a-z0-9-]*/?$"
         ),
-        category="FUT.GG SBC / EVO / Objectives",
     ),
     Source(
         name="futgg_sbc",
         page_url="https://www.fut.gg/sbc/",
         base_url="https://www.fut.gg",
         link_pattern=re.compile(r"^/sbc/(upgrades|challenges)/[a-z0-9][a-z0-9-]*/?$"),
-        category="FUT.GG SBC",
     ),
 ]
+
+# Item categories, derived from the URL path (see fetcher.categorize_path).
+# These labels double as the Discord news-channel names created by
+# discord_setup.py, and as the keys discord_notify.py looks up in
+# discord_channels.json to know which channel to post to.
+CATEGORY_UPDATE_NEWS = "アップデート情報"
+CATEGORY_EVO = "EVO情報"
+CATEGORY_PLAYER_INFO = "選手情報・SBC"
 
 # Matches "FC26", "FC 26", "FC-26", "FUT26", "FUT 26" (case-insensitive).
 FC_VERSION_PATTERN = re.compile(r"\bfc\s?-?\s?26\b|\bfut\s?-?\s?26\b", re.IGNORECASE)
@@ -82,3 +84,10 @@ REQUEST_HEADERS = {
 GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 MAIL_TO = [addr.strip() for addr in os.environ.get("MAIL_TO", "").split(",") if addr.strip()]
+
+# Discord bot notification settings.
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
+DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID", "")
+# Maps each CATEGORY_* label to its Discord channel id. Written by
+# discord_setup.py, read by discord_notify.py.
+DISCORD_CHANNELS_FILE = os.environ.get("DISCORD_CHANNELS_FILE", "discord_channels.json")

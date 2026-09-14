@@ -42,6 +42,7 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dump_links }}" = "true" ]; then ARGS="$ARGS --dump-links"; fi
