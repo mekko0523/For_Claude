@@ -1,4 +1,4 @@
-"""Declarative layout for the FC26 community Discord server.
+"""Declarative layout for the FC27 community Discord server.
 
 Shared by `discord_setup.py` (creates this layout in the target server) and
 `discord_notify.py` (needs the news channel labels to route notifications).
@@ -40,10 +40,10 @@ _RECRUIT_TOPIC = (
 # entry here (categories aren't included -- Discord categories have no
 # topic field).
 TOPICS: dict[str, str] = {
-    "雑談": "FC26に関する自由な雑談チャンネルです。関係ない話題も気軽にどうぞ。",
+    "雑談": "FC27に関する自由な雑談チャンネルです。関係ない話題も気軽にどうぞ。",
     "自己紹介": "はじめての方はここで自己紹介をお願いします（プレイ環境・プレイスタイル・よく遊ぶ時間帯など）。",
     CATEGORY_UPDATE_NEWS: (
-        "Botがfutbin.com / fut.ggのFC26関連ニュース・パッチノートを自動投稿する専用チャンネルです。"
+        "Botがfutbin.com / fut.ggのFC27関連ニュース・パッチノートを自動投稿する専用チャンネルです。"
         "手動での書き込みはできません。"
     ),
     CATEGORY_EVO: (

@@ -1,7 +1,7 @@
-# FC26 Update Watch
+# FC27 Update Watch
 
 [futbin.com](https://www.futbin.com/) と [fut.gg](https://www.fut.gg/) を定期的にチェックし、
-EA SPORTS FC 26 関連の新着情報（ニュース、パッチノート/タイトルアップデート、SBC、EVO）を
+EA SPORTS FC 27 関連の新着情報（ニュース、パッチノート/タイトルアップデート、SBC、EVO）を
 検出したら Gmail 経由でメール通知する仕組みです。GitHub Actions で定期実行します。
 
 ## 仕組み
@@ -10,7 +10,7 @@ EA SPORTS FC 26 関連の新着情報（ニュース、パッチノート/タイ
   見つけるための正規表現パターンを定義しています。
 - 実行のたびに各ページを取得し、パターンに一致するリンクを抽出、`state.json` に保存済みの
   URL 一覧と比較して「新しく見つかったリンク」を判定します。
-- 新着のうち、タイトルまたは URL に `FC26` / `FC 26` / `FUT26` 等が含まれるものだけを
+- 新着のうち、タイトルまたは URL に `FC27` / `FC 27` / `FUT27` 等が含まれるものだけを
   メール通知します（`APPLY_FC_VERSION_FILTER=false` で無効化可能。下記「既知の制限」を参照）。
 - 初回実行時はメール送信せず、現在存在するリンクをすべて「既知」として `state.json` に
   記録するだけです（そうしないと初回に大量の誤通知が発生するため）。
@@ -38,7 +38,7 @@ EA SPORTS FC 26 関連の新着情報（ニュース、パッチノート/タイ
 `.github/workflows/fc26-watch.yml` は 30 分おき（`*/30 * * * *`）に自動実行されます。
 間隔を変えたい場合は `cron` の値を編集してください。
 
-手動実行やデバッグは `Actions` タブ → `FC26 Update Watch` → `Run workflow` から、
+手動実行やデバッグは `Actions` タブ → `FC27 Update Watch` → `Run workflow` から、
 `dump_links` / `dry_run` オプション付きで行えます。
 
 ## ローカルでの実行・デバッグ
@@ -64,19 +64,20 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
   かったため、`link_pattern` は公開情報（検索結果に出てきた URL 例など）から推測した
   ベストエフォートの設定です。**運用開始直後に一度 `--dump-links` で実際のリンク構造を
   確認し、各ソースが期待通り拾えているか確認することを強く推奨します。**
-- SBC / EVO のタイトルにはゲームバージョン（`26` など）が含まれないことが多く、
+- SBC / EVO のタイトルにはゲームバージョン（`27` など）が含まれないことが多く、
   `APPLY_FC_VERSION_FILTER` が有効だとこれらの新着が通知から漏れる可能性があります。
   SBC/EVO はバージョンを問わず全件通知したい場合は、`fc26_watch/config.py` の該当
   `Source` を分けてフィルタを個別に無効化するか、ワークフローの環境変数で
   `APPLY_FC_VERSION_FILTER=false` を設定してください。
-- 2026 年 9 月時点で両サイトは次期タイトル（EA SPORTS FC 27）関連のコンテンツも
-  掲載し始めています。FC26 の新着ページが縮小・移動された場合は `config.py` の
-  URL を実際のアーカイブ URL に更新する必要があります。
+- `FC_VERSION_PATTERN`（`fc26_watch/config.py`）は現在 FC27 関連の新着のみを
+  対象にしています。両サイトには過去作（FC26 等）の記事も残っているため、
+  それらは自動的にフィルタで除外されます。次のタイトルが出た際はここを
+  更新してください。
 - スクレイピング元サイトの利用規約・robots.txt の範囲内でご利用ください。
 
 ## Discord コミュニティサーバー連携
 
-`fc26_watch` に加えて、FC26 オンラインコミュニティ向けの Discord サーバーを
+`fc26_watch` に加えて、FC27 オンラインコミュニティ向けの Discord サーバーを
 一括構築し、新着情報を Discord にも自動投稿する機能があります。
 
 ### サーバー構成
@@ -108,7 +109,7 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
    Bot 招待時には `Manage Channels`（チャンネル作成）
    `Send Messages` `Embed Links`（通知投稿）権限を付与してください。
 2. このリポジトリの Secrets に `DISCORD_BOT_TOKEN` を登録。
-3. `Actions` タブ → `FC26 Discord Server Setup` → `Run workflow` から、
+3. `Actions` タブ → `FC27 Discord Server Setup` → `Run workflow` から、
    対象サーバーの Guild ID を入力して実行。
    カテゴリ・チャンネルを作成し（既存のものは重複作成せずスキップ）、
    お知らせ3チャンネルのIDを `discord_channels.json` に保存してリポジトリへ
@@ -118,7 +119,7 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
    `wipe_existing` を ON にすると、実行前にサーバー内の**既存チャンネル・
    カテゴリを全て削除**してから構築します（メッセージ履歴も含め元に戻せない
    ので、他のBotの設定チャンネル等が残っていないか確認の上ご利用ください）。
-4. 以降、`FC26 Update Watch` の定期実行時に、新着情報がメールに加えて
+4. 以降、`FC27 Update Watch` の定期実行時に、新着情報がメールに加えて
    該当する「お知らせ」チャンネルへ自動投稿されます
    （`DISCORD_BOT_TOKEN` 未設定時は Discord への投稿はスキップされます）。
 

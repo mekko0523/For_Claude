@@ -1,4 +1,4 @@
-"""Idempotent script that builds the FC26 Discord server layout defined in
+"""Idempotent script that builds the FC27 Discord server layout defined in
 `discord_structure.py`, using a bot token with the `Manage Channels`
 permission.
 

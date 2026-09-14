@@ -1,4 +1,4 @@
-name: FC26 Discord Server Setup
+name: FC27 Discord Server Setup
 
 on:
   workflow_dispatch:

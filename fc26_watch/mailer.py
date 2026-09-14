@@ -18,7 +18,7 @@ SMTP_PORT = 465
 
 def build_email_body(items: list[Item]) -> str:
     lines = [
-        "FC26 関連のアップデートが検出されました。",
+        "FC27 関連のアップデートが検出されました。",
         "",
     ]
 
@@ -42,11 +42,10 @@ def send_notification(items: list[Item]) -> None:
         return
 
     if not (GMAIL_USER and GMAIL_APP_PASSWORD and MAIL_TO):
-        raise RuntimeError(
-            "GMAIL_USER, GMAIL_APP_PASSWORD, and MAIL_TO must all be set to send email."
-        )
+        log.info("GMAIL_USER/GMAIL_APP_PASSWORD/MAIL_TO not fully set -- skipping email.")
+        return
 
-    subject = f"[FC26 Update] {len(items)} 件の新着情報 (futbin / fut.gg)"
+    subject = f"[FC27 Update] {len(items)} 件の新着情報 (futbin / fut.gg)"
     body = build_email_body(items)
 
     msg = MIMEText(body, "plain", "utf-8")
