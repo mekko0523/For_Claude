@@ -104,13 +104,14 @@ def _get_or_create_channel(
 ) -> str:
     for ch in existing:
         if ch["type"] == channel_type and ch["name"] == name and ch.get("parent_id") == parent_id:
-            if topic is not None and ch.get("topic") != topic:
+            if topic is not None and channel_type != CHANNEL_TYPE_VOICE and ch.get("topic") != topic:
                 _request("PATCH", f"/channels/{ch['id']}", json={"topic": topic})
                 log.info("Updated topic: %s", name)
             return ch["id"]
 
     payload: dict = {"name": name, "type": channel_type, "parent_id": parent_id}
-    if topic is not None:
+    # Discord's API rejects a topic on voice channels (400 Bad Request).
+    if topic is not None and channel_type != CHANNEL_TYPE_VOICE:
         payload["topic"] = topic
     if readonly:
         # @everyone's role id is always the same as the guild id.
@@ -154,10 +155,16 @@ def setup_server(guild_id: str) -> dict[str, str]:
         )
 
     voice_cat = _get_or_create_category(layout.VOICE_CATEGORY, existing, guild_id)
+    _get_or_create_channel(
+        layout.VOICE_INFO_CHANNEL,
+        CHANNEL_TYPE_TEXT,
+        voice_cat,
+        existing,
+        guild_id,
+        topic=layout.TOPICS.get(layout.VOICE_INFO_CHANNEL),
+    )
     for name in layout.VOICE_CHANNELS:
-        _get_or_create_channel(
-            name, CHANNEL_TYPE_VOICE, voice_cat, existing, guild_id, topic=layout.TOPICS.get(name)
-        )
+        _get_or_create_channel(name, CHANNEL_TYPE_VOICE, voice_cat, existing, guild_id)
 
     return news_channel_ids
 

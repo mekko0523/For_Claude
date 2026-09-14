@@ -24,6 +24,10 @@ RECRUIT_CATEGORY = "対戦・チームメイト募集"
 RECRUIT_CHANNELS = ["クラブ", "グラウンズ", "アルティメット"]
 
 VOICE_CATEGORY = "ボイスチャンネル"
+# Discord's API rejects a `topic` on voice channels at creation time, so
+# usage instructions go in this text channel instead, pinned at the top of
+# the category (created before the voice channels themselves).
+VOICE_INFO_CHANNEL = "ボイスチャンネル案内"
 VOICE_CHANNELS = [f"ボイス{i}" for i in range(1, 11)]
 
 # Channels where only the bot should be able to post.
@@ -56,8 +60,8 @@ TOPICS: dict[str, str] = {
     "クラブ": _RECRUIT_TOPIC.format(mode="クラブ"),
     "グラウンズ": _RECRUIT_TOPIC.format(mode="グラウンズ"),
     "アルティメット": _RECRUIT_TOPIC.format(mode="アルティメット"),
-    **{
-        f"ボイス{i}": "自由に使えるボイスチャンネルです。空いている部屋にご自由にどうぞ。"
-        for i in range(1, 11)
-    },
+    VOICE_INFO_CHANNEL: (
+        "下の「ボイス1」〜「ボイス10」は誰でも自由に使えるボイスチャンネルです。"
+        "空いている部屋にご自由にどうぞ。雑談・作業通話・対戦のお供などにお使いください。"
+    ),
 }
