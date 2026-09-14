@@ -42,6 +42,7 @@ CHANNEL_TYPE_TEXT = 0
 CHANNEL_TYPE_VOICE = 2
 CHANNEL_TYPE_CATEGORY = 4
 PERMISSION_SEND_MESSAGES = 1 << 11
+PERMISSION_MANAGE_CHANNELS = 1 << 4
 OVERWRITE_TYPE_ROLE = 0
 OVERWRITE_TYPE_MEMBER = 1
 
@@ -71,6 +72,24 @@ def _fetch_existing_channels(guild_id: str) -> list[dict]:
 
 def _get_bot_user_id() -> str:
     return _request("GET", "/users/@me")["id"]
+
+
+def _bot_guild_permissions(guild_id: str, bot_user_id: str) -> int:
+    """Sums up the bot's guild-level permissions from its roles (including
+    @everyone). Discord refuses to let a member grant/deny a permission in a
+    channel overwrite unless they hold that permission at the guild level
+    themselves, so this is what actually determines whether the bot can be
+    made to post in a read-only channel."""
+    member = _request("GET", f"/guilds/{guild_id}/members/{bot_user_id}")
+    roles = _request("GET", f"/guilds/{guild_id}/roles")
+    role_by_id = {r["id"]: r for r in roles}
+
+    combined = int(role_by_id[guild_id]["permissions"]) if guild_id in role_by_id else 0
+    for role_id in member.get("roles", []):
+        role = role_by_id.get(role_id)
+        if role:
+            combined |= int(role["permissions"])
+    return combined
 
 
 def _readonly_overwrites(guild_id: str, bot_user_id: str) -> list[dict]:
@@ -149,6 +168,21 @@ def setup_server(guild_id: str) -> dict[str, str]:
     """Builds the full server layout. Returns {news category label: channel id}."""
     existing = _fetch_existing_channels(guild_id)
     bot_user_id = _get_bot_user_id()
+
+    bot_permissions = _bot_guild_permissions(guild_id, bot_user_id)
+    if not bot_permissions & PERMISSION_SEND_MESSAGES:
+        raise SystemExit(
+            "Bot lacks 'Send Messages' at the server level, so it can't be given an "
+            "exception on read-only channels (Discord won't let a member grant/deny a "
+            "permission they don't hold themselves). In Discord: Server Settings > Roles "
+            "> select the bot's role > enable 'Send Messages', then re-run this workflow."
+        )
+    if not bot_permissions & PERMISSION_MANAGE_CHANNELS:
+        raise SystemExit(
+            "Bot lacks 'Manage Channels' at the server level, required to create/edit "
+            "channels. In Discord: Server Settings > Roles > select the bot's role > "
+            "enable 'Manage Channels', then re-run this workflow."
+        )
 
     chat_cat = _get_or_create_category(layout.CHAT_CATEGORY, existing, guild_id)
     for name in layout.CHAT_CHANNELS:
