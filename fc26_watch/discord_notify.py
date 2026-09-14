@@ -14,6 +14,7 @@ import requests
 
 from .config import DISCORD_BOT_TOKEN, DISCORD_CHANNELS_FILE, REQUEST_TIMEOUT
 from .fetcher import Item
+from .translate import translate_to_japanese
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,9 @@ def send_discord_notification(items: list[Item]) -> None:
 
         lines = [f"**{category}** に新着 {len(cat_items)} 件"]
         for item in cat_items:
-            lines.append(f"- [{item.title}](<{item.url}>)")
+            # Title is translated to Japanese for readability; the link
+            # itself always points at the original (untranslated) article.
+            lines.append(f"- [{translate_to_japanese(item.title)}](<{item.url}>)")
 
         post_chunked_message(channel_id, lines)
         log.info("Posted %d item(s) to Discord channel %s", len(cat_items), category)
