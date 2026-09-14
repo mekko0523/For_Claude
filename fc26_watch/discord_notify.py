@@ -35,6 +35,8 @@ def _post_message(channel_id: str, content: str) -> None:
         json={"content": content},
         timeout=REQUEST_TIMEOUT,
     )
+    if not resp.ok:
+        log.error("Discord API error %d for channel %s: %s", resp.status_code, channel_id, resp.text)
     resp.raise_for_status()
 
 
