@@ -29,12 +29,32 @@ def is_relevant_version(item: Item) -> bool:
     return bool(config.FC_VERSION_PATTERN.search(haystack))
 
 
+def dedupe_by_title(items: list[Item]) -> list[Item]:
+    """Drops items whose (normalized) title was already seen earlier in this
+    same batch, keeping the first occurrence. Different sources (futbin.com,
+    fut.gg) occasionally cover the same real-world story under different
+    URLs, which state.seen_urls's URL-based dedup can't catch since the URLs
+    themselves differ."""
+    seen_titles: set[str] = set()
+    deduped: list[Item] = []
+    for item in items:
+        key = " ".join(item.title.lower().split())
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def run(dump_links: bool = False, dry_run: bool = False) -> list[Item]:
     state = load_state(config.STATE_FILE)
 
     all_items = collect_items(config.SOURCES, dump_links=dump_links)
+    # Items already posted in a previous run (by URL) are never posted
+    # again, however many runs have passed since.
     new_items = [item for item in all_items if item.url not in state.seen_urls]
     relevant_items = [item for item in new_items if is_relevant_version(item)]
+    relevant_items = dedupe_by_title(relevant_items)
 
     state.seen_urls.update(item.url for item in all_items)
 

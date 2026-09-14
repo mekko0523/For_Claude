@@ -20,13 +20,13 @@ import logging
 
 import requests
 
-from .config import CATEGORY_TREND, DEEPL_API_KEY, DISCORD_BOT_TOKEN, REQUEST_TIMEOUT, X_BEARER_TOKEN
+from .config import CATEGORY_TREND, DISCORD_BOT_TOKEN, REQUEST_TIMEOUT, X_BEARER_TOKEN
 from .discord_notify import load_channel_ids, post_chunked_message
+from .translate import translate_to_japanese
 
 log = logging.getLogger(__name__)
 
 X_API_BASE = "https://api.twitter.com/2"
-DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"
 
 # OR'd hashtags, excluding retweets so the same post isn't picked up twice.
 HASHTAG_QUERY = "(#FC27 OR #EAFC27 OR #FUT27) -is:retweet"
@@ -69,20 +69,6 @@ def _hotness(post: dict) -> int:
     )
 
 
-def _translate_to_japanese(text: str) -> str:
-    if not DEEPL_API_KEY:
-        return text
-    resp = requests.post(
-        DEEPL_API_URL,
-        data={"auth_key": DEEPL_API_KEY, "text": text, "target_lang": "JA"},
-        timeout=REQUEST_TIMEOUT,
-    )
-    if not resp.ok:
-        log.warning("DeepL translation failed (%d): %s", resp.status_code, resp.text)
-        return text
-    return resp.json()["translations"][0]["text"]
-
-
 def send_trend_roundup() -> None:
     if not X_BEARER_TOKEN:
         log.info("X_BEARER_TOKEN not set -- skipping trend roundup.")
@@ -106,7 +92,7 @@ def send_trend_roundup() -> None:
 
     lines = [f"**{CATEGORY_TREND}** X（旧Twitter）で話題のFC27投稿 トップ{len(top_posts)}件"]
     for rank, post in enumerate(top_posts, start=1):
-        text = post["text"] if post.get("lang") == "ja" else _translate_to_japanese(post["text"])
+        text = translate_to_japanese(post["text"])
         text = " ".join(text.split())[:TEXT_PREVIEW_LIMIT]
         url = f"https://x.com/{post['_username']}/status/{post['id']}"
         lines.append(f"{rank}. {text}\n   <{url}>")
