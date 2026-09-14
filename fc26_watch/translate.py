@@ -38,7 +38,8 @@ def translate_to_japanese(text: str) -> str:
 
     resp = requests.post(
         DEEPL_API_URL,
-        data={"auth_key": DEEPL_API_KEY, "text": text, "target_lang": "JA"},
+        headers={"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"},
+        data={"text": text, "target_lang": "JA"},
         timeout=REQUEST_TIMEOUT,
     )
     if not resp.ok:
