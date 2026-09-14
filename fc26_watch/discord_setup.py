@@ -216,7 +216,11 @@ def setup_server(guild_id: str) -> dict[str, str]:
             guild_id,
             readonly=readonly,
             topic=layout.TOPICS.get(name),
-            permission_overwrites=_readonly_overwrites(guild_id, bot_user_id) if readonly else None,
+            # Always pass an explicit desired value (empty list when not
+            # readonly) so a channel that drops out of READONLY_CHANNELS
+            # gets its old restriction cleared, instead of being left alone
+            # because `None` reads as "don't manage overwrites at all".
+            permission_overwrites=_readonly_overwrites(guild_id, bot_user_id) if readonly else [],
         )
 
     recruit_cat = _get_or_create_category(layout.RECRUIT_CATEGORY, existing, guild_id)
