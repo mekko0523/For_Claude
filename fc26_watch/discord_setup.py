@@ -100,12 +100,18 @@ def _get_or_create_channel(
     existing: list[dict],
     guild_id: str,
     readonly: bool = False,
+    topic: str | None = None,
 ) -> str:
     for ch in existing:
         if ch["type"] == channel_type and ch["name"] == name and ch.get("parent_id") == parent_id:
+            if topic is not None and ch.get("topic") != topic:
+                _request("PATCH", f"/channels/{ch['id']}", json={"topic": topic})
+                log.info("Updated topic: %s", name)
             return ch["id"]
 
     payload: dict = {"name": name, "type": channel_type, "parent_id": parent_id}
+    if topic is not None:
+        payload["topic"] = topic
     if readonly:
         # @everyone's role id is always the same as the guild id.
         payload["permission_overwrites"] = [
@@ -124,7 +130,9 @@ def setup_server(guild_id: str) -> dict[str, str]:
 
     chat_cat = _get_or_create_category(layout.CHAT_CATEGORY, existing, guild_id)
     for name in layout.CHAT_CHANNELS:
-        _get_or_create_channel(name, CHANNEL_TYPE_TEXT, chat_cat, existing, guild_id)
+        _get_or_create_channel(
+            name, CHANNEL_TYPE_TEXT, chat_cat, existing, guild_id, topic=layout.TOPICS.get(name)
+        )
 
     news_cat = _get_or_create_category(layout.NEWS_CATEGORY, existing, guild_id)
     news_channel_ids: dict[str, str] = {}
@@ -136,15 +144,20 @@ def setup_server(guild_id: str) -> dict[str, str]:
             existing,
             guild_id,
             readonly=name in layout.READONLY_CHANNELS,
+            topic=layout.TOPICS.get(name),
         )
 
     recruit_cat = _get_or_create_category(layout.RECRUIT_CATEGORY, existing, guild_id)
     for name in layout.RECRUIT_CHANNELS:
-        _get_or_create_channel(name, CHANNEL_TYPE_TEXT, recruit_cat, existing, guild_id)
+        _get_or_create_channel(
+            name, CHANNEL_TYPE_TEXT, recruit_cat, existing, guild_id, topic=layout.TOPICS.get(name)
+        )
 
     voice_cat = _get_or_create_category(layout.VOICE_CATEGORY, existing, guild_id)
     for name in layout.VOICE_CHANNELS:
-        _get_or_create_channel(name, CHANNEL_TYPE_VOICE, voice_cat, existing, guild_id)
+        _get_or_create_channel(
+            name, CHANNEL_TYPE_VOICE, voice_cat, existing, guild_id, topic=layout.TOPICS.get(name)
+        )
 
     return news_channel_ids
 
