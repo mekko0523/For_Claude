@@ -43,6 +43,7 @@ CHANNEL_TYPE_VOICE = 2
 CHANNEL_TYPE_CATEGORY = 4
 PERMISSION_SEND_MESSAGES = 1 << 11
 OVERWRITE_TYPE_ROLE = 0
+OVERWRITE_TYPE_MEMBER = 1
 
 
 def _headers() -> dict[str, str]:
@@ -66,6 +67,20 @@ def _request(method: str, path: str, **kwargs) -> dict:
 
 def _fetch_existing_channels(guild_id: str) -> list[dict]:
     return _request("GET", f"/guilds/{guild_id}/channels")
+
+
+def _get_bot_user_id() -> str:
+    return _request("GET", "/users/@me")["id"]
+
+
+def _readonly_overwrites(guild_id: str, bot_user_id: str) -> list[dict]:
+    """@everyone can't post; the bot explicitly can, regardless of what its
+    guild-level role permissions happen to be (relying on role permissions
+    alone hit `50013 Missing Permissions` in practice)."""
+    return [
+        {"id": guild_id, "type": OVERWRITE_TYPE_ROLE, "deny": str(PERMISSION_SEND_MESSAGES)},
+        {"id": bot_user_id, "type": OVERWRITE_TYPE_MEMBER, "allow": str(PERMISSION_SEND_MESSAGES)},
+    ]
 
 
 def wipe_channels(guild_id: str) -> None:
@@ -103,23 +118,26 @@ def _get_or_create_channel(
     guild_id: str,
     readonly: bool = False,
     topic: str | None = None,
+    permission_overwrites: list[dict] | None = None,
 ) -> str:
     for ch in existing:
         if ch["type"] == channel_type and ch["name"] == name and ch.get("parent_id") == parent_id:
+            patch: dict = {}
             if topic is not None and channel_type != CHANNEL_TYPE_VOICE and ch.get("topic") != topic:
-                _request("PATCH", f"/channels/{ch['id']}", json={"topic": topic})
-                log.info("Updated topic: %s", name)
+                patch["topic"] = topic
+            if permission_overwrites is not None and ch.get("permission_overwrites") != permission_overwrites:
+                patch["permission_overwrites"] = permission_overwrites
+            if patch:
+                _request("PATCH", f"/channels/{ch['id']}", json=patch)
+                log.info("Updated channel: %s", name)
             return ch["id"]
 
     payload: dict = {"name": name, "type": channel_type, "parent_id": parent_id}
     # Discord's API rejects a topic on voice channels (400 Bad Request).
     if topic is not None and channel_type != CHANNEL_TYPE_VOICE:
         payload["topic"] = topic
-    if readonly:
-        # @everyone's role id is always the same as the guild id.
-        payload["permission_overwrites"] = [
-            {"id": guild_id, "type": OVERWRITE_TYPE_ROLE, "deny": str(PERMISSION_SEND_MESSAGES)}
-        ]
+    if permission_overwrites is not None:
+        payload["permission_overwrites"] = permission_overwrites
 
     created = _request("POST", f"/guilds/{guild_id}/channels", json=payload)
     log.info("Created channel: %s%s", name, " (read-only)" if readonly else "")
@@ -130,6 +148,7 @@ def _get_or_create_channel(
 def setup_server(guild_id: str) -> dict[str, str]:
     """Builds the full server layout. Returns {news category label: channel id}."""
     existing = _fetch_existing_channels(guild_id)
+    bot_user_id = _get_bot_user_id()
 
     chat_cat = _get_or_create_category(layout.CHAT_CATEGORY, existing, guild_id)
     for name in layout.CHAT_CHANNELS:
@@ -140,14 +159,16 @@ def setup_server(guild_id: str) -> dict[str, str]:
     news_cat = _get_or_create_category(layout.NEWS_CATEGORY, existing, guild_id)
     news_channel_ids: dict[str, str] = {}
     for name in layout.NEWS_CHANNELS:
+        readonly = name in layout.READONLY_CHANNELS
         news_channel_ids[name] = _get_or_create_channel(
             name,
             CHANNEL_TYPE_TEXT,
             news_cat,
             existing,
             guild_id,
-            readonly=name in layout.READONLY_CHANNELS,
+            readonly=readonly,
             topic=layout.TOPICS.get(name),
+            permission_overwrites=_readonly_overwrites(guild_id, bot_user_id) if readonly else None,
         )
 
     recruit_cat = _get_or_create_category(layout.RECRUIT_CATEGORY, existing, guild_id)
