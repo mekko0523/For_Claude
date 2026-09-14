@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
-from .config import REQUEST_HEADERS, REQUEST_TIMEOUT, Source
+from .config import (
+    CATEGORY_EVO,
+    CATEGORY_PLAYER_INFO,
+    CATEGORY_UPDATE_NEWS,
+    REQUEST_HEADERS,
+    REQUEST_TIMEOUT,
+    Source,
+)
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +28,20 @@ class Item:
     category: str
     title: str
     url: str
+
+
+def categorize_path(path: str) -> str:
+    """Buckets an item's URL path into one of the three notification
+    categories, based on what each site's URL structure actually exposes:
+    evolutions get their own category, SBC/objectives (both are ways to earn
+    player cards) become "player info", and everything else (news articles,
+    patch notes) is general update news.
+    """
+    if re.match(r"^/evolutions?(/|$)", path):
+        return CATEGORY_EVO
+    if re.match(r"^/(sbc|objectives?)(/|$)", path):
+        return CATEGORY_PLAYER_INFO
+    return CATEGORY_UPDATE_NEWS
 
 
 def fetch_page(url: str) -> str | None:
@@ -61,7 +83,7 @@ def extract_items(source: Source, html: str) -> list[Item]:
         items.append(
             Item(
                 source_name=source.name,
-                category=source.category,
+                category=categorize_path(path),
                 title=title,
                 url=absolute_url,
             )

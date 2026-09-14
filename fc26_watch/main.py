@@ -15,6 +15,7 @@ import argparse
 import logging
 
 from . import config
+from .discord_notify import send_discord_notification
 from .fetcher import Item, collect_items
 from .mailer import send_notification
 from .state import load_state, save_state
@@ -51,6 +52,7 @@ def run(dump_links: bool = False, dry_run: bool = False) -> list[Item]:
 
     if relevant_items:
         send_notification(relevant_items)
+        send_discord_notification(relevant_items)
 
     save_state(config.STATE_FILE, state)
     return relevant_items

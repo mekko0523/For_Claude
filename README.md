@@ -73,3 +73,53 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
   掲載し始めています。FC26 の新着ページが縮小・移動された場合は `config.py` の
   URL を実際のアーカイブ URL に更新する必要があります。
 - スクレイピング元サイトの利用規約・robots.txt の範囲内でご利用ください。
+
+## Discord コミュニティサーバー連携
+
+`fc26_watch` に加えて、FC26 オンラインコミュニティ向けの Discord サーバーを
+一括構築し、新着情報を Discord にも自動投稿する機能があります。
+
+### サーバー構成
+
+`fc26_watch/discord_structure.py` に定義されています。
+
+- **雑談**: `雑談` / `自己紹介`
+- **お知らせ**（Bot 専用・一般メンバーは書き込み不可）:
+  - `アップデート情報`（パッチノート等の一般ニュース）
+  - `EVO情報`（Evolutions）
+  - `選手情報・SBC`（SBC / Objectives。いずれも選手カード獲得手段のため統合）
+- **対戦・チームメイト募集**: クラブ / グラウンズ / アルティメットそれぞれに
+  「対戦相手募集」「チームメイト募集」の計6チャンネル
+  （対象コンソールは投稿内でタグ付けする運用を想定し、チャンネルは分けていません）
+- **ボイスチャンネル**: `ボイス1` 〜 `ボイス10`
+
+新着情報の3分類は、futbin.com / fut.gg から実際に取得できる URL 構造
+（`/evolutions/...` `/sbc/...` `/objectives/...` `/news/...`）を元に
+`fc26_watch/fetcher.py` の `categorize_path` で機械的に判定しています。
+
+### セットアップ
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) で
+   アプリケーションと Bot を作成し、Bot トークンを発行。
+   Bot 招待時には `Manage Channels`（チャンネル作成）
+   `Send Messages` `Embed Links`（通知投稿）権限を付与してください。
+2. このリポジトリの Secrets に `DISCORD_BOT_TOKEN` を登録。
+3. `Actions` タブ → `FC26 Discord Server Setup` → `Run workflow` から、
+   対象サーバーの Guild ID を入力して実行。
+   カテゴリ・チャンネルを作成し（既存のものは重複作成せずスキップ）、
+   お知らせ3チャンネルのIDを `discord_channels.json` に保存してリポジトリへ
+   自動コミットします。
+   `discord_structure.py` を編集してチャンネル構成を変えた場合も、この
+   ワークフローを再実行すれば差分だけ反映されます。
+   `wipe_existing` を ON にすると、実行前にサーバー内の**既存チャンネル・
+   カテゴリを全て削除**してから構築します（メッセージ履歴も含め元に戻せない
+   ので、他のBotの設定チャンネル等が残っていないか確認の上ご利用ください）。
+4. 以降、`FC26 Update Watch` の定期実行時に、新着情報がメールに加えて
+   該当する「お知らせ」チャンネルへ自動投稿されます
+   （`DISCORD_BOT_TOKEN` 未設定時は Discord への投稿はスキップされます）。
+
+### ローカルでの実行
+
+```bash
+DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... python -m fc26_watch.discord_setup
+```

@@ -1,0 +1,49 @@
+name: FC26 Discord Server Setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      guild_id:
+        description: "Discord server (guild) ID to build the channel layout in"
+        required: true
+      wipe_existing:
+        description: "DESTRUCTIVE: delete ALL existing channels/categories in the server first"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create/verify server layout
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_GUILD_ID: ${{ github.event.inputs.guild_id }}
+          DISCORD_WIPE_EXISTING: ${{ github.event.inputs.wipe_existing }}
+        run: python -m fc26_watch.discord_setup
+
+      - name: Commit channel id mapping
+        run: |
+          if [ -n "$(git status --porcelain discord_channels.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add discord_channels.json
+            git commit -m "chore: update discord channel id mapping"
+            git push
+          else
+            echo "No changes to discord_channels.json."
+          fi
