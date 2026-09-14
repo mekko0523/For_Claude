@@ -49,15 +49,32 @@ SOURCES: list[Source] = [
         base_url="https://www.fut.gg",
         link_pattern=re.compile(r"^/sbc/(upgrades|challenges)/[a-z0-9][a-z0-9-]*/?$"),
     ),
+    # Best-effort guess at EA's own FC27 news page URL/structure -- this
+    # environment can't verify it against the live site (see README "known
+    # limitations"). Run `--dump-links` after setup and adjust if it finds 0
+    # items.
+    Source(
+        name="ea_official_news",
+        page_url="https://www.ea.com/games/ea-sports-fc/ea-sports-fc-27/news",
+        base_url="https://www.ea.com",
+        link_pattern=re.compile(r"^/games/ea-sports-fc/ea-sports-fc-27/news/[a-z0-9-]+/?$"),
+    ),
 ]
 
-# Item categories, derived from the URL path (see fetcher.categorize_path).
+# Source names whose items are categorized as CATEGORY_EA_OFFICIAL regardless
+# of URL path, instead of going through fetcher.categorize_path.
+EA_SOURCE_NAMES = {"ea_official_news"}
+
+# Item categories, derived from the URL path (see fetcher.categorize_path),
+# except EA_SOURCE_NAMES sources which always get CATEGORY_EA_OFFICIAL.
 # These labels double as the Discord news-channel names created by
 # discord_setup.py, and as the keys discord_notify.py looks up in
 # discord_channels.json to know which channel to post to.
 CATEGORY_UPDATE_NEWS = "アップデート情報"
 CATEGORY_EVO = "EVO情報"
 CATEGORY_PLAYER_INFO = "選手情報・SBC"
+CATEGORY_EA_OFFICIAL = "EA公式情報"
+CATEGORY_TREND = "トレンド"
 
 # Matches "FC27", "FC 27", "FC-27", "FUT27", "FUT 27" (case-insensitive).
 FC_VERSION_PATTERN = re.compile(r"\bfc\s?-?\s?27\b|\bfut\s?-?\s?27\b", re.IGNORECASE)
@@ -91,3 +108,12 @@ DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID", "")
 # Maps each CATEGORY_* label to its Discord channel id. Written by
 # discord_setup.py, read by discord_notify.py.
 DISCORD_CHANNELS_FILE = os.environ.get("DISCORD_CHANNELS_FILE", "discord_channels.json")
+
+# X (Twitter) API v2 bearer token, used to search recent posts for the
+# トレンド roundup. Requires at least the paid "Basic" API tier -- the free
+# tier cannot use the search endpoint at all.
+X_BEARER_TOKEN = os.environ.get("X_BEARER_TOKEN", "")
+
+# DeepL API key, used to translate non-Japanese trend posts to Japanese.
+# Optional: without it, non-Japanese posts are still posted, untranslated.
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")

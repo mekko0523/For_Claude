@@ -19,6 +19,7 @@ from .discord_notify import send_discord_notification
 from .fetcher import Item, collect_items
 from .mailer import send_notification
 from .state import load_state, save_state
+from .x_trends import send_trend_roundup
 
 
 def is_relevant_version(item: Item) -> bool:
@@ -53,6 +54,10 @@ def run(dump_links: bool = False, dry_run: bool = False) -> list[Item]:
     if relevant_items:
         send_notification(relevant_items)
         send_discord_notification(relevant_items)
+
+    # Trending-posts roundup is a snapshot, not part of the seen/new item
+    # diffing above, so it runs every time regardless of relevant_items.
+    send_trend_roundup()
 
     save_state(config.STATE_FILE, state)
     return relevant_items

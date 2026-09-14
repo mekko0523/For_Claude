@@ -21,14 +21,14 @@ API_BASE = "https://discord.com/api/v10"
 MESSAGE_LIMIT = 2000
 
 
-def _load_channel_ids() -> dict[str, str]:
+def load_channel_ids() -> dict[str, str]:
     if not os.path.exists(DISCORD_CHANNELS_FILE):
         return {}
     with open(DISCORD_CHANNELS_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 
-def _post_message(channel_id: str, content: str) -> None:
+def post_message(channel_id: str, content: str) -> None:
     resp = requests.post(
         f"{API_BASE}/channels/{channel_id}/messages",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"},
@@ -40,6 +40,31 @@ def _post_message(channel_id: str, content: str) -> None:
     resp.raise_for_status()
 
 
+def chunk_lines(lines: list[str], limit: int = MESSAGE_LIMIT) -> list[str]:
+    """Groups lines into messages no longer than `limit` chars, never
+    splitting a line across messages."""
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        added_len = len(line) + (1 if current else 0)
+        if current and current_len + added_len > limit:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+            added_len = len(line)
+        current.append(line)
+        current_len += added_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def post_chunked_message(channel_id: str, lines: list[str]) -> None:
+    for chunk in chunk_lines(lines):
+        post_message(channel_id, chunk)
+
+
 def send_discord_notification(items: list[Item]) -> None:
     if not items:
         return
@@ -47,7 +72,7 @@ def send_discord_notification(items: list[Item]) -> None:
         log.info("DISCORD_BOT_TOKEN not set -- skipping Discord notification.")
         return
 
-    channel_ids = _load_channel_ids()
+    channel_ids = load_channel_ids()
     if not channel_ids:
         log.warning(
             "%s not found -- run `python -m fc26_watch.discord_setup` first. Skipping Discord notification.",
@@ -68,7 +93,6 @@ def send_discord_notification(items: list[Item]) -> None:
         lines = [f"**{category}** に新着 {len(cat_items)} 件"]
         for item in cat_items:
             lines.append(f"- [{item.title}](<{item.url}>)")
-        content = "\n".join(lines)[:MESSAGE_LIMIT]
 
-        _post_message(channel_id, content)
+        post_chunked_message(channel_id, lines)
         log.info("Posted %d item(s) to Discord channel %s", len(cat_items), category)

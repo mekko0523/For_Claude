@@ -35,8 +35,8 @@ EA SPORTS FC 27 関連の新着情報（ニュース、パッチノート/タイ
 
 ### 3. ワークフローを有効化
 
-`.github/workflows/fc26-watch.yml` は 30 分おき（`*/30 * * * *`）に自動実行されます。
-間隔を変えたい場合は `cron` の値を編集してください。
+`.github/workflows/fc26-watch.yml` は日本時間 3:00 / 11:00 / 19:00（8時間おき、1日3回）に
+自動実行されます（UTCでは `0 2,10,18 * * *`）。間隔を変えたい場合は `cron` の値を編集してください。
 
 手動実行やデバッグは `Actions` タブ → `FC27 Update Watch` → `Run workflow` から、
 `dump_links` / `dry_run` オプション付きで行えます。
@@ -74,6 +74,9 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
   それらは自動的にフィルタで除外されます。次のタイトルが出た際はここを
   更新してください。
 - スクレイピング元サイトの利用規約・robots.txt の範囲内でご利用ください。
+- EA公式ニュース（`ea_official_news` ソース）のURL・リンクパターンは実サイトで検証できて
+  いないベストエフォートの値です。`--dump-links` で実際のリンク構造を確認し、
+  `fc26_watch/config.py` の該当 `Source` を調整してください。
 
 ## Discord コミュニティサーバー連携
 
@@ -84,11 +87,13 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
 
 `fc26_watch/discord_structure.py` に定義されています。
 
-- **雑談**: `雑談` / `自己紹介`
+- **雑談**: `クラブ雑談` / `グラウンズ雑談` / `アルティメット雑談` / `自己紹介`
 - **お知らせ**（Bot 専用・一般メンバーは書き込み不可）:
-  - `アップデート情報`（パッチノート等の一般ニュース）
+  - `アップデート情報`（futbin/fut.ggの一般ニュース・パッチノート）
   - `EVO情報`（Evolutions）
   - `選手情報・SBC`（SBC / Objectives。いずれも選手カード獲得手段のため統合）
+  - `EA公式情報`（EA公式サイトのFC27関連アップデート情報）
+  - `トレンド`（X/旧Twitterで話題のFC27投稿トップ20を日本語で自動投稿。後述）
 - **対戦・チームメイト募集**: `クラブ` / `グラウンズ` / `アルティメット`
   の3チャンネル（対戦相手募集・チームメイト募集・対象コンソールは、
   投稿の冒頭にタグを書いてもらう運用にし、チャンネルは分けていません）
@@ -96,9 +101,25 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
   （Discord APIの制約でボイスチャンネル自体にはトピックを設定できないため、
   使い方の説明はこのテキストチャンネルに集約しています）
 
-新着情報の3分類は、futbin.com / fut.gg から実際に取得できる URL 構造
+新着情報の分類は、futbin.com / fut.gg から実際に取得できる URL 構造
 （`/evolutions/...` `/sbc/...` `/objectives/...` `/news/...`）を元に
-`fc26_watch/fetcher.py` の `categorize_path` で機械的に判定しています。
+`fc26_watch/fetcher.py` の `categorize_path` で機械的に判定しています
+（EA公式ソースの記事は URL に関わらず常に `EA公式情報` に分類されます）。
+
+### X（旧Twitter）トレンド機能について — 追加の準備が必要です
+
+`トレンド` チャンネルへの自動投稿には、以下の外部APIが別途必要です。
+
+- **X API Bearer Token**（`X_BEARER_TOKEN`）: [X Developer Portal](https://developer.x.com/)
+  で取得します。**投稿の検索（recent search）には有料の「Basic」ティア以上が必要**で、
+  無料の「Free」ティアでは検索APIが使えません（2026年時点で月額 $200 程度）。
+  未設定の場合、トレンド投稿は自動的にスキップされます（エラーにはなりません）。
+- **DeepL APIキー**（`DEEPL_API_KEY`、任意）: [DeepL API](https://www.deepl.com/ja/pro-api)
+  の無料プランでも利用可能です。英語などの投稿を日本語に翻訳するために使います。
+  未設定の場合、翻訳されずに原文のまま投稿されます。
+
+Xの検索APIには月額コストが発生するため、実際に有効化するかどうかはご判断ください。
+利用する場合は上記2つをリポジトリの Secrets に登録してください（登録方法は次項と同じ）。
 
 各チャンネルには `fc26_watch/discord_structure.py` の `TOPICS` で定義した
 説明文（チャンネルトピック）が設定され、初めて来た人でも各チャンネルの

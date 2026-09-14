@@ -2,8 +2,9 @@ name: FC27 Update Watch
 
 on:
   schedule:
-    # Every 30 minutes.
-    - cron: "*/30 * * * *"
+    # 3x/day, 8 hours apart: 03:00 / 11:00 / 19:00 JST == 18:00(prev day) /
+    # 02:00 / 10:00 UTC.
+    - cron: "0 2,10,18 * * *"
   workflow_dispatch:
     inputs:
       dump_links:
@@ -43,6 +44,8 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dump_links }}" = "true" ]; then ARGS="$ARGS --dump-links"; fi
