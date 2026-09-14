@@ -107,7 +107,8 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
   投稿の冒頭にタグを書いてもらう運用にし、チャンネルは分けていません）
 - **ボイスチャンネル**: 案内用の `ボイスチャンネル案内`（テキスト）+ `ボイス1` 〜 `ボイス10`
   （Discord APIの制約でボイスチャンネル自体にはトピックを設定できないため、
-  使い方の説明はこのテキストチャンネルに集約しています）
+  使い方の説明はこのテキストチャンネルに集約しています）+ `運営への報告`
+  （荒らし・迷惑行為・トラブル等を運営に伝えるための通報用チャンネル）
 
 新着情報の分類は、futbin.com / fut.gg から実際に取得できる URL 構造
 （`/evolutions/...` `/sbc/...` `/objectives/...` `/news/...`）を元に
@@ -131,10 +132,11 @@ Secretsに登録すると日本語に自動翻訳されます（無料プラン�
 説明文（チャンネルトピック）が設定され、初めて来た人でも各チャンネルの
 使い方がわかるようになっています。
 
-`ボイスチャンネル案内` はトピック（短い説明）に加えて、使い方・マナーをまとめた
-詳しいメッセージ本文を `fc26_watch/announce.py` から投稿できます
-（`FC27 Discord Server Setup` ワークフローの `post_voice_guide` を ON にして実行、
-またはローカルで `DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide`）。
+`ボイスチャンネル案内` と `運営への報告` はトピック（短い説明）に加えて、使い方を
+まとめた詳しいメッセージ本文を `fc26_watch/announce.py` から投稿できます
+（`FC27 Discord Server Setup` ワークフローの `post_voice_guide` / `post_report_guide` を
+ON にして実行、またはローカルで
+`DISCORD_BOT_TOKEN=... python -m fc26_watch.announce <voice_guide|report_guide>`）。
 
 ### コンソールロール（PS5/PS4/Switch/Switch2/Xbox/PC）
 

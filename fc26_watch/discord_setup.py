@@ -316,6 +316,14 @@ def setup_server(guild_id: str) -> dict[str, str]:
         guild_id,
         topic=layout.TOPICS.get(layout.VOICE_INFO_CHANNEL),
     )
+    news_channel_ids[layout.REPORT_CHANNEL] = _get_or_create_channel(
+        layout.REPORT_CHANNEL,
+        CHANNEL_TYPE_TEXT,
+        voice_cat,
+        existing,
+        guild_id,
+        topic=layout.TOPICS.get(layout.REPORT_CHANNEL),
+    )
     for name in layout.VOICE_CHANNELS:
         _get_or_create_channel(name, CHANNEL_TYPE_VOICE, voice_cat, existing, guild_id)
 
