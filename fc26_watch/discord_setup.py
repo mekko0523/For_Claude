@@ -193,6 +193,10 @@ def _get_or_create_channel(
 def setup_server(guild_id: str) -> dict[str, str]:
     """Builds the full server layout. Returns {news category label: channel id}."""
     existing = _fetch_existing_channels(guild_id)
+    log.info(
+        "Existing channels: %s",
+        [(c["name"], c["type"], c.get("parent_id"), c["id"]) for c in existing],
+    )
     bot_user_id = _get_bot_user_id()
 
     bot_permissions = _bot_guild_permissions(guild_id, bot_user_id)
