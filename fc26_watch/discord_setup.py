@@ -24,7 +24,13 @@ import time
 import requests
 
 from . import discord_structure as layout
-from .config import DISCORD_BOT_TOKEN, DISCORD_CHANNELS_FILE, DISCORD_GUILD_ID, REQUEST_TIMEOUT
+from .config import (
+    DISCORD_BOT_TOKEN,
+    DISCORD_CHANNELS_FILE,
+    DISCORD_GUILD_ID,
+    DISCORD_ROLES_FILE,
+    REQUEST_TIMEOUT,
+)
 
 # When true, ALL existing channels and categories in the target guild are
 # deleted before the layout below is (re)created. Opt-in and off by default
@@ -118,6 +124,42 @@ def wipe_channels(guild_id: str) -> None:
         if ch["type"] == CHANNEL_TYPE_CATEGORY:
             _request("DELETE", f"/channels/{ch['id']}")
             log.info("Deleted category: %s", ch["name"])
+
+
+def _fetch_existing_roles(guild_id: str) -> list[dict]:
+    return _request("GET", f"/guilds/{guild_id}/roles")
+
+
+def _get_or_create_role(
+    name: str, color: int, emoji: str, existing_roles: list[dict], guild_id: str
+) -> str:
+    for role in existing_roles:
+        if role["name"].casefold() == name.casefold():
+            return role["id"]
+
+    payload = {"name": name, "color": color, "hoist": True, "mentionable": True, "unicode_emoji": emoji}
+    try:
+        created = _request("POST", f"/guilds/{guild_id}/roles", json=payload)
+    except requests.HTTPError:
+        # Emoji role icons require a boost tier this server may not have;
+        # fall back to a plain colored role rather than failing the whole
+        # setup over a cosmetic extra.
+        payload.pop("unicode_emoji")
+        created = _request("POST", f"/guilds/{guild_id}/roles", json=payload)
+        log.info("Created role: %s (no icon -- server boost level doesn't support role icons)", name)
+    else:
+        log.info("Created role: %s", name)
+    existing_roles.append(created)
+    return created["id"]
+
+
+def setup_console_roles(guild_id: str) -> dict[str, str]:
+    """Creates the self-selectable console roles. Returns {console name: role id}."""
+    existing_roles = _fetch_existing_roles(guild_id)
+    return {
+        name: _get_or_create_role(name, color, emoji, existing_roles, guild_id)
+        for name, color, emoji in layout.CONSOLE_ROLES
+    }
 
 
 def _get_or_create_category(name: str, existing: list[dict], guild_id: str) -> str:
@@ -285,6 +327,11 @@ def main() -> None:
     with open(DISCORD_CHANNELS_FILE, "w", encoding="utf-8") as f:
         json.dump(news_channel_ids, f, ensure_ascii=False, indent=2)
     log.info("Wrote %s", DISCORD_CHANNELS_FILE)
+
+    role_ids = setup_console_roles(DISCORD_GUILD_ID)
+    with open(DISCORD_ROLES_FILE, "w", encoding="utf-8") as f:
+        json.dump(role_ids, f, ensure_ascii=False, indent=2)
+    log.info("Wrote %s", DISCORD_ROLES_FILE)
 
 
 if __name__ == "__main__":

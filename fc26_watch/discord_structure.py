@@ -93,3 +93,20 @@ TOPICS: dict[str, str] = {
         "詳しい使い方・マナーはこのチャンネル内の案内メッセージをご覧ください。"
     ),
 }
+
+# Self-selected console roles. Each member picks one (or more) so their
+# console shows up automatically wherever Discord displays role info --
+# their username is colored per their highest-colored role in every message
+# they post, they're grouped separately in the member list (hoist=True), and
+# the emoji shows next to their name in the member list/profile if this
+# server's boost level supports role icons (falls back to color-only
+# otherwise; see discord_setup.py's role creation).
+# (name, color as 0xRRGGBB, unicode emoji)
+CONSOLE_ROLES: list[tuple[str, int, str]] = [
+    ("PS5", 0x0070CC, "🎮"),
+    ("PS4", 0x2E5AAC, "🕹️"),
+    ("Switch", 0xE60012, "🔴"),
+    ("Switch2", 0xC4000A, "🟥"),
+    ("Xbox", 0x107C10, "🟩"),
+    ("PC", 0xF1C40F, "💻"),
+]

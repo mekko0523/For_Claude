@@ -108,6 +108,9 @@ DISCORD_GUILD_ID = os.environ.get("DISCORD_GUILD_ID", "")
 # Maps each CATEGORY_* label to its Discord channel id. Written by
 # discord_setup.py, read by discord_notify.py.
 DISCORD_CHANNELS_FILE = os.environ.get("DISCORD_CHANNELS_FILE", "discord_channels.json")
+# Maps each CONSOLE_ROLES name to its Discord role id. Written by
+# discord_setup.py.
+DISCORD_ROLES_FILE = os.environ.get("DISCORD_ROLES_FILE", "discord_roles.json")
 
 # DeepL API key, used to translate non-Japanese news item titles to
 # Japanese before posting to Discord (see translate.py). Optional: without
