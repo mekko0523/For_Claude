@@ -9,8 +9,9 @@ Safe to re-run: existing categories/channels (matched by name + parent) are
 left untouched, so this can be run again after editing discord_structure.py
 to add/remove channels without recreating everything.
 
-Writes `discord_channels.json`, mapping each news category label to its
-channel id, so discord_notify.py knows where to post new items.
+Writes `discord_channels.json`, mapping each news category label (plus a
+couple of other named channels, like the voice channel guide) to its
+channel id, so discord_notify.py and announce.py know where to post.
 """
 
 from __future__ import annotations
@@ -193,7 +194,8 @@ def _get_or_create_channel(
 
 
 def setup_server(guild_id: str) -> dict[str, str]:
-    """Builds the full server layout. Returns {news category label: channel id}."""
+    """Builds the full server layout. Returns {channel label: channel id} for
+    each news category plus the voice channel guide."""
     existing = _fetch_existing_channels(guild_id)
     bot_user_id = _get_bot_user_id()
 
@@ -252,7 +254,7 @@ def setup_server(guild_id: str) -> dict[str, str]:
         )
 
     voice_cat = _get_or_create_category(layout.VOICE_CATEGORY, existing, guild_id)
-    _get_or_create_channel(
+    news_channel_ids[layout.VOICE_INFO_CHANNEL] = _get_or_create_channel(
         layout.VOICE_INFO_CHANNEL,
         CHANNEL_TYPE_TEXT,
         voice_cat,
