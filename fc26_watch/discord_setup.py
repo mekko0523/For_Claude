@@ -121,7 +121,7 @@ def wipe_channels(guild_id: str) -> None:
 
 def _get_or_create_category(name: str, existing: list[dict], guild_id: str) -> str:
     for ch in existing:
-        if ch["type"] == CHANNEL_TYPE_CATEGORY and ch["name"] == name:
+        if ch["type"] == CHANNEL_TYPE_CATEGORY and ch["name"].casefold() == name.casefold():
             return ch["id"]
     created = _request("POST", f"/guilds/{guild_id}/channels", json={"name": name, "type": CHANNEL_TYPE_CATEGORY})
     log.info("Created category: %s", name)
@@ -152,7 +152,14 @@ def _get_or_create_channel(
     permission_overwrites: list[dict] | None = None,
 ) -> str:
     for ch in existing:
-        if ch["type"] == channel_type and ch["name"] == name and ch.get("parent_id") == parent_id:
+        # Discord lowercases ASCII letters in channel names (e.g. "EVO情報"
+        # is stored/returned as "evo情報"), so compare case-insensitively or
+        # this never matches and a fresh duplicate gets created every run.
+        if (
+            ch["type"] == channel_type
+            and ch["name"].casefold() == name.casefold()
+            and ch.get("parent_id") == parent_id
+        ):
             overwrites_changed = permission_overwrites is not None and _normalize_overwrites(
                 ch.get("permission_overwrites")
             ) != _normalize_overwrites(permission_overwrites)
@@ -162,12 +169,7 @@ def _get_or_create_channel(
                 # creating a channel with them, which only needs
                 # MANAGE_CHANNELS). Delete and recreate instead of asking
                 # for a broader grant just for this.
-                log.info(
-                    "Recreating channel %s: current=%s desired=%s",
-                    name,
-                    ch.get("permission_overwrites"),
-                    permission_overwrites,
-                )
+                log.info("Recreating channel %s to update its permission overwrites", name)
                 _request("DELETE", f"/channels/{ch['id']}")
                 existing.remove(ch)
                 break
@@ -193,10 +195,6 @@ def _get_or_create_channel(
 def setup_server(guild_id: str) -> dict[str, str]:
     """Builds the full server layout. Returns {news category label: channel id}."""
     existing = _fetch_existing_channels(guild_id)
-    log.info(
-        "Existing channels: %s",
-        [(c["name"], c["type"], c.get("parent_id"), c["id"]) for c in existing],
-    )
     bot_user_id = _get_bot_user_id()
 
     bot_permissions = _bot_guild_permissions(guild_id, bot_user_id)
