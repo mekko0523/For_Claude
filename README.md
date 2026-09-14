@@ -136,6 +136,24 @@ Secretsに登録すると日本語に自動翻訳されます（無料プラン�
 （`FC27 Discord Server Setup` ワークフローの `post_voice_guide` を ON にして実行、
 またはローカルで `DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide`）。
 
+### コンソールロール（PS5/PS4/Switch/Switch2/Xbox/PC）
+
+`fc26_watch/discord_structure.py` の `CONSOLE_ROLES` で6つのロールを定義しており、
+`FC27 Discord Server Setup` ワークフロー実行時に自動作成されます（既存ロールがあれば
+スキップ、`discord_roles.json` にロールIDを保存）。それぞれ固有の色とアイコン（絵文字）を
+持ち、メンバーリストでも別グループとして表示されます（`hoist`設定）。
+
+- ロールを自分に付けたメンバーは、**投稿するメッセージのユーザー名がそのロールの色になる**
+  ため、どのコンソールを使っているか一目でわかります。
+- サーバーのブーストレベルが対応していれば、メンバーリスト・プロフィールにロールの
+  絵文字アイコンも表示されます（対応していない場合は色分けのみになります）。
+
+**新規参加者に選んでもらう画面について**: Discordの「オンボーディング」機能
+（Server Settings > Onboarding）を使うのがもっとも安全・確実です。サーバーの検証レベルや
+公開設定に関わる変更を伴うため、意図しない副作用を避ける目的でAPIからの自動設定はせず、
+手動セットアップの手順を案内する形にしています（下記チャットの案内を参照）。ロール自体は
+既に作成済みなので、オンボーディングの「ロール選択」プロンプトに紐づけるだけで完了します。
+
 ### セットアップ
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) で
