@@ -58,6 +58,8 @@ def _request(method: str, path: str, **kwargs) -> dict:
             log.warning("Rate limited by Discord, waiting %.1fs", retry_after)
             time.sleep(retry_after)
             continue
+        if not resp.ok:
+            log.error("Discord API error %d for %s %s: %s", resp.status_code, method, path, resp.text)
         resp.raise_for_status()
         return resp.json() if resp.text else {}
 
