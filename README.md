@@ -158,9 +158,8 @@ ON にして実行、またはローカルで
 
 ### リアクションロール・ウェルカムメッセージ・簡易モデレーション・レベルXP
 
-`fc26_watch/realtime_bot` に、以下4機能を持つ常時起動Botを実装しています
-（当初MEE6での運用を検討しましたが、これらのプラグインが有料プラン限定だった
-ため、自前実装に切り替えました）。
+以下4機能を実装しています（当初MEE6での運用を検討しましたが、これらの
+プラグインが有料プラン限定だったため、自前実装に切り替えました）。
 
 - **リアクションロール**: `自己紹介` チャンネル（変更可）にコンソール選択メッセージを
   自動投稿し、リアクションで `PS5`/`PS4`/`Switch`/`Switch2`/`Xbox`/`PC` ロールの
@@ -172,11 +171,40 @@ ON にして実行、またはローカルで
 
 SNS通知機能（MEE6のSocialプラグイン相当）は、ご要望により実装していません。
 
-**この4機能だけは、GitHub Actionsの定期実行では動かせません**（リアクション・
-新規参加・メッセージをその場で検知する必要があるため、常時接続のプロセスが
-必要です）。ニュースBot・サーバー構築とは別に、常時起動サーバー（Railway /
-Fly.io / Render / 自前VPS等）へのデプロイが必要です。手順・必要な権限・環境変数は
-[DEPLOY.md](./DEPLOY.md) を参照してください。
+現在は **`fc26_watch/hourly_bot.py`（REST APIのみ・1時間ごとの定期実行）** で
+運用します。`.github/workflows/discord-hourly-bot.yml` により、他のワークフロー
+同様GitHub Actionsだけで動きます（追加のサーバー契約は不要）。ただし常時接続では
+ないため、どの機能も**反応が最大で約1時間遅れます**（新規参加から挨拶まで、
+リアクションしてからロール付与まで、NGワード投稿から削除までなど）。少人数の
+コミュニティ運営を想定した割り切りです。
+
+将来、常時接続でリアルタイムに反応させたくなった場合のために、同じ4機能を
+常時起動プロセスとして実装した `fc26_watch/realtime_bot/`（fly.io等へのデプロイ
+用、`Dockerfile`/`Procfile`/[DEPLOY.md](./DEPLOY.md)）も残してあります。現時点では
+未デプロイ・未使用です。両実装は `fc26_watch/realtime_bot/config.py` のチューニング
+項目（NGワード・XP倍率など）を共有しているので、乗り換える際も環境変数はそのまま
+使えます。
+
+#### hourly_bot のセットアップ
+
+1. Discord Developer Portal → 対象アプリ → `Bot` タブ → **Privileged Gateway
+   Intents** の `SERVER MEMBERS INTENT` をON（新規参加者を検知するために必要。
+   常時接続はしないのでトグルのみでOKです）
+2. サーバー側で、Botのロールに以下の権限を追加（既存の `Send Messages`
+   `Manage Channels` に加えて）
+   - `Manage Roles`（リアクションロールの付与。**Botのロールを対象の6ロール
+     （PS5/PS4/Switch/Switch2/Xbox/PC）より上に並び替えてください**）
+   - `Manage Messages`（NGワード/スパムメッセージの削除）
+   - `Moderate Members`（タイムアウト）
+3. リポジトリの Secrets に `DISCORD_GUILD_ID`（対象サーバーのGuild ID）を追加
+   登録（`DISCORD_BOT_TOKEN` は既存のものをそのまま使います）
+4. `Actions` タブ → `FC27 Discord Community Bot (Hourly)` → `Run workflow` で
+   手動実行して動作確認（以降は毎時0分に自動実行され、`hourly_bot_state.json`
+   がリポジトリへ自動コミットされます）
+
+NGワードのデフォルトは最小限のプレースホルダーです。`BOT_NG_WORDS` /
+`BOT_NG_WORDS_EXTRA` 環境変数（ワークフローの `env:` に追加）で実際に使う
+リストに調整してください（`fc26_watch/realtime_bot/config.py` 参照）。
 
 ### セットアップ
 
