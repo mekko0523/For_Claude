@@ -129,6 +129,18 @@ def _get_or_create_category(name: str, existing: list[dict], guild_id: str) -> s
     return created["id"]
 
 
+def _normalize_overwrites(overwrites: list[dict] | None) -> set[tuple]:
+    """Discord always echoes back both `allow` and `deny` (defaulting the
+    one not specified to '0'), so a raw list-equality check against what we
+    sent -- which omits whichever key isn't relevant -- never matches and
+    would recreate every readonly channel on every single run. Normalize
+    both sides to the same (id, type, allow, deny) shape before comparing."""
+    return {
+        (ow["id"], ow["type"], ow.get("allow", "0"), ow.get("deny", "0"))
+        for ow in (overwrites or [])
+    }
+
+
 def _get_or_create_channel(
     name: str,
     channel_type: int,
@@ -141,7 +153,10 @@ def _get_or_create_channel(
 ) -> str:
     for ch in existing:
         if ch["type"] == channel_type and ch["name"] == name and ch.get("parent_id") == parent_id:
-            if permission_overwrites is not None and ch.get("permission_overwrites") != permission_overwrites:
+            overwrites_changed = permission_overwrites is not None and _normalize_overwrites(
+                ch.get("permission_overwrites")
+            ) != _normalize_overwrites(permission_overwrites)
+            if overwrites_changed:
                 # Discord requires the MANAGE_ROLES permission to PATCH
                 # permission_overwrites on an existing channel (unlike
                 # creating a channel with them, which only needs
