@@ -11,9 +11,11 @@ import requests
 from bs4 import BeautifulSoup
 
 from .config import (
+    CATEGORY_EA_OFFICIAL,
     CATEGORY_EVO,
     CATEGORY_PLAYER_INFO,
     CATEGORY_UPDATE_NEWS,
+    EA_SOURCE_NAMES,
     REQUEST_HEADERS,
     REQUEST_TIMEOUT,
     Source,
@@ -30,13 +32,16 @@ class Item:
     url: str
 
 
-def categorize_path(path: str) -> str:
-    """Buckets an item's URL path into one of the three notification
-    categories, based on what each site's URL structure actually exposes:
-    evolutions get their own category, SBC/objectives (both are ways to earn
-    player cards) become "player info", and everything else (news articles,
-    patch notes) is general update news.
+def categorize_path(source_name: str, path: str) -> str:
+    """Buckets an item's URL path into a notification category, based on
+    what each site's URL structure actually exposes: EA's own news source
+    always gets its own category; for futbin/fut.gg, evolutions get their
+    own category, SBC/objectives (both are ways to earn player cards) become
+    "player info", and everything else (news articles, patch notes) is
+    general update news.
     """
+    if source_name in EA_SOURCE_NAMES:
+        return CATEGORY_EA_OFFICIAL
     if re.match(r"^/evolutions?(/|$)", path):
         return CATEGORY_EVO
     if re.match(r"^/(sbc|objectives?)(/|$)", path):
@@ -83,7 +88,7 @@ def extract_items(source: Source, html: str) -> list[Item]:
         items.append(
             Item(
                 source_name=source.name,
-                category=categorize_path(path),
+                category=categorize_path(source.name, path),
                 title=title,
                 url=absolute_url,
             )
