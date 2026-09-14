@@ -145,6 +145,12 @@ def _get_or_create_channel(
             if topic is not None and channel_type != CHANNEL_TYPE_VOICE and ch.get("topic") != topic:
                 patch["topic"] = topic
             if permission_overwrites is not None and ch.get("permission_overwrites") != permission_overwrites:
+                log.info(
+                    "Channel %s current overwrites: %s -- desired: %s",
+                    name,
+                    ch.get("permission_overwrites"),
+                    permission_overwrites,
+                )
                 patch["permission_overwrites"] = permission_overwrites
             if patch:
                 _request("PATCH", f"/channels/{ch['id']}", json=patch)
@@ -170,6 +176,14 @@ def setup_server(guild_id: str) -> dict[str, str]:
     bot_user_id = _get_bot_user_id()
 
     bot_permissions = _bot_guild_permissions(guild_id, bot_user_id)
+    log.info(
+        "Bot guild permissions: raw=%d SEND_MESSAGES=%s MANAGE_CHANNELS=%s MANAGE_ROLES=%s ADMINISTRATOR=%s",
+        bot_permissions,
+        bool(bot_permissions & PERMISSION_SEND_MESSAGES),
+        bool(bot_permissions & PERMISSION_MANAGE_CHANNELS),
+        bool(bot_permissions & (1 << 28)),
+        bool(bot_permissions & (1 << 3)),
+    )
     if not bot_permissions & PERMISSION_SEND_MESSAGES:
         raise SystemExit(
             "Bot lacks 'Send Messages' at the server level, so it can't be given an "
