@@ -1,4 +1,4 @@
-"""Source definitions and settings for the FC26 update watcher.
+"""Source definitions and settings for the FC27 update watcher.
 
 futbin.com / fut.gg don't expose a public news API or RSS feed, so items are
 discovered by scanning each page for links that match a per-source regex
@@ -59,10 +59,10 @@ CATEGORY_UPDATE_NEWS = "アップデート情報"
 CATEGORY_EVO = "EVO情報"
 CATEGORY_PLAYER_INFO = "選手情報・SBC"
 
-# Matches "FC26", "FC 26", "FC-26", "FUT26", "FUT 26" (case-insensitive).
-FC_VERSION_PATTERN = re.compile(r"\bfc\s?-?\s?26\b|\bfut\s?-?\s?26\b", re.IGNORECASE)
+# Matches "FC27", "FC 27", "FC-27", "FUT27", "FUT 27" (case-insensitive).
+FC_VERSION_PATTERN = re.compile(r"\bfc\s?-?\s?27\b|\bfut\s?-?\s?27\b", re.IGNORECASE)
 
-# When true, items whose title/url don't mention "26" are dropped. Disable
+# When true, items whose title/url don't mention "27" are dropped. Disable
 # via env var if a source's titles never carry a version number (e.g. SBC
 # names) and you'd rather see everything currently posted on the site.
 APPLY_FC_VERSION_FILTER = os.environ.get("APPLY_FC_VERSION_FILTER", "true").lower() not in (

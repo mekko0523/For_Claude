@@ -1,4 +1,4 @@
-"""Entry point: fetch sources, diff against seen state, email new FC26 items.
+"""Entry point: fetch sources, diff against seen state, email new FC27 items.
 
 Usage:
     python -m fc26_watch.main                # normal run
@@ -21,7 +21,7 @@ from .mailer import send_notification
 from .state import load_state, save_state
 
 
-def is_fc26_related(item: Item) -> bool:
+def is_relevant_version(item: Item) -> bool:
     if not config.APPLY_FC_VERSION_FILTER:
         return True
     haystack = f"{item.title} {item.url}"
@@ -33,7 +33,7 @@ def run(dump_links: bool = False, dry_run: bool = False) -> list[Item]:
 
     all_items = collect_items(config.SOURCES, dump_links=dump_links)
     new_items = [item for item in all_items if item.url not in state.seen_urls]
-    relevant_items = [item for item in new_items if is_fc26_related(item)]
+    relevant_items = [item for item in new_items if is_relevant_version(item)]
 
     state.seen_urls.update(item.url for item in all_items)
 

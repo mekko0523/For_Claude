@@ -1,4 +1,4 @@
-"""Posts new-item notifications to the FC26 Discord server's news channels.
+"""Posts new-item notifications to the FC27 Discord server's news channels.
 
 Requires `discord_channels.json` (written by `discord_setup.py`), which maps
 each news category label to the channel id it should be posted to.
