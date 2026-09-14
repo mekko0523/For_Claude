@@ -131,6 +131,11 @@ Secretsに登録すると日本語に自動翻訳されます（無料プラン�
 説明文（チャンネルトピック）が設定され、初めて来た人でも各チャンネルの
 使い方がわかるようになっています。
 
+`ボイスチャンネル案内` はトピック（短い説明）に加えて、使い方・マナーをまとめた
+詳しいメッセージ本文を `fc26_watch/announce.py` から投稿できます
+（`FC27 Discord Server Setup` ワークフローの `post_voice_guide` を ON にして実行、
+またはローカルで `DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide`）。
+
 ### セットアップ
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) で
