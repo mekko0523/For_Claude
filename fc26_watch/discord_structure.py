@@ -18,9 +18,10 @@ CHAT_CATEGORY = "雑談"
 CHAT_MODE_CHAT_CHANNELS = ["クラブ雑談", "グラウンズ雑談", "アルティメット雑談"]
 CHAT_CHANNELS = [*CHAT_MODE_CHAT_CHANNELS, "自己紹介"]
 
-# Bot-only announcement channels. Order doesn't matter; the labels must match
-# the CATEGORY_* constants so discord_notify.py can route each item to the
-# right channel.
+# Announcement channels. Order doesn't matter; the labels must match the
+# CATEGORY_* constants so discord_notify.py can route each item to the right
+# channel. Most of these are bot-only (see READONLY_CHANNELS below);
+# CATEGORY_TREND is the one exception, posted to by hand.
 NEWS_CATEGORY = "お知らせ"
 NEWS_CHANNELS = [
     CATEGORY_UPDATE_NEWS,
@@ -43,8 +44,10 @@ VOICE_CATEGORY = "ボイスチャンネル"
 VOICE_INFO_CHANNEL = "ボイスチャンネル案内"
 VOICE_CHANNELS = [f"ボイス{i}" for i in range(1, 11)]
 
-# Channels where only the bot should be able to post.
-READONLY_CHANNELS = set(NEWS_CHANNELS)
+# Channels where only the bot should be able to post. CATEGORY_TREND is
+# posted to manually (by staff picking notable posts by hand), so it's
+# excluded here despite living in the same お知らせ category.
+READONLY_CHANNELS = set(NEWS_CHANNELS) - {CATEGORY_TREND}
 
 _RECRUIT_TOPIC = (
     "{mode}の対戦相手・チームメイト募集用チャンネルです。投稿の最初に"
@@ -79,8 +82,8 @@ TOPICS: dict[str, str] = {
         "手動での書き込みはできません。"
     ),
     CATEGORY_TREND: (
-        "X（旧Twitter）でFC27関連ハッシュタグの中から話題の投稿をBotが自動でピックアップし、"
-        "日本語に翻訳して投稿する専用チャンネルです。手動での書き込みはできません。"
+        "X（旧Twitter）などでFC27関連の話題になっている投稿を、運営が手動でピックアップして"
+        "共有するチャンネルです（Botによる自動投稿ではありません）。"
     ),
     "クラブ": _RECRUIT_TOPIC.format(mode="クラブ"),
     "グラウンズ": _RECRUIT_TOPIC.format(mode="グラウンズ"),
