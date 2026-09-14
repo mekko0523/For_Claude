@@ -18,9 +18,13 @@ NEWS_CATEGORY = "お知らせ"
 NEWS_CHANNELS = [CATEGORY_UPDATE_NEWS, CATEGORY_EVO, CATEGORY_PLAYER_INFO]
 
 RECRUIT_CATEGORY = "対戦・チームメイト募集"
-RECRUIT_MODES = ["クラブ", "グラウンズ", "アルティメット"]
+# Split by console, since that's what actually determines who can play with
+# whom (Switch/Switch2 vs. the PC・XBOX・PlayStation crossplay group). Which
+# mode (クラブ/グラウンズ/アルティメット) a post is about is expected to be
+# tagged in the message itself rather than adding a third channel dimension.
+RECRUIT_GROUPS = ["スイッチ", "PC・XBOX・PlayStation"]
 RECRUIT_CHANNELS = [
-    f"{mode}-{kind}" for mode in RECRUIT_MODES for kind in ("対戦相手募集", "チームメイト募集")
+    f"{group}-{kind}" for group in RECRUIT_GROUPS for kind in ("対戦相手募集", "チームメイト募集")
 ]
 
 VOICE_CATEGORY = "ボイスチャンネル"
