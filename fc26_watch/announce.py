@@ -4,6 +4,7 @@ Channel ids come from `discord_channels.json` (written by discord_setup.py),
 keyed by the same channel-label constants used elsewhere. Run directly:
 
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide
+    DISCORD_BOT_TOKEN=... python -m fc26_watch.announce report_guide
 """
 
 from __future__ import annotations
@@ -39,12 +40,38 @@ VOICE_GUIDE_LINES = [
     "- 通話に関するトラブル・不具合は運営までお知らせください。",
 ]
 
+REPORT_GUIDE_LINES = [
+    "# 🚨 運営への報告チャンネル",
+    "",
+    "荒らし・迷惑行為・トラブルなど、運営（Mod）に伝えたいことがあれば、"
+    "このチャンネルに書き込んでください。",
+    "",
+    "## こんなときに使ってください",
+    "- ボイスチャンネルでの迷惑行為（大音量・暴言・録音や配信の無断実施など）",
+    "- テキストチャンネルでの誹謗中傷・荒らし・スパム",
+    "- 詐欺・なりすまし・不適切なDM等の被害",
+    "- Bot・チャンネルの不具合や、サーバー運営に関する要望",
+    "",
+    "## 報告するときは、できるだけ次の内容を含めてください",
+    "- いつ（日時）／どこで（チャンネル名・ボイスの部屋名）",
+    "- 誰が（ユーザー名。わかれば）",
+    "- 何があったか（具体的に）",
+    "- 可能であればスクリーンショットや録画",
+    "",
+    "## その他",
+    "- 内容はできる限り配慮して対応しますが、緊急性の高い内容や他の人に見られたくない"
+    "内容は、運営メンバーへ直接DMで送っていただいても構いません。",
+    "- いたずら・虚偽の報告はご遠慮ください。",
+]
+
 
 ANNOUNCEMENTS: dict[str, list[str]] = {
     "voice_guide": VOICE_GUIDE_LINES,
+    "report_guide": REPORT_GUIDE_LINES,
 }
 CHANNEL_FOR_ANNOUNCEMENT: dict[str, str] = {
     "voice_guide": layout.VOICE_INFO_CHANNEL,
+    "report_guide": layout.REPORT_CHANNEL,
 }
 
 

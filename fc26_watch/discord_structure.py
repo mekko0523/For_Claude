@@ -42,6 +42,9 @@ VOICE_CATEGORY = "ボイスチャンネル"
 # usage instructions go in this text channel instead, pinned at the top of
 # the category (created before the voice channels themselves).
 VOICE_INFO_CHANNEL = "ボイスチャンネル案内"
+# Alongside the voice channels since voice-call trouble (harassment, technical
+# issues) is the main expected use case, though it's for any report to staff.
+REPORT_CHANNEL = "運営への報告"
 VOICE_CHANNELS = [f"ボイス{i}" for i in range(1, 11)]
 
 # Channels where only the bot should be able to post. CATEGORY_TREND is
@@ -91,6 +94,10 @@ TOPICS: dict[str, str] = {
     VOICE_INFO_CHANNEL: (
         "下の「ボイス1」〜「ボイス10」は誰でも自由に使えるボイスチャンネルです。"
         "詳しい使い方・マナーはこのチャンネル内の案内メッセージをご覧ください。"
+    ),
+    REPORT_CHANNEL: (
+        "荒らし・迷惑行為・トラブルなど、運営に報告したいことがあればこちらへ。"
+        "詳しい使い方はこのチャンネル内の案内メッセージをご覧ください。"
     ),
 }
 
