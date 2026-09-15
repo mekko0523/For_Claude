@@ -15,10 +15,6 @@ on:
         description: "Detect new items but don't send email or save state"
         type: boolean
         default: false
-      fix_ea_message:
-        description: "TEMP: run _fix_ea_message.py instead of the normal watcher"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -42,15 +38,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Fix EA message (temp)
-        if: ${{ github.event.inputs.fix_ea_message == 'true' }}
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-        run: python -m fc26_watch._fix_ea_message
-
       - name: Run watcher
-        if: ${{ github.event.inputs.fix_ea_message != 'true' }}
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
