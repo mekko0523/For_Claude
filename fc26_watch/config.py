@@ -49,15 +49,16 @@ SOURCES: list[Source] = [
         base_url="https://www.fut.gg",
         link_pattern=re.compile(r"^/sbc/(upgrades|challenges)/[a-z0-9][a-z0-9-]*/?$"),
     ),
-    # Best-effort guess at EA's own FC27 news page URL/structure -- this
-    # environment can't verify it against the live site (see README "known
-    # limitations"). Run `--dump-links` after setup and adjust if it finds 0
-    # items.
+    # EA's official FC27 game page (Japanese locale, confirmed by the user).
+    # Verified via --dump-links: matches individual news article pages
+    # (e.g. .../news/pitch-notes-fc27-launch-update) while excluding the
+    # bare /news index, /buy, /features/*, /cover-discovery-hub, and
+    # /game-disclaimers links that also live on this page.
     Source(
         name="ea_official_news",
-        page_url="https://www.ea.com/games/ea-sports-fc/ea-sports-fc-27/news",
+        page_url="https://www.ea.com/ja/games/ea-sports-fc/fc-27",
         base_url="https://www.ea.com",
-        link_pattern=re.compile(r"^/games/ea-sports-fc/ea-sports-fc-27/news/[a-z0-9-]+/?$"),
+        link_pattern=re.compile(r"^/ja/games/ea-sports-fc/fc-27/news/[a-z0-9-]+/?$"),
     ),
 ]
 
