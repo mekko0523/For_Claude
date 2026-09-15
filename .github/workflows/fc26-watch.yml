@@ -46,6 +46,7 @@ jobs:
         if: ${{ github.event.inputs.fix_ea_message == 'true' }}
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: python -m fc26_watch._fix_ea_message
 
       - name: Run watcher
