@@ -134,3 +134,5 @@ def _dump_all_links(source: Source, html: str) -> None:
         matched = "MATCH" if source.link_pattern.match(path) else "     "
         text = " ".join(anchor.get_text().split())[:60]
         print(f"[{matched}] {path}  {text!r}")
+        if matched == "MATCH":
+            print(f"       raw html: {str(anchor)[:400]!r}")
