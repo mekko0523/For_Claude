@@ -135,4 +135,7 @@ def _dump_all_links(source: Source, html: str) -> None:
         text = " ".join(anchor.get_text().split())[:60]
         print(f"[{matched}] {path}  {text!r}")
         if matched == "MATCH":
-            print(f"       raw html: {str(anchor)[:400]!r}")
+            for tag in anchor.find_all(["h1", "h2", "h3", "h4", "h5", "span", "p", "time"]):
+                tag_text = " ".join(tag.get_text().split())
+                if tag_text:
+                    print(f"       <{tag.name} class={tag.get('class')}> {tag_text[:80]!r}")
