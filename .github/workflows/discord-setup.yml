@@ -22,6 +22,10 @@ on:
         description: "Post the usage guide message to every 雑談/お知らせ channel"
         type: boolean
         default: false
+      post_recruit_guides:
+        description: "Post the usage guide message to every 対戦・チームメイト募集 channel"
+        type: boolean
+        default: false
       update_existing_guides:
         description: "Edit the existing guide message in place instead of posting a new copy (applies to whichever post_* toggles above are ON)"
         type: boolean
@@ -90,3 +94,12 @@ jobs:
           ARGS=""
           if [ "${{ github.event.inputs.update_existing_guides }}" = "true" ]; then ARGS="--update"; fi
           python -m fc26_watch.announce channel_guides $ARGS
+
+      - name: Post 対戦・チームメイト募集 channel guides
+        if: ${{ github.event.inputs.post_recruit_guides == 'true' }}
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.update_existing_guides }}" = "true" ]; then ARGS="--update"; fi
+          python -m fc26_watch.announce recruit_guides $ARGS
