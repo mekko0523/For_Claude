@@ -26,9 +26,6 @@ on:
         description: "Edit the existing guide message in place instead of posting a new copy (applies to whichever post_* toggles above are ON)"
         type: boolean
         default: false
-      debug_list_channel:
-        description: "TEMP: list recent messages + pins in this channel label (e.g. 自己紹介) instead of running setup"
-        required: false
 
 permissions:
   contents: write
@@ -48,14 +45,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Debug -- list channel messages (temp)
-        if: ${{ github.event.inputs.debug_list_channel != '' }}
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-        run: python -m fc26_watch._debug_list_messages "${{ github.event.inputs.debug_list_channel }}"
-
       - name: Create/verify server layout
-        if: ${{ github.event.inputs.debug_list_channel == '' }}
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_GUILD_ID: ${{ github.event.inputs.guild_id }}
@@ -63,7 +53,6 @@ jobs:
         run: python -m fc26_watch.discord_setup
 
       - name: Commit channel/role id mapping
-        if: ${{ github.event.inputs.debug_list_channel == '' }}
         run: |
           if [ -n "$(git status --porcelain discord_channels.json discord_roles.json)" ]; then
             git config user.name "github-actions[bot]"
