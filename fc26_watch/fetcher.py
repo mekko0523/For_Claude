@@ -44,7 +44,7 @@ def categorize_path(source_name: str, path: str) -> str:
         return CATEGORY_EA_OFFICIAL
     if re.match(r"^/evolutions?(/|$)", path):
         return CATEGORY_EVO
-    if re.match(r"^/(sbc|objectives?)(/|$)", path):
+    if re.match(r"^/(sbc|squad-building-challenges|objectives?)(/|$)", path):
         return CATEGORY_PLAYER_INFO
     return CATEGORY_UPDATE_NEWS
 

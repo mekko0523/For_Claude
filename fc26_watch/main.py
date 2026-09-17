@@ -24,6 +24,15 @@ from .state import load_state, save_state
 def is_relevant_version(item: Item) -> bool:
     if not config.APPLY_FC_VERSION_FILTER:
         return True
+    # EVO/SBC/Objectives titles and URLs (e.g. "Gold Upgrade",
+    # /sbc/upgrades/27-6-gold-upgrade/) essentially never spell out "FC27"/
+    # "FUT27" literally, so this filter was silently dropping every single
+    # one of them. These categories are only ever populated from each
+    # source's live current-listing page (fut.gg's /evolutions/,
+    # /objectives/, /sbc/), which doesn't carry old-version content to begin
+    # with, so there's nothing here for the filter to protect against.
+    if item.category in (config.CATEGORY_EVO, config.CATEGORY_PLAYER_INFO):
+        return True
     haystack = f"{item.title} {item.url}"
     return bool(config.FC_VERSION_PATTERN.search(haystack))
 
