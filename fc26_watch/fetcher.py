@@ -44,7 +44,7 @@ def categorize_path(source_name: str, path: str) -> str:
         return CATEGORY_EA_OFFICIAL
     if re.match(r"^/evolutions?(/|$)", path):
         return CATEGORY_EVO
-    if re.match(r"^/(sbc|objectives?)(/|$)", path):
+    if re.match(r"^/(sbc|squad-building-challenges|objectives?)(/|$)", path):
         return CATEGORY_PLAYER_INFO
     return CATEGORY_UPDATE_NEWS
 
@@ -83,13 +83,23 @@ def _extract_title(anchor, fallback_url: str) -> str:
     date prefix ahead of an English headline for EA (which also breaks
     translate.py's is_japanese() check: the date makes the whole blob
     look "already Japanese" and skip translating the headline). Pull just
-    the <h2>/<h3> headline text instead, when the card has one (falls back
-    to the flattened text for anchors without this structure)."""
-    headline = anchor.find("h3") or anchor.find("h2")
-    if headline:
-        headline_text = " ".join(headline.get_text().split())
-        if headline_text:
-            return headline_text
+    the heading text instead, when the card has one.
+
+    Which heading tag holds the short title isn't consistent across sites:
+    fut.gg's cards have a single <h3> with the clean headline, while FUT
+    Mind's cards have an <h2> with the short title (e.g. "Repeat
+    Delivery") followed by an <h3> description -- and sometimes a further
+    <h3>"Requirements" section below that. Picking by tag priority breaks
+    fut.gg-vs-FUT-Mind, and picking the shortest heading breaks on cards
+    with a "Requirements"-style heading shorter than the real title. What
+    holds in every case seen (via --dump-links) is document order: the
+    title heading always comes first, whatever level it is. Falls back to
+    the flattened text for anchors without any heading."""
+    heading = anchor.find(["h1", "h2", "h3", "h4"])
+    if heading:
+        heading_text = " ".join(heading.get_text().split())
+        if heading_text:
+            return heading_text
     return _clean_title(anchor.get_text(), fallback_url)
 
 
@@ -159,8 +169,5 @@ def _dump_all_links(source: Source, html: str) -> None:
         matched = "MATCH" if source.link_pattern.match(path) else "     "
         text = " ".join(anchor.get_text().split())[:60]
         print(f"[{matched}] {path}  {text!r}")
-        headline = anchor.find("h3") or anchor.find("h2")
-        if headline:
-            headline_text = " ".join(headline.get_text().split())
-            if headline_text:
-                print(f"       h2/h3: {headline_text[:80]!r}")
+        if matched == "MATCH":
+            print(f"       title: {_extract_title(anchor, absolute_url)[:80]!r}")

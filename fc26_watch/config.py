@@ -35,19 +35,57 @@ SOURCES: list[Source] = [
         base_url="https://www.fut.gg",
         link_pattern=re.compile(r"^/news/[a-z0-9][a-z0-9-]{3,}/?$"),
     ),
+    # /whats-new/ (the previous page_url here) turned out to be a general
+    # "trending on the site" page -- mostly individual player card links and
+    # a couple of top nav links to /evolutions/ and /objectives/ themselves,
+    # but no links to specific evolution/objective instances (confirmed via
+    # --dump-links: 0 matches every run). The actual listing pages are
+    # /evolutions/ and /objectives/ directly. Their own filter/nav links
+    # (/evolutions/best/, /evolutions/trending/, /objectives/mastery/, etc.)
+    # match a bare "/evolutions?/[slug]" pattern too, so real individual
+    # items are only recognized by requiring a leading numeric id, e.g.
+    # /evolutions/2491-intro-to-evolutions/ (confirmed via --dump-links).
     Source(
-        name="futgg_whats_new",
-        page_url="https://www.fut.gg/whats-new/",
+        name="futgg_evolutions",
+        page_url="https://www.fut.gg/evolutions/",
         base_url="https://www.fut.gg",
-        link_pattern=re.compile(
-            r"^/(sbc/(upgrades|challenges)|evolutions?|objectives?)/[a-z0-9][a-z0-9-]*/?$"
-        ),
+        link_pattern=re.compile(r"^/evolutions?/\d[a-z0-9-]*/?$"),
+    ),
+    Source(
+        name="futgg_objectives",
+        page_url="https://www.fut.gg/objectives/",
+        base_url="https://www.fut.gg",
+        link_pattern=re.compile(r"^/objectives?/\d[a-z0-9-]*/?$"),
     ),
     Source(
         name="futgg_sbc",
         page_url="https://www.fut.gg/sbc/",
         base_url="https://www.fut.gg",
         link_pattern=re.compile(r"^/sbc/(upgrades|challenges)/[a-z0-9][a-z0-9-]*/?$"),
+    ),
+    # FUT Mind (futmind.com), a second fut.gg-style companion site already
+    # live for FC27 -- confirmed via web search with real example URLs
+    # (e.g. futmind.com/objectives/1153/pre-season-completionist). Unlike
+    # fut.gg's {id}-{slug} paths, FUT Mind separates id and slug with a
+    # slash, and its SBC section lives at /squad-building-challenges/
+    # rather than /sbc/ (categorize_path has an alias for this).
+    Source(
+        name="futmind_evolutions",
+        page_url="https://futmind.com/evolutions/",
+        base_url="https://futmind.com",
+        link_pattern=re.compile(r"^/evolutions/\d+/[a-z0-9][a-z0-9-]*/?$"),
+    ),
+    Source(
+        name="futmind_objectives",
+        page_url="https://futmind.com/objectives/",
+        base_url="https://futmind.com",
+        link_pattern=re.compile(r"^/objectives/\d+/[a-z0-9][a-z0-9-]*/?$"),
+    ),
+    Source(
+        name="futmind_sbc",
+        page_url="https://futmind.com/squad-building-challenges/",
+        base_url="https://futmind.com",
+        link_pattern=re.compile(r"^/squad-building-challenges/\d+/[a-z0-9][a-z0-9-]*/?$"),
     ),
     # EA's official FC27 game page (Japanese locale, confirmed by the user).
     # Verified via --dump-links: matches individual news article pages
