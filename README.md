@@ -136,14 +136,18 @@ Secretsに登録すると日本語に自動翻訳されます（無料プラン�
 説明文（チャンネルトピック）が設定され、初めて来た人でも各チャンネルの
 使い方がわかるようになっています。
 
-`ボイスチャンネル案内` と `運営への報告`、および雑談（`クラブ雑談`/`グラウンズ雑談`/
-`アルティメット雑談`/`自己紹介`）とお知らせ（`アップデート情報`/`EVO情報`/
-`選手情報・SBC`/`EA公式情報`/`トレンド`）の各チャンネルは、トピック（短い説明）に
+`ボイスチャンネル案内` と `運営への報告`、雑談（`クラブ雑談`/`グラウンズ雑談`/
+`アルティメット雑談`/`自己紹介`）、お知らせ（`アップデート情報`/`EVO情報`/
+`選手情報・SBC`/`EA公式情報`/`トレンド`）、および対戦・チームメイト募集
+（`クラブ`/`グラウンズ`/`アルティメット`）の各チャンネルは、トピック（短い説明）に
 加えて、使い方をまとめた詳しいメッセージ本文を `fc26_watch/announce.py` から
 投稿できます（`FC27 Discord Server Setup` ワークフローの `post_voice_guide` /
-`post_report_guide` / `post_channel_guides`（雑談・お知らせ分をまとめて投稿）を
+`post_report_guide` / `post_channel_guides`（雑談・お知らせ分をまとめて投稿） /
+`post_recruit_guides`（対戦・チームメイト募集分をまとめて投稿）を
 ON にして実行、またはローカルで
-`DISCORD_BOT_TOKEN=... python -m fc26_watch.announce <voice_guide|report_guide|channel_guides>`）。
+`DISCORD_BOT_TOKEN=... python -m fc26_watch.announce <voice_guide|report_guide|channel_guides|recruit_guides>`）。
+対戦・チームメイト募集の案内には、一緒にプレイする仲間が見つかった後に
+ボイスチャンネルへ移動することを促す文章も含まれています。
 文章を修正して**既存の投稿を上書きしたい**場合は、`update_existing_guides` も
 あわせてONにする（ローカルなら末尾に `--update` を付ける）と、新規投稿ではなく
 既存メッセージの編集になります。

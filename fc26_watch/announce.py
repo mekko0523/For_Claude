@@ -6,11 +6,14 @@ keyed by the same channel-label constants used elsewhere. Run directly:
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce report_guide
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce channel_guides
+    DISCORD_BOT_TOKEN=... python -m fc26_watch.announce recruit_guides
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide --update
 
 `channel_guides` is a batch pseudo-key that posts every 雑談/お知らせ channel
 guide (see CHANNEL_GUIDE_KEYS) in one run, since discord-setup.yml only
 exposes one checkbox for the whole set rather than one per channel.
+`recruit_guides` does the same for the 対戦・チームメイト募集 channels
+(クラブ/グラウンズ/アルティメット, see RECRUIT_GUIDE_KEYS).
 
 `--update` edits the existing message in place (found by matching its first
 line) instead of posting a new copy alongside it -- for when a guide's text
@@ -112,6 +115,32 @@ CLUB_CHAT_GUIDE_LINES = _mode_chat_guide("クラブ", "クラブ")
 GROUNDS_CHAT_GUIDE_LINES = _mode_chat_guide("グラウンズ", "グラウンズ")
 ULTIMATE_CHAT_GUIDE_LINES = _mode_chat_guide("アルティメット", "アルティメット")
 
+
+def _mode_recruit_guide(mode: str, chat_channel: str) -> list[str]:
+    return [
+        f"# 🤝 {mode}対戦相手・チームメイト募集チャンネルの使い方",
+        "",
+        f"{mode}モードの対戦相手・チームメイトを探すためのチャンネルです。",
+        "",
+        "## 投稿するときのルール",
+        "- 投稿の最初に「【対戦相手募集】」または「【チームメイト募集】」と書いてください。",
+        "- 対象コンソール（Switch / Switch2 / PC / Xbox / PS4 / PS5）も明記してください。",
+        "- 遊びたい時間帯・人数・レート帯なども書いておくと集まりやすくなります。",
+        "",
+        "## 一緒にプレイする仲間が見つかったら",
+        "- `#ボイスチャンネル案内` の下にある `ボイス1`〜`ボイス10` のうち、空いている部屋に移動しましょう。"
+        "予約や許可は不要で、誰でもすぐ使えます。",
+        "- ボイスチャットが苦手・使えない環境の場合は、テキストチャットのままプレイに参加しても大丈夫です。",
+        "",
+        "## 募集以外の話題は",
+        f"- 対戦相手探し以外の雑談は `#{chat_channel}` へどうぞ。",
+    ]
+
+
+CLUB_RECRUIT_GUIDE_LINES = _mode_recruit_guide("クラブ", "クラブ雑談")
+GROUNDS_RECRUIT_GUIDE_LINES = _mode_recruit_guide("グラウンズ", "グラウンズ雑談")
+ULTIMATE_RECRUIT_GUIDE_LINES = _mode_recruit_guide("アルティメット", "アルティメット雑談")
+
 SELF_INTRO_GUIDE_LINES = [
     "# 👋 自己紹介チャンネルの使い方",
     "",
@@ -212,6 +241,9 @@ ANNOUNCEMENTS: dict[str, list[str]] = {
     "player_info_guide": PLAYER_INFO_GUIDE_LINES,
     "ea_official_guide": EA_OFFICIAL_GUIDE_LINES,
     "trend_guide": TREND_GUIDE_LINES,
+    "club_recruit_guide": CLUB_RECRUIT_GUIDE_LINES,
+    "grounds_recruit_guide": GROUNDS_RECRUIT_GUIDE_LINES,
+    "ultimate_recruit_guide": ULTIMATE_RECRUIT_GUIDE_LINES,
 }
 CHANNEL_FOR_ANNOUNCEMENT: dict[str, str] = {
     "voice_guide": layout.VOICE_INFO_CHANNEL,
@@ -225,6 +257,9 @@ CHANNEL_FOR_ANNOUNCEMENT: dict[str, str] = {
     "player_info_guide": CATEGORY_PLAYER_INFO,
     "ea_official_guide": CATEGORY_EA_OFFICIAL,
     "trend_guide": CATEGORY_TREND,
+    "club_recruit_guide": "クラブ",
+    "grounds_recruit_guide": "グラウンズ",
+    "ultimate_recruit_guide": "アルティメット",
 }
 
 # Batch pseudo-key: every 雑談/お知らせ channel guide, posted in one go.
@@ -240,6 +275,15 @@ CHANNEL_GUIDE_KEYS = [
     "player_info_guide",
     "ea_official_guide",
     "trend_guide",
+]
+
+# Batch pseudo-key: the 対戦・チームメイト募集 channel guides (クラブ/グラウンズ/
+# アルティメット), posted in one go -- separate from CHANNEL_GUIDE_KEYS since
+# these are a different channel category with their own workflow toggle.
+RECRUIT_GUIDE_KEYS = [
+    "club_recruit_guide",
+    "grounds_recruit_guide",
+    "ultimate_recruit_guide",
 ]
 
 
@@ -308,7 +352,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("key", choices=[*ANNOUNCEMENTS, "channel_guides"])
+    parser.add_argument("key", choices=[*ANNOUNCEMENTS, "channel_guides", "recruit_guides"])
     parser.add_argument(
         "--update",
         action="store_true",
@@ -316,7 +360,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    keys = CHANNEL_GUIDE_KEYS if args.key == "channel_guides" else [args.key]
+    if args.key == "channel_guides":
+        keys = CHANNEL_GUIDE_KEYS
+    elif args.key == "recruit_guides":
+        keys = RECRUIT_GUIDE_KEYS
+    else:
+        keys = [args.key]
     action = update_announcement if args.update else post_announcement
     for key in keys:
         action(key)
