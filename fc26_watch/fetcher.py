@@ -53,6 +53,13 @@ def fetch_page(url: str) -> str | None:
     try:
         resp = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
+        # requests defaults text/* to ISO-8859-1 when the Content-Type header
+        # doesn't declare a charset (RFC 2616), which mojibakes any site that
+        # serves UTF-8/Shift_JIS bytes without an explicit header (seen on
+        # 4gamer.net). Fall back to requests' own content-sniffed guess in
+        # that case; sites that do declare a charset are unaffected.
+        if resp.encoding is None or resp.encoding.lower() == "iso-8859-1":
+            resp.encoding = resp.apparent_encoding
         return resp.text
     except requests.RequestException as exc:
         log.warning("Failed to fetch %s: %s", url, exc)
