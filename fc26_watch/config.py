@@ -77,13 +77,15 @@ SOURCES: list[Source] = [
     # an issue here. Titles need no translation (already Japanese) -- just
     # the same clean-title extraction every other source gets.
     #
-    # 4Gamer's dedicated FC27 (PS5 edition) game page. The page itself only
-    # links to one article; the actual news list lives on its
-    # index_news.html sub-page (verified via --dump-links). Confirmed real
-    # article: https://www.4gamer.net/games/027/G102741/20260724019/
+    # 4Gamer's dedicated FC27 (PS5 edition) game page. index_news.html was
+    # also tried, expecting a fuller news list, but --dump-links showed it's
+    # actually a sitewide "latest news across all games" widget (dozens of
+    # unrelated titles, 0 matches for this game) -- worse than this hub page,
+    # which finds this game's own article link. Confirmed real article:
+    # https://www.4gamer.net/games/027/G102741/20260724019/
     Source(
         name="4gamer_fc27",
-        page_url="https://www.4gamer.net/games/027/G102741/index_news.html",
+        page_url="https://www.4gamer.net/games/027/G102741/",
         base_url="https://www.4gamer.net",
         link_pattern=re.compile(r"^/games/027/G102741/\d+/?$"),
     ),
