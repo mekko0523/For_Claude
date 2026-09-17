@@ -23,9 +23,3 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
         run: python -m fc26_watch.security_audit
-
-      - name: TEMP -- fix console role permissions
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
-        run: python -m fc26_watch._fix_console_role_permissions
