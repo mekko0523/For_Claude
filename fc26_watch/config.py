@@ -71,21 +71,36 @@ SOURCES: list[Source] = [
         base_url="https://www.futwiz.com",
         link_pattern=re.compile(r"^/en/fc27/news/[a-z0-9][a-z0-9-]*/?$"),
     ),
-    # Best-effort guesses, not yet fully verified against the live sites
-    # (this environment can't reach them directly -- see README "known
-    # limitations"). Run `--dump-links` and adjust page_url/link_pattern for
-    # either of these if they come back with 0 items or a fetch error.
+    # Two Japanese-language sources, found and confirmed (real example
+    # article URLs, not guessed) via web search rather than --dump-links,
+    # since neither futbin/futwiz-style blocking nor a wrong URL guess is
+    # an issue here. Titles need no translation (already Japanese) -- just
+    # the same clean-title extraction every other source gets.
+    #
+    # 4Gamer's dedicated FC27 (PS5 edition) game page/news hub. Confirmed
+    # real article: https://www.4gamer.net/games/027/G102741/20260724019/
     Source(
-        name="realsport101_fc27",
-        page_url="https://realsport101.com/topic/ea-sports-fc-27/",
-        base_url="https://realsport101.com",
-        link_pattern=re.compile(r"^/article/[a-z0-9][a-z0-9-]*/?$"),
+        name="4gamer_fc27",
+        page_url="https://www.4gamer.net/games/027/G102741/",
+        base_url="https://www.4gamer.net",
+        link_pattern=re.compile(r"^/games/027/G102741/\d+/?$"),
     ),
+    # EAFC UTGUIDE, a Japanese FC27 Ultimate Team-focused guide site.
+    # Confirmed real article: https://fifafutguide.com/archives/6567
     Source(
-        name="fifplay_fc27",
-        page_url="https://www.fifplay.com/tag/fc-27/",
-        base_url="https://www.fifplay.com",
-        link_pattern=re.compile(r"^/\d{4}/\d{2}/[a-z0-9][a-z0-9-]*/?$"),
+        name="fifafutguide_fc27",
+        page_url="https://fifafutguide.com/",
+        base_url="https://fifafutguide.com",
+        link_pattern=re.compile(r"^/archives/\d+/?$"),
+    ),
+    # FIFAUTeam -- a longstanding English-language FUT news/guide site.
+    # Not yet verified against the live site (this environment can't reach
+    # it directly); run --dump-links and adjust if it comes back empty.
+    Source(
+        name="fifauteam_fc27",
+        page_url="https://fifauteam.com/",
+        base_url="https://fifauteam.com",
+        link_pattern=re.compile(r"^/[a-z0-9][a-z0-9-]{3,}/?$"),
     ),
 ]
 
