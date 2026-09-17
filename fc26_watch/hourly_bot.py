@@ -197,6 +197,7 @@ def sync_welcome(text_channels: list[dict], members: list[dict], state: dict) ->
 REACTION_ROLE_PROMPT_LINES = [
     "# 🎮 使用コンソールを選択",
     "",
+    "自己紹介と合わせて、ぜひこちらで使用コンソールも登録してください！",
     "下のリアクションを押すと、対応するロールが自動で付与されます（複数選択可）。",
     "外したいときは同じリアクションをもう一度押してください。",
     "",
@@ -209,19 +210,29 @@ def _ensure_reaction_role_message(channel: dict, state: dict) -> str | None:
     if message_id:
         try:
             _request("GET", f"/channels/{channel['id']}/messages/{message_id}")
-            return message_id
         except requests.HTTPError:
             log.warning("Stored reaction-role message %s is gone -- recreating.", message_id)
             state["reaction_role_message_id"] = None
+            message_id = None
 
-    created = _request(
-        "POST", f"/channels/{channel['id']}/messages", json={"content": "\n".join(REACTION_ROLE_PROMPT_LINES)}
-    )
-    message_id = created["id"]
-    for _name, _color, emoji in layout.CONSOLE_ROLES:
-        _request("PUT", f"/channels/{channel['id']}/messages/{message_id}/reactions/{quote(emoji)}/@me")
-    state["reaction_role_message_id"] = message_id
-    log.info("Posted new reaction-role message %s in #%s", message_id, channel["name"])
+    if not message_id:
+        created = _request(
+            "POST", f"/channels/{channel['id']}/messages", json={"content": "\n".join(REACTION_ROLE_PROMPT_LINES)}
+        )
+        message_id = created["id"]
+        for _name, _color, emoji in layout.CONSOLE_ROLES:
+            _request("PUT", f"/channels/{channel['id']}/messages/{message_id}/reactions/{quote(emoji)}/@me")
+        state["reaction_role_message_id"] = message_id
+        log.info("Posted new reaction-role message %s in #%s", message_id, channel["name"])
+
+    # Pinned (and re-pinned every run, in case someone unpins it by mistake)
+    # so it stays reachable at the top of the channel via the pin icon, no
+    # matter how much 自己紹介 chat piles up underneath it.
+    try:
+        _request("PUT", f"/channels/{channel['id']}/pins/{message_id}")
+    except requests.HTTPError:
+        log.warning("Could not pin reaction-role message %s -- check Manage Messages permission.", message_id)
+
     return message_id
 
 
@@ -486,14 +497,27 @@ def run() -> None:
     channels = _fetch_channels(DISCORD_GUILD_ID)
     text_channels = [c for c in channels if c["type"] == CHANNEL_TYPE_TEXT]
     role_by_name = {r["name"].casefold(): r for r in _fetch_roles(DISCORD_GUILD_ID)}
-    members = _fetch_all_members(DISCORD_GUILD_ID)
 
-    sync_welcome(text_channels, members, state)
+    members: list[dict] | None
+    try:
+        members = _fetch_all_members(DISCORD_GUILD_ID)
+    except requests.HTTPError:
+        log.warning(
+            "Could not fetch the member list (likely 403) -- enable 'SERVER MEMBERS "
+            "INTENT' in the Developer Portal (Bot tab > Privileged Gateway Intents). "
+            "Skipping welcome messages and console-tag nicknames this run; reaction "
+            "roles and moderation/leveling still run normally."
+        )
+        members = None
+
+    if members is not None:
+        sync_welcome(text_channels, members, state)
 
     reaction_channel = _find_by_name(text_channels, bot_config.REACTION_ROLE_CHANNEL_NAME)
     if reaction_channel:
         sync_reaction_roles(DISCORD_GUILD_ID, reaction_channel, state, role_by_name)
-        sync_console_tags(DISCORD_GUILD_ID, members, state["role_reactors"])
+        if members is not None:
+            sync_console_tags(DISCORD_GUILD_ID, members, state["role_reactors"])
     else:
         log.warning("Reaction-role channel %r not found.", bot_config.REACTION_ROLE_CHANNEL_NAME)
 
