@@ -141,6 +141,9 @@ Secretsに登録すると日本語に自動翻訳されます（無料プラン�
 `post_report_guide` / `post_channel_guides`（雑談・お知らせ分をまとめて投稿）を
 ON にして実行、またはローカルで
 `DISCORD_BOT_TOKEN=... python -m fc26_watch.announce <voice_guide|report_guide|channel_guides>`）。
+文章を修正して**既存の投稿を上書きしたい**場合は、`update_existing_guides` も
+あわせてONにする（ローカルなら末尾に `--update` を付ける）と、新規投稿ではなく
+既存メッセージの編集になります。
 
 ### コンソールロール（PS5/PS4/Switch/Switch2/Xbox/PC）
 

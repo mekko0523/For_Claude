@@ -22,6 +22,10 @@ on:
         description: "Post the usage guide message to every 雑談/お知らせ channel"
         type: boolean
         default: false
+      update_existing_guides:
+        description: "Edit the existing guide message in place instead of posting a new copy (applies to whichever post_* toggles above are ON)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -64,16 +68,25 @@ jobs:
         if: ${{ github.event.inputs.post_voice_guide == 'true' }}
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-        run: python -m fc26_watch.announce voice_guide
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.update_existing_guides }}" = "true" ]; then ARGS="--update"; fi
+          python -m fc26_watch.announce voice_guide $ARGS
 
       - name: Post report channel guide
         if: ${{ github.event.inputs.post_report_guide == 'true' }}
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-        run: python -m fc26_watch.announce report_guide
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.update_existing_guides }}" = "true" ]; then ARGS="--update"; fi
+          python -m fc26_watch.announce report_guide $ARGS
 
       - name: Post 雑談/お知らせ channel guides
         if: ${{ github.event.inputs.post_channel_guides == 'true' }}
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-        run: python -m fc26_watch.announce channel_guides
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.update_existing_guides }}" = "true" ]; then ARGS="--update"; fi
+          python -m fc26_watch.announce channel_guides $ARGS

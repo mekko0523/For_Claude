@@ -6,16 +6,25 @@ keyed by the same channel-label constants used elsewhere. Run directly:
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce report_guide
     DISCORD_BOT_TOKEN=... python -m fc26_watch.announce channel_guides
+    DISCORD_BOT_TOKEN=... python -m fc26_watch.announce voice_guide --update
 
 `channel_guides` is a batch pseudo-key that posts every 雑談/お知らせ channel
 guide (see CHANNEL_GUIDE_KEYS) in one run, since discord-setup.yml only
 exposes one checkbox for the whole set rather than one per channel.
+
+`--update` edits the existing message in place (found by matching its first
+line) instead of posting a new copy alongside it -- for when a guide's text
+changes after it's already been posted. Only works for guides short enough
+to fit in one message (all of them, currently); a guide that grows past
+Discord's 2000-char limit needs deleting and reposting by hand instead.
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
-import sys
+
+import requests
 
 from . import discord_structure as layout
 from .config import (
@@ -24,8 +33,10 @@ from .config import (
     CATEGORY_PLAYER_INFO,
     CATEGORY_TREND,
     CATEGORY_UPDATE_NEWS,
+    DISCORD_BOT_TOKEN,
+    REQUEST_TIMEOUT,
 )
-from .discord_notify import load_channel_ids, post_chunked_message
+from .discord_notify import API_BASE, MESSAGE_LIMIT, load_channel_ids, post_chunked_message
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +52,8 @@ VOICE_GUIDE_LINES = [
     "- 人数が増えてきたら別の番号の部屋に分かれてもOKです。無理に1部屋に詰め込む必要はありません。",
     "- 「初心者質問部屋」「大会実況部屋」のように目的を決めて使いたいときは、"
     "使う前に `#クラブ雑談` などのテキストチャンネルでひとこと共有すると人が集まりやすくなります。",
+    "- ボイスチャットが苦手・使えない環境の方もいると思います。**ボイスに入らず、"
+    "テキストチャットだけでチームプレイに参加するのも歓迎です。** 無理に音声参加する必要はありません。",
     "",
     "## お願い（マナー）",
     "- 通話を録音・配信する場合は、参加者に一声かけてください。",
@@ -230,10 +243,8 @@ CHANNEL_GUIDE_KEYS = [
 ]
 
 
-def post_announcement(key: str) -> None:
-    lines = ANNOUNCEMENTS[key]
+def _channel_id_for(key: str) -> str:
     channel_label = CHANNEL_FOR_ANNOUNCEMENT[key]
-
     channel_ids = load_channel_ids()
     channel_id = channel_ids.get(channel_label)
     if not channel_id:
@@ -241,23 +252,74 @@ def post_announcement(key: str) -> None:
             f"No channel id for {channel_label!r} in discord_channels.json -- "
             "run discord_setup.py first."
         )
+    return channel_id
 
-    post_chunked_message(channel_id, lines)
-    log.info("Posted %r announcement to %s", key, channel_label)
+
+def post_announcement(key: str) -> None:
+    channel_id = _channel_id_for(key)
+    post_chunked_message(channel_id, ANNOUNCEMENTS[key])
+    log.info("Posted %r announcement to %s", key, CHANNEL_FOR_ANNOUNCEMENT[key])
+
+
+def _find_existing_message(channel_id: str, header_line: str) -> dict | None:
+    resp = requests.get(
+        f"{API_BASE}/channels/{channel_id}/messages?limit=50",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    for message in resp.json():
+        if message["content"].startswith(header_line):
+            return message
+    return None
+
+
+def update_announcement(key: str) -> None:
+    content = "\n".join(ANNOUNCEMENTS[key])
+    if len(content) > MESSAGE_LIMIT:
+        raise SystemExit(
+            f"{key!r} no longer fits in a single message ({len(content)} chars) -- "
+            "update_announcement only supports single-message guides. Delete the old "
+            "message and run without --update to post a fresh (possibly multi-message) copy."
+        )
+
+    channel_id = _channel_id_for(key)
+    existing = _find_existing_message(channel_id, ANNOUNCEMENTS[key][0])
+    if existing is None:
+        log.warning(
+            "No existing %r message found in %s -- posting a new one instead.",
+            key,
+            CHANNEL_FOR_ANNOUNCEMENT[key],
+        )
+        post_announcement(key)
+        return
+
+    resp = requests.patch(
+        f"{API_BASE}/channels/{channel_id}/messages/{existing['id']}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"},
+        json={"content": content},
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    log.info("Updated %r announcement message in %s", key, CHANNEL_FOR_ANNOUNCEMENT[key])
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    valid_args = [*ANNOUNCEMENTS, "channel_guides"]
-    if len(sys.argv) != 2 or sys.argv[1] not in valid_args:
-        raise SystemExit(f"Usage: python -m fc26_watch.announce <{'|'.join(valid_args)}>")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("key", choices=[*ANNOUNCEMENTS, "channel_guides"])
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Edit the existing message in place instead of posting a new one.",
+    )
+    args = parser.parse_args()
 
-    if sys.argv[1] == "channel_guides":
-        for key in CHANNEL_GUIDE_KEYS:
-            post_announcement(key)
-    else:
-        post_announcement(sys.argv[1])
+    keys = CHANNEL_GUIDE_KEYS if args.key == "channel_guides" else [args.key]
+    action = update_announcement if args.update else post_announcement
+    for key in keys:
+        action(key)
 
 
 if __name__ == "__main__":
