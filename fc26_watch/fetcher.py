@@ -152,3 +152,8 @@ def _dump_all_links(source: Source, html: str) -> None:
         matched = "MATCH" if source.link_pattern.match(path) else "     "
         text = " ".join(anchor.get_text().split())[:60]
         print(f"[{matched}] {path}  {text!r}")
+        headline = anchor.find("h3") or anchor.find("h2")
+        if headline:
+            headline_text = " ".join(headline.get_text().split())
+            if headline_text:
+                print(f"       h2/h3: {headline_text[:80]!r}")

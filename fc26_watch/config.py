@@ -60,6 +60,28 @@ SOURCES: list[Source] = [
         base_url="https://www.ea.com",
         link_pattern=re.compile(r"^/ja/games/ea-sports-fc/fc-27/news/[a-z0-9-]+/?$"),
     ),
+    # Best-effort guesses, not yet verified against the live sites (this
+    # environment can't reach them directly -- see README "known
+    # limitations"). Run `--dump-links` and adjust page_url/link_pattern for
+    # any of these that come back with 0 items or a fetch error.
+    Source(
+        name="futwiz_news",
+        page_url="https://www.futwiz.com/en/fc27/news",
+        base_url="https://www.futwiz.com",
+        link_pattern=re.compile(r"^/en/fc27/news/[a-z0-9][a-z0-9-]*/?$"),
+    ),
+    Source(
+        name="realsport101_fc27",
+        page_url="https://realsport101.com/ea-sports-fc/ea-sports-fc-27/",
+        base_url="https://realsport101.com",
+        link_pattern=re.compile(r"^/ea-sports-fc/ea-sports-fc-27/[a-z0-9][a-z0-9-]*/?$"),
+    ),
+    Source(
+        name="vgc_fc27",
+        page_url="https://www.videogameschronicle.com/tag/ea-sports-fc-27/",
+        base_url="https://www.videogameschronicle.com",
+        link_pattern=re.compile(r"^/\d{4}/\d{2}/\d{2}/[a-z0-9][a-z0-9-]*/?$"),
+    ),
 ]
 
 # Source names whose items are categorized as CATEGORY_EA_OFFICIAL regardless
