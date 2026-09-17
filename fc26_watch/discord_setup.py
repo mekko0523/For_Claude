@@ -249,7 +249,9 @@ def _get_or_create_channel(
 
 def setup_server(guild_id: str) -> dict[str, str]:
     """Builds the full server layout. Returns {channel label: channel id} for
-    each news category plus the voice channel guide."""
+    every channel `announce.py` might need to post a guide message to (chat,
+    news, voice info, report) -- not just the news categories despite the
+    variable name below."""
     existing = _fetch_existing_channels(guild_id)
     bot_user_id = _get_bot_user_id()
 
@@ -277,13 +279,13 @@ def setup_server(guild_id: str) -> dict[str, str]:
         )
 
     chat_cat = _get_or_create_category(layout.CHAT_CATEGORY, existing, guild_id)
+    news_channel_ids: dict[str, str] = {}
     for name in layout.CHAT_CHANNELS:
-        _get_or_create_channel(
+        news_channel_ids[name] = _get_or_create_channel(
             name, CHANNEL_TYPE_TEXT, chat_cat, existing, guild_id, topic=layout.TOPICS.get(name)
         )
 
     news_cat = _get_or_create_category(layout.NEWS_CATEGORY, existing, guild_id)
-    news_channel_ids: dict[str, str] = {}
     for name in layout.NEWS_CHANNELS:
         readonly = name in layout.READONLY_CHANNELS
         news_channel_ids[name] = _get_or_create_channel(

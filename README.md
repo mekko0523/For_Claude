@@ -132,11 +132,14 @@ Secretsに登録すると日本語に自動翻訳されます（無料プラン�
 説明文（チャンネルトピック）が設定され、初めて来た人でも各チャンネルの
 使い方がわかるようになっています。
 
-`ボイスチャンネル案内` と `運営への報告` はトピック（短い説明）に加えて、使い方を
-まとめた詳しいメッセージ本文を `fc26_watch/announce.py` から投稿できます
-（`FC27 Discord Server Setup` ワークフローの `post_voice_guide` / `post_report_guide` を
+`ボイスチャンネル案内` と `運営への報告`、および雑談（`クラブ雑談`/`グラウンズ雑談`/
+`アルティメット雑談`/`自己紹介`）とお知らせ（`アップデート情報`/`EVO情報`/
+`選手情報・SBC`/`EA公式情報`/`トレンド`）の各チャンネルは、トピック（短い説明）に
+加えて、使い方をまとめた詳しいメッセージ本文を `fc26_watch/announce.py` から
+投稿できます（`FC27 Discord Server Setup` ワークフローの `post_voice_guide` /
+`post_report_guide` / `post_channel_guides`（雑談・お知らせ分をまとめて投稿）を
 ON にして実行、またはローカルで
-`DISCORD_BOT_TOKEN=... python -m fc26_watch.announce <voice_guide|report_guide>`）。
+`DISCORD_BOT_TOKEN=... python -m fc26_watch.announce <voice_guide|report_guide|channel_guides>`）。
 
 ### コンソールロール（PS5/PS4/Switch/Switch2/Xbox/PC）
 
