@@ -497,14 +497,27 @@ def run() -> None:
     channels = _fetch_channels(DISCORD_GUILD_ID)
     text_channels = [c for c in channels if c["type"] == CHANNEL_TYPE_TEXT]
     role_by_name = {r["name"].casefold(): r for r in _fetch_roles(DISCORD_GUILD_ID)}
-    members = _fetch_all_members(DISCORD_GUILD_ID)
 
-    sync_welcome(text_channels, members, state)
+    members: list[dict] | None
+    try:
+        members = _fetch_all_members(DISCORD_GUILD_ID)
+    except requests.HTTPError:
+        log.warning(
+            "Could not fetch the member list (likely 403) -- enable 'SERVER MEMBERS "
+            "INTENT' in the Developer Portal (Bot tab > Privileged Gateway Intents). "
+            "Skipping welcome messages and console-tag nicknames this run; reaction "
+            "roles and moderation/leveling still run normally."
+        )
+        members = None
+
+    if members is not None:
+        sync_welcome(text_channels, members, state)
 
     reaction_channel = _find_by_name(text_channels, bot_config.REACTION_ROLE_CHANNEL_NAME)
     if reaction_channel:
         sync_reaction_roles(DISCORD_GUILD_ID, reaction_channel, state, role_by_name)
-        sync_console_tags(DISCORD_GUILD_ID, members, state["role_reactors"])
+        if members is not None:
+            sync_console_tags(DISCORD_GUILD_ID, members, state["role_reactors"])
     else:
         log.warning("Reaction-role channel %r not found.", bot_config.REACTION_ROLE_CHANNEL_NAME)
 
