@@ -22,6 +22,9 @@ GitHub Actionsは「決まった時間に起動して終了する」仕組みの
 2. サーバー側で、Botのロールに以下の権限が付与されていることを確認
    - `Manage Roles`（リアクションロールの付与。**Botのロールが対象の6ロール
      （PS5/PS4/Switch/Switch2/Xbox/PC）より上に来るよう並び替えてください**）
+   - `Manage Nicknames`（コンソールタグ「[PS5]」等をニックネームに付与。
+     Botのロールが対象メンバーより上にある必要があり、サーバーオーナーは
+     Discordの仕様上Botからは変更できません）
    - `Manage Messages`（NGワード/スパムメッセージの削除）
    - `Moderate Members`（タイムアウト）
    - 既存の `Send Messages` `Manage Channels`（discord_setup.py 用）はそのまま

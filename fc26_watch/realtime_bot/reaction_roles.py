@@ -8,14 +8,16 @@ raw reaction add/remove events on that message toggle the matching role.
 Role lookup is by name against the guild's live role cache (not
 discord_roles.json), so it stays correct even if roles are recreated.
 
-Requires the bot's own role to be positioned above the console roles in the
-role list, and to hold "Manage Roles" -- same requirement discord_setup.py
-has for creating them.
+Requires the bot's own role to be positioned above the console roles (and
+above the members it renames) in the role list, and to hold "Manage Roles"
+-- same requirement discord_setup.py has for creating them -- plus "Manage
+Nicknames" for the console-tag nickname sync below.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 
 import discord
 
@@ -27,6 +29,61 @@ log = logging.getLogger(__name__)
 # emoji -> console role name, from the same table discord_setup.py uses to
 # create the roles, so the two stay in sync automatically.
 _ROLE_NAME_BY_EMOJI: dict[str, str] = {emoji: name for name, _color, emoji in layout.CONSOLE_ROLES}
+
+# Recognizes only a bracket group made up of our own console names (e.g.
+# "[PS5]", "[PS5/PC]"), so an unrelated nickname tag someone already has
+# (e.g. "[Mod]") is never mistaken for ours and stripped. Mirrors
+# hourly_bot.py's identical helpers -- kept separate since one runs on
+# discord.py Member objects and the other on plain REST JSON.
+_CONSOLE_NAME_SET = {name for name, _color, _emoji in layout.CONSOLE_ROLES}
+_CONSOLE_TAG_PATTERN = re.compile(r"\s*\[([^\[\]]*)\]\s*$")
+_MAX_NICKNAME_LENGTH = 32
+
+
+def _strip_console_tag(display_name: str) -> str:
+    match = _CONSOLE_TAG_PATTERN.search(display_name)
+    if match and set(match.group(1).split("/")) <= _CONSOLE_NAME_SET:
+        return display_name[: match.start()].rstrip()
+    return display_name
+
+
+def _desired_nickname(base_name: str, console_names: list[str]) -> str:
+    if not console_names:
+        return base_name
+    tag = f"[{'/'.join(console_names)}]"
+    nickname = f"{base_name} {tag}"
+    if len(nickname) > _MAX_NICKNAME_LENGTH:
+        base_name = base_name[: _MAX_NICKNAME_LENGTH - len(tag) - 1].rstrip()
+        nickname = f"{base_name} {tag}"
+    return nickname
+
+
+async def _sync_console_tag(member: discord.Member, changed_role_name: str, added: bool) -> None:
+    """Appends/updates the "[PS5]"-style nickname tag after a role change,
+    so a poster's console is visible on every message, not just via their
+    username color (easy to miss). Computes the new console set from
+    `changed_role_name`/`added` directly rather than re-reading
+    member.roles, since discord.py's cache only reflects a role change
+    once the gateway echoes it back, not immediately after add/remove."""
+    current = {name for name, _c, _e in layout.CONSOLE_ROLES if discord.utils.get(member.roles, name=name)}
+    if added:
+        current.add(changed_role_name)
+    else:
+        current.discard(changed_role_name)
+    ordered = [name for name, _c, _e in layout.CONSOLE_ROLES if name in current]
+
+    base_name = _strip_console_tag(member.nick or member.display_name)
+    desired = _desired_nickname(base_name, ordered)
+    if (member.nick or member.name) == desired:
+        return
+    try:
+        await member.edit(nick=desired, reason="Console tag sync")
+    except discord.Forbidden:
+        log.warning(
+            "Missing permission to update nickname for %s -- check Manage Nicknames and "
+            "the bot's role position (never possible for the server owner).",
+            member,
+        )
 
 PROMPT_LINES = [
     "# 🎮 使用コンソールを選択",
@@ -118,3 +175,6 @@ async def handle_reaction_change(
             role_name,
             member,
         )
+        return
+
+    await _sync_console_tag(member, role_name, added)
