@@ -13,6 +13,14 @@ is "eventually consistent" within roughly one run interval, not instant.
   threshold, keyed off each message's own timestamp (not wall-clock time),
   so XP/cooldowns come out the same regardless of how often this runs.
 
+Alongside the console role's username color, each member's server nickname
+gets a "[PS5]"-style tag appended (see sync_console_tags) so their console
+is visible on every message they post, not just via a color that's easy to
+miss. This needs the bot to additionally hold "Manage Nicknames" and be
+positioned above the members it renames in the role list (same hierarchy
+rule role management already needs); Discord never lets a bot rename the
+server owner, regardless of permissions.
+
 Reuses the tunables (NG word list, spam thresholds, XP curve inputs,
 target channel names) from `fc26_watch/realtime_bot/config.py` so both
 implementations stay configured the same way and env vars carry over
@@ -32,6 +40,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -152,8 +161,7 @@ WELCOME_TEMPLATE = (
 )
 
 
-def sync_welcome(guild_id: str, text_channels: list[dict], state: dict) -> None:
-    members = _fetch_all_members(guild_id)
+def sync_welcome(text_channels: list[dict], members: list[dict], state: dict) -> None:
     current_ids = {m["user"]["id"] for m in members if not m["user"].get("bot")}
 
     if not state["welcome_initialized"]:
@@ -251,6 +259,78 @@ def sync_reaction_roles(guild_id: str, channel: dict, state: dict, role_by_name:
                 log.warning("Could not remove role %s from %s", name, user_id)
 
         reactors[name] = sorted(current_user_ids)
+
+
+# ------------------------------------------------------------ console tags --
+
+# Recognizes only a bracket group made up of our own console names (e.g.
+# "[PS5]", "[PS5/PC]"), so an unrelated nickname tag someone already has
+# (e.g. "[Mod]") is never mistaken for ours and stripped.
+_CONSOLE_NAME_SET = {name for name, _color, _emoji in layout.CONSOLE_ROLES}
+_CONSOLE_TAG_PATTERN = re.compile(r"\s*\[([^\[\]]*)\]\s*$")
+_MAX_NICKNAME_LENGTH = 32
+
+
+def _strip_console_tag(display_name: str) -> str:
+    match = _CONSOLE_TAG_PATTERN.search(display_name)
+    if match and set(match.group(1).split("/")) <= _CONSOLE_NAME_SET:
+        return display_name[: match.start()].rstrip()
+    return display_name
+
+
+def _consoles_by_user(reactors: dict[str, list[str]]) -> dict[str, list[str]]:
+    by_user: dict[str, list[str]] = {}
+    # Iterate in CONSOLE_ROLES order so a user with several consoles always
+    # gets the same tag order (e.g. always "[PS5/PC]", never "[PC/PS5]").
+    for name, _color, _emoji in layout.CONSOLE_ROLES:
+        for user_id in reactors.get(name, []):
+            by_user.setdefault(user_id, []).append(name)
+    return by_user
+
+
+def _desired_nickname(base_name: str, console_names: list[str]) -> str:
+    if not console_names:
+        return base_name
+    tag = f"[{'/'.join(console_names)}]"
+    nickname = f"{base_name} {tag}"
+    if len(nickname) > _MAX_NICKNAME_LENGTH:
+        base_name = base_name[: _MAX_NICKNAME_LENGTH - len(tag) - 1].rstrip()
+        nickname = f"{base_name} {tag}"
+    return nickname
+
+
+def sync_console_tags(guild_id: str, members: list[dict], reactors: dict[str, list[str]]) -> None:
+    """Appends a "[PS5]"-style tag (per CONSOLE_ROLES) to each member's
+    server nickname, so anyone can see a poster's console right on their
+    messages -- not just via username color, which is easy to miss.
+    Requires the bot to hold "Manage Nicknames" and be positioned above the
+    members it renames (same role-hierarchy rule as role management); the
+    server owner can never be renamed by a bot, by Discord's own rule.
+    """
+    consoles_by_user = _consoles_by_user(reactors)
+
+    for member in members:
+        user = member["user"]
+        if user.get("bot"):
+            continue
+
+        user_id = user["id"]
+        current_nick = member.get("nick")
+        current_display = current_nick or user.get("global_name") or user["username"]
+        base_name = _strip_console_tag(current_display)
+        desired = _desired_nickname(base_name, consoles_by_user.get(user_id, []))
+
+        if (current_nick or user["username"]) == desired:
+            continue
+        try:
+            _request("PATCH", f"/guilds/{guild_id}/members/{user_id}", json={"nick": desired})
+            log.info("Updated nickname for %s -> %r", user_id, desired)
+        except requests.HTTPError:
+            log.warning(
+                "Could not update nickname for %s -- check Manage Nicknames permission and "
+                "that the bot's role is above theirs (never possible for the server owner).",
+                user_id,
+            )
 
 
 # --------------------------------------------------- moderation + leveling --
@@ -406,12 +486,14 @@ def run() -> None:
     channels = _fetch_channels(DISCORD_GUILD_ID)
     text_channels = [c for c in channels if c["type"] == CHANNEL_TYPE_TEXT]
     role_by_name = {r["name"].casefold(): r for r in _fetch_roles(DISCORD_GUILD_ID)}
+    members = _fetch_all_members(DISCORD_GUILD_ID)
 
-    sync_welcome(DISCORD_GUILD_ID, text_channels, state)
+    sync_welcome(text_channels, members, state)
 
     reaction_channel = _find_by_name(text_channels, bot_config.REACTION_ROLE_CHANNEL_NAME)
     if reaction_channel:
         sync_reaction_roles(DISCORD_GUILD_ID, reaction_channel, state, role_by_name)
+        sync_console_tags(DISCORD_GUILD_ID, members, state["role_reactors"])
     else:
         log.warning("Reaction-role channel %r not found.", bot_config.REACTION_ROLE_CHANNEL_NAME)
 
