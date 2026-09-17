@@ -272,11 +272,12 @@ DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... python -m fc26_watch.discord_setup
 定期的に自動投稿します。`.github/workflows/x-promo-bot.yml` により、
 他のBot同様GitHub Actionsだけで動きます（追加のサーバー契約は不要）。
 
-- 投稿文は `fc26_watch/x_promo.py` の `MESSAGES` に複数パターン用意してあり、
-  実行のたびに順番にローテーションします（毎回同じ文面だとXにスパム扱いされる
-  リスクがあるため）。次に使う文面のインデックスは `x_promo_state.json` に
-  保存し、他のstateファイル同様、実行のたびにワークフローがリポジトリへ
-  自動コミットします。
+- 投稿頻度は1日1回、日本時間17:00固定です。
+- 投稿文は `fc26_watch/x_promo.py` の `MESSAGES` に7パターン（URL・ハッシュタグ
+  込みで各100字前後）用意してあり、実行のたびに順番にローテーションします
+  （毎回同じ文面だとXにスパム扱いされるリスクがあるため）。次に使う文面の
+  インデックスは `x_promo_state.json` に保存し、他のstateファイル同様、
+  実行のたびにワークフローがリポジトリへ自動コミットします。
 - 文面・ハッシュタグを変えたい場合や、招待リンクを差し替えたい場合は
   `MESSAGES` を編集するか、Secrets/環境変数 `DISCORD_INVITE_URL` を設定して
   ください。
@@ -301,9 +302,9 @@ DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... python -m fc26_watch.discord_setup
    | `X_ACCESS_TOKEN`            | Access Token              |
    | `X_ACCESS_TOKEN_SECRET`      | Access Token Secret       |
 
-4. `.github/workflows/x-promo-bot.yml` はデフォルトで毎日UTC 11:00
-   （日本時間 20:00）に自動実行されます。頻度を変えたい場合は `cron` の値を
-   編集してください（Xの無料/Basicプランには月間の投稿数上限があるため、
+4. `.github/workflows/x-promo-bot.yml` はデフォルトで毎日UTC 08:00
+   （日本時間 17:00）に1日1回自動実行されます。頻度を変えたい場合は `cron` の
+   値を編集してください（Xの無料/Basicプランには月間の投稿数上限があるため、
    上げすぎないよう [Developer Portal](https://developer.twitter.com/en/portal/dashboard)
    の利用状況欄で上限を確認しながら調整することを推奨します）。
 5. 手動実行やデバッグは `Actions` タブ → `X (Twitter) FC27 Discord Promo Bot` →

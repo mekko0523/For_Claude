@@ -30,25 +30,25 @@ log = logging.getLogger(__name__)
 
 API_URL = "https://api.twitter.com/2/tweets"
 
-# Rotated through in order so consecutive posts aren't identical text.
-# {invite} is substituted with config.DISCORD_INVITE_URL at post time.
+# Rotated through in order so consecutive posts aren't identical text. Each
+# is kept around 100 characters (incl. the URL and hashtags) per user
+# request. {invite} is substituted with config.DISCORD_INVITE_URL at post
+# time.
 MESSAGES: list[str] = [
-    "⚽ EA SPORTS FC27 日本語コミュニティ、参加者募集中!\n"
-    "最新ニュース・SBC・EVO情報を自動でお届け、対戦・チームメイト募集チャンネルもあります。\n"
-    "{invite}\n"
-    "#FC27 #EAFC27",
-    "🎮 FC27勢のDiscordサーバー、あります。\n"
-    "クラブ・グラウンズ・アルティメット、それぞれの雑談&募集チャンネルで一緒に遊べる仲間を探せます。\n"
-    "{invite}\n"
-    "#EASportsFC27 #FC27",
-    "📢 FC27の最新アップデート・SBC・EVO情報をいち早くチェックしたい人へ。\n"
-    "日本語コミュニティDiscordで自動通知してます、参加無料です。\n"
-    "{invite}\n"
-    "#FC27",
-    "🤝 PS5 / PS4 / Switch / Xbox / PC、どのコンソールでもOK。\n"
-    "FC27の対戦相手・チームメイトをDiscordで探しませんか?\n"
-    "{invite}\n"
-    "#FC27 #FUT27",
+    "⚽FC27の日本語Discordコミュニティ、参加受付中!最新ニュース・SBC・EVO情報を自動配信、"
+    "対戦相手やチームメイトもここで探せます→ {invite} #FC27",
+    "🎮クラブ・グラウンズ・アルティメット、それぞれの雑談&募集チャンネルがあるFC27コミュニティです→ "
+    "{invite} #FC27 #EAFC27",
+    "📢FC27の最新アップデート・SBC・EVO情報をいち早く知りたい方へ。日本語コミュニティDiscordで"
+    "自動通知しています→ {invite} #FC27",
+    "🤝PS5/PS4/Switch/Xbox/PC、どの機種でも歓迎!FC27の対戦相手・チームメイトをDiscordで"
+    "探しませんか?→ {invite} #FC27",
+    "🔥FC27好きが集まる日本語Discordサーバーです。ニュース自動配信、雑談、対戦相手募集もできます→ "
+    "{invite} #FC27",
+    "✨FC27をプレイしている方、一緒に盛り上がりませんか?最新情報の自動通知もある日本語コミュニティです→ "
+    "{invite} #FC27 #FUT27",
+    "👋新規参加者も大歓迎のFC27日本語コミュニティです。自己紹介チャンネルもあるので気軽にどうぞ→ "
+    "{invite} #FC27",
 ]
 
 
