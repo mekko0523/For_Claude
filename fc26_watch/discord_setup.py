@@ -302,6 +302,14 @@ def setup_server(guild_id: str) -> dict[str, str]:
             # because `None` reads as "don't manage overwrites at all".
             permission_overwrites=_readonly_overwrites(guild_id, bot_user_id) if readonly else [],
         )
+    news_channel_ids[layout.REPORT_CHANNEL] = _get_or_create_channel(
+        layout.REPORT_CHANNEL,
+        CHANNEL_TYPE_TEXT,
+        news_cat,
+        existing,
+        guild_id,
+        topic=layout.TOPICS.get(layout.REPORT_CHANNEL),
+    )
 
     recruit_cat = _get_or_create_category(layout.RECRUIT_CATEGORY, existing, guild_id)
     for name in layout.RECRUIT_CHANNELS:
@@ -317,14 +325,6 @@ def setup_server(guild_id: str) -> dict[str, str]:
         existing,
         guild_id,
         topic=layout.TOPICS.get(layout.VOICE_INFO_CHANNEL),
-    )
-    news_channel_ids[layout.REPORT_CHANNEL] = _get_or_create_channel(
-        layout.REPORT_CHANNEL,
-        CHANNEL_TYPE_TEXT,
-        voice_cat,
-        existing,
-        guild_id,
-        topic=layout.TOPICS.get(layout.REPORT_CHANNEL),
     )
     for name in layout.VOICE_CHANNELS:
         _get_or_create_channel(name, CHANNEL_TYPE_VOICE, voice_cat, existing, guild_id)

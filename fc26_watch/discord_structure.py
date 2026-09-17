@@ -42,10 +42,14 @@ VOICE_CATEGORY = "ボイスチャンネル"
 # usage instructions go in this text channel instead, pinned at the top of
 # the category (created before the voice channels themselves).
 VOICE_INFO_CHANNEL = "ボイスチャンネル案内"
-# Alongside the voice channels since voice-call trouble (harassment, technical
-# issues) is the main expected use case, though it's for any report to staff.
-REPORT_CHANNEL = "運営への報告"
 VOICE_CHANNELS = [f"ボイス{i}" for i in range(1, 11)]
+
+# Lives in お知らせ (moved there from ボイスチャンネル by the server owner --
+# discord_setup.py must create/find it under NEWS_CATEGORY, not VOICE_CATEGORY,
+# or a stale parent here would create a duplicate next to the one already
+# moved). Not part of NEWS_CHANNELS/READONLY_CHANNELS since it's neither a
+# bot-news category discord_notify.py routes to nor bot-only.
+REPORT_CHANNEL = "運営への報告"
 
 # Channels where only the bot should be able to post. CATEGORY_TREND is
 # posted to manually (by staff picking notable posts by hand), so it's
