@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      guild_id:
+        description: "Override DISCORD_GUILD_ID for this manual run only (e.g. to test before the secret is registered). Leave blank to use the secret."
+        required: false
 
 permissions:
   contents: write
@@ -30,7 +34,7 @@ jobs:
       - name: Run hourly community bot
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+          DISCORD_GUILD_ID: ${{ github.event.inputs.guild_id || secrets.DISCORD_GUILD_ID }}
         run: python -m fc26_watch.hourly_bot
 
       - name: Commit updated state
