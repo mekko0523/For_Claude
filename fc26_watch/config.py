@@ -117,3 +117,13 @@ DISCORD_ROLES_FILE = os.environ.get("DISCORD_ROLES_FILE", "discord_roles.json")
 # Japanese before posting to Discord (see translate.py). Optional: without
 # it, titles are posted untranslated.
 DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")
+
+# X (Twitter) promotional bot settings (see x_promo.py). OAuth 1.0a user
+# context credentials from an X Developer app with "Read and Write"
+# permission -- all four are required to actually post.
+X_API_KEY = os.environ.get("X_API_KEY", "")
+X_API_SECRET = os.environ.get("X_API_SECRET", "")
+X_ACCESS_TOKEN = os.environ.get("X_ACCESS_TOKEN", "")
+X_ACCESS_TOKEN_SECRET = os.environ.get("X_ACCESS_TOKEN_SECRET", "")
+DISCORD_INVITE_URL = os.environ.get("DISCORD_INVITE_URL", "https://discord.gg/57Fn9e7ft")
+X_PROMO_STATE_FILE = os.environ.get("X_PROMO_STATE_FILE", "x_promo_state.json")

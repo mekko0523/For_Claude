@@ -1,0 +1,58 @@
+name: X (Twitter) FC27 Discord Promo Bot
+
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the tweet without posting or saving state"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: x-promo-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post promotional tweet
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m fc26_watch.x_promo --dry-run -v
+          else
+            python -m fc26_watch.x_promo -v
+          fi
+
+      - name: Commit updated state
+        run: |
+          if [ -n "$(git status --porcelain x_promo_state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add x_promo_state.json
+            git commit -m "chore: update x promo bot state [skip ci]"
+            git push
+          else
+            echo "No state changes to commit."
+          fi

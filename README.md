@@ -264,3 +264,59 @@ NGワードのデフォルトは最小限のプレースホルダーです。`BO
 ```bash
 DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... python -m fc26_watch.discord_setup
 ```
+
+## X（旧Twitter）宣伝Bot
+
+`fc26_watch/x_promo.py` が、FC27 Discordコミュニティ（招待リンク
+`https://discord.gg/57Fn9e7ft`）への参加を呼びかける宣伝ツイートを
+定期的に自動投稿します。`.github/workflows/x-promo-bot.yml` により、
+他のBot同様GitHub Actionsだけで動きます（追加のサーバー契約は不要）。
+
+- 投稿文は `fc26_watch/x_promo.py` の `MESSAGES` に複数パターン用意してあり、
+  実行のたびに順番にローテーションします（毎回同じ文面だとXにスパム扱いされる
+  リスクがあるため）。次に使う文面のインデックスは `x_promo_state.json` に
+  保存し、他のstateファイル同様、実行のたびにワークフローがリポジトリへ
+  自動コミットします。
+- 文面・ハッシュタグを変えたい場合や、招待リンクを差し替えたい場合は
+  `MESSAGES` を編集するか、Secrets/環境変数 `DISCORD_INVITE_URL` を設定して
+  ください。
+
+### セットアップ
+
+1. [X Developer Portal](https://developer.twitter.com/) でプロジェクト・アプリを
+   作成し、アプリの **User authentication settings** で `Read and Write` 権限を
+   有効化してください（投稿には書き込み権限が必須です）。
+2. アプリの `Keys and tokens` タブから以下4つを発行します。
+   - API Key / API Key Secret（Consumer Keys）
+   - Access Token / Access Token Secret（**User authentication settings で
+     Read and Write を有効にした後に**発行し直してください。先に発行した
+     トークンは読み取り専用のままになるため再発行が必要です）
+3. このリポジトリの `Settings > Secrets and variables > Actions` に、以下を
+   登録します。
+
+   | Secret 名                | 内容                     |
+   | ------------------------- | ------------------------ |
+   | `X_API_KEY`                | API Key                  |
+   | `X_API_SECRET`              | API Key Secret            |
+   | `X_ACCESS_TOKEN`            | Access Token              |
+   | `X_ACCESS_TOKEN_SECRET`      | Access Token Secret       |
+
+4. `.github/workflows/x-promo-bot.yml` はデフォルトで毎日UTC 11:00
+   （日本時間 20:00）に自動実行されます。頻度を変えたい場合は `cron` の値を
+   編集してください（Xの無料/Basicプランには月間の投稿数上限があるため、
+   上げすぎないよう [Developer Portal](https://developer.twitter.com/en/portal/dashboard)
+   の利用状況欄で上限を確認しながら調整することを推奨します）。
+5. 手動実行やデバッグは `Actions` タブ → `X (Twitter) FC27 Discord Promo Bot` →
+   `Run workflow` から、`dry_run` オプションを付けて（投稿・state保存なしで
+   文面だけ確認）行えます。
+
+### ローカルでの実行・デバッグ
+
+```bash
+# 投稿・state保存を行わず、次に投稿される文面だけ表示する
+python -m fc26_watch.x_promo --dry-run -v
+
+# 実際に投稿する
+X_API_KEY=... X_API_SECRET=... X_ACCESS_TOKEN=... X_ACCESS_TOKEN_SECRET=... \
+  python -m fc26_watch.x_promo -v
+```

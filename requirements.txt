@@ -2,6 +2,9 @@ requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0
 
+# For fc26_watch/x_promo (X/Twitter OAuth 1.0a request signing).
+requests-oauthlib>=1.3
+
 # For fc26_watch/realtime_bot (the always-on reaction-roles/welcome/
 # moderation/leveling bot). Not needed for the GitHub Actions cron jobs.
 discord.py>=2.4
