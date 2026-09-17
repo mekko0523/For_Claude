@@ -83,13 +83,21 @@ def _extract_title(anchor, fallback_url: str) -> str:
     date prefix ahead of an English headline for EA (which also breaks
     translate.py's is_japanese() check: the date makes the whole blob
     look "already Japanese" and skip translating the headline). Pull just
-    the <h2>/<h3> headline text instead, when the card has one (falls back
-    to the flattened text for anchors without this structure)."""
-    headline = anchor.find("h3") or anchor.find("h2")
-    if headline:
-        headline_text = " ".join(headline.get_text().split())
-        if headline_text:
-            return headline_text
+    the heading text instead, when the card has one.
+
+    Which heading tag holds the short title isn't consistent across sites:
+    fut.gg's cards have a single <h3> with the clean headline, while FUT
+    Mind's cards have both an <h2> with the short title (e.g. "Repeat
+    Delivery") AND an <h3> with a long description -- the opposite
+    assignment. Rather than hard-coding a tag priority that's only right
+    for one of them, collect every heading and take the shortest
+    non-empty one: real titles are short labels, and anything else on
+    these cards (descriptions, requirement text) is a full sentence.
+    Falls back to the flattened text for anchors without any heading."""
+    headings = [" ".join(h.get_text().split()) for h in anchor.find_all(["h1", "h2", "h3", "h4"])]
+    headings = [h for h in headings if h]
+    if headings:
+        return min(headings, key=len)
     return _clean_title(anchor.get_text(), fallback_url)
 
 
@@ -159,14 +167,5 @@ def _dump_all_links(source: Source, html: str) -> None:
         matched = "MATCH" if source.link_pattern.match(path) else "     "
         text = " ".join(anchor.get_text().split())[:60]
         print(f"[{matched}] {path}  {text!r}")
-        headline = anchor.find("h3") or anchor.find("h2")
-        if headline:
-            headline_text = " ".join(headline.get_text().split())
-            if headline_text:
-                print(f"       h2/h3: {headline_text[:80]!r}")
         if matched == "MATCH":
-            for tag in anchor.find_all(True):
-                tag_text = " ".join(tag.get_text().split())[:70]
-                classes = " ".join(tag.get("class") or [])
-                alt = tag.get("alt")
-                print(f"         <{tag.name} class={classes!r} alt={alt!r}> {tag_text!r}")
+            print(f"       title: {_extract_title(anchor, absolute_url)[:80]!r}")
