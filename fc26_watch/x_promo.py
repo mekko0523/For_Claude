@@ -4,14 +4,17 @@ can find it. Runs via GitHub Actions on a schedule, same pattern as
 hourly_bot.py: no persistent connection, one-shot REST call per run, state
 committed back to the repo between runs.
 
-Message text rotates through MESSAGES below (x_promo_state.json tracks the
-next index) instead of always posting identical text -- X restricts
-accounts that repeatedly post near-duplicate content.
+The tweet text itself is written fresh by Claude on every run (see
+generate_tweet) instead of being picked from a fixed list, so wording stays
+varied without maintaining a template list by hand. The last HISTORY_SIZE
+generated tweets are kept in x_promo_state.json and fed back into the
+prompt so Claude avoids repeating the same phrasing/angle.
 
 Usage:
+    ANTHROPIC_API_KEY=... \
     X_API_KEY=... X_API_SECRET=... X_ACCESS_TOKEN=... X_ACCESS_TOKEN_SECRET=... \
       python -m fc26_watch.x_promo
-    python -m fc26_watch.x_promo --dry-run -v   # print the tweet, post/save nothing
+    python -m fc26_watch.x_promo --dry-run -v   # print the generated tweet, post/save nothing
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import json
 import logging
 import os
 
+import anthropic
 import requests
 from requests_oauthlib import OAuth1
 
@@ -28,33 +32,53 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-API_URL = "https://api.twitter.com/2/tweets"
+X_API_URL = "https://api.twitter.com/2/tweets"
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 
-# Rotated through in order so consecutive posts aren't identical text. Each
-# is kept around 100 characters (incl. the URL and hashtags) per user
-# request. {invite} is substituted with config.DISCORD_INVITE_URL at post
-# time.
-MESSAGES: list[str] = [
-    "⚽FC27の日本語Discordコミュニティ、参加受付中!最新ニュース・SBC・EVO情報を自動配信、"
-    "対戦相手やチームメイトもここで探せます→ {invite} #FC27",
-    "🎮クラブ・グラウンズ・アルティメット、それぞれの雑談&募集チャンネルがあるFC27コミュニティです→ "
-    "{invite} #FC27 #EAFC27",
-    "📢FC27の最新アップデート・SBC・EVO情報をいち早く知りたい方へ。日本語コミュニティDiscordで"
-    "自動通知しています→ {invite} #FC27",
-    "🤝PS5/PS4/Switch/Xbox/PC、どの機種でも歓迎!FC27の対戦相手・チームメイトをDiscordで"
-    "探しませんか?→ {invite} #FC27",
-    "🔥FC27好きが集まる日本語Discordサーバーです。ニュース自動配信、雑談、対戦相手募集もできます→ "
-    "{invite} #FC27",
-    "✨FC27をプレイしている方、一緒に盛り上がりませんか?最新情報の自動通知もある日本語コミュニティです→ "
-    "{invite} #FC27 #FUT27",
-    "👋新規参加者も大歓迎のFC27日本語コミュニティです。自己紹介チャンネルもあるので気軽にどうぞ→ "
-    "{invite} #FC27",
-]
+# How many previous tweets to remind Claude about so it doesn't repeat
+# itself. Small enough to keep the prompt (and x_promo_state.json) cheap.
+HISTORY_SIZE = 12
+
+# {invite} in the model's output is substituted with config.DISCORD_INVITE_URL
+# after generation -- Claude is told to use this placeholder rather than
+# typing out the URL itself, so the real invite link is always correct.
+SYSTEM_PROMPT = """\
+あなたはゲーム系Discordコミュニティの宣伝担当です。EA SPORTS FC27
+(サッカーゲーム)の日本語Discordコミュニティへの参加を呼びかける、
+X(旧Twitter)向けの宣伝ツイートを1件だけ考えてください。
+
+制約:
+- 日本語で書き、絵文字を1〜2個使う
+- 招待リンクを書く場所には、実際のURLの代わりに `{invite}` という
+  プレースホルダー文字列をそのまま1回だけ書く(自分でURLを作らない)
+- 文末に #FC27 を含むハッシュタグを1〜2個つける
+- プレースホルダーとハッシュタグを含めて全体で100字前後に収める
+- コミュニティの特徴(最新ニュース・SBC・EVO情報の自動配信、対戦相手や
+  チームメイト募集チャンネル、雑談チャンネル、初心者歓迎など)の中から
+  毎回違う切り口を1つ選ぶ
+- ツイート本文だけを出力し、説明や前置き、引用符は付けない"""
 
 
-def build_tweet(index: int) -> str:
-    template = MESSAGES[index % len(MESSAGES)]
-    return template.format(invite=config.DISCORD_INVITE_URL)
+def generate_tweet(history: list[str]) -> str:
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+    user_prompt = "ツイートを1件作成してください。"
+    if history:
+        user_prompt += "直近の投稿と表現・切り口が似ないようにしてください。直近の投稿:\n" + "\n".join(
+            f"- {tweet}" for tweet in history
+        )
+
+    resp = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=200,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    text = "".join(block.text for block in resp.content if block.type == "text").strip()
+
+    if "{invite}" not in text:
+        text = f"{text} {{invite}}"
+    return text.format(invite=config.DISCORD_INVITE_URL)
 
 
 def post_tweet(text: str) -> str:
@@ -64,7 +88,7 @@ def post_tweet(text: str) -> str:
         config.X_ACCESS_TOKEN,
         config.X_ACCESS_TOKEN_SECRET,
     )
-    resp = requests.post(API_URL, auth=auth, json={"text": text}, timeout=config.REQUEST_TIMEOUT)
+    resp = requests.post(X_API_URL, auth=auth, json={"text": text}, timeout=config.REQUEST_TIMEOUT)
     if not resp.ok:
         raise RuntimeError(f"X API error {resp.status_code}: {resp.text}")
     return resp.json()["data"]["id"]
@@ -72,7 +96,7 @@ def post_tweet(text: str) -> str:
 
 def load_state(path: str) -> dict:
     if not os.path.exists(path):
-        return {"next_index": 0}
+        return {"recent_tweets": []}
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
@@ -83,9 +107,12 @@ def save_state(path: str, state: dict) -> None:
 
 
 def run(dry_run: bool = False) -> str:
+    if not config.ANTHROPIC_API_KEY:
+        raise SystemExit("Missing required env var: ANTHROPIC_API_KEY")
+
     state = load_state(config.X_PROMO_STATE_FILE)
-    index = state.get("next_index", 0)
-    text = build_tweet(index)
+    history = state.get("recent_tweets", [])
+    text = generate_tweet(history)
 
     if dry_run:
         log.info("Dry run: would post tweet:\n%s", text)
@@ -107,14 +134,15 @@ def run(dry_run: bool = False) -> str:
     tweet_id = post_tweet(text)
     log.info("Posted tweet %s", tweet_id)
 
-    state["next_index"] = (index + 1) % len(MESSAGES)
+    history.append(text)
+    state["recent_tweets"] = history[-HISTORY_SIZE:]
     save_state(config.X_PROMO_STATE_FILE, state)
     return text
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="Print the tweet without posting or saving state.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the generated tweet without posting or saving state.")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 

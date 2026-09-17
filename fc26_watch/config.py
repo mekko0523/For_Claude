@@ -127,3 +127,6 @@ X_ACCESS_TOKEN = os.environ.get("X_ACCESS_TOKEN", "")
 X_ACCESS_TOKEN_SECRET = os.environ.get("X_ACCESS_TOKEN_SECRET", "")
 DISCORD_INVITE_URL = os.environ.get("DISCORD_INVITE_URL", "https://discord.gg/57Fn9e7ft")
 X_PROMO_STATE_FILE = os.environ.get("X_PROMO_STATE_FILE", "x_promo_state.json")
+# Used to have Claude write each tweet's text at post time (see
+# x_promo.generate_tweet).
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")

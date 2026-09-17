@@ -273,14 +273,20 @@ DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... python -m fc26_watch.discord_setup
 他のBot同様GitHub Actionsだけで動きます（追加のサーバー契約は不要）。
 
 - 投稿頻度は1日1回、日本時間17:00固定です。
-- 投稿文は `fc26_watch/x_promo.py` の `MESSAGES` に7パターン（URL・ハッシュタグ
-  込みで各100字前後）用意してあり、実行のたびに順番にローテーションします
-  （毎回同じ文面だとXにスパム扱いされるリスクがあるため）。次に使う文面の
-  インデックスは `x_promo_state.json` に保存し、他のstateファイル同様、
+- 投稿文は固定テンプレートではなく、**実行のたびにClaude（Anthropic API）が
+  新しく考えます**（`fc26_watch/x_promo.py` の `generate_tweet`）。URL・
+  ハッシュタグ込みで100字前後、絵文字1〜2個、コミュニティの特徴（ニュース
+  自動配信・SBC/EVO情報・対戦相手やチームメイト募集・雑談チャンネルなど）
+  から毎回違う切り口を選ぶよう指示しています。招待リンクは常に
+  `https://discord.gg/57Fn9e7ft`（Claudeが直接URLを書かず、生成後に
+  プレースホルダーへ差し込む形にしているため、リンク自体が誤生成される
+  ことはありません）。
+- 直近12件の投稿文を `x_promo_state.json` に保存し、次回生成時にプロンプトへ
+  渡すことで、似た表現・切り口の連投を避けています。他のstateファイル同様、
   実行のたびにワークフローがリポジトリへ自動コミットします。
-- 文面・ハッシュタグを変えたい場合や、招待リンクを差し替えたい場合は
-  `MESSAGES` を編集するか、Secrets/環境変数 `DISCORD_INVITE_URL` を設定して
-  ください。
+- 文章のトーン・制約（文字数、絵文字数、ハッシュタグなど）を変えたい場合は
+  `fc26_watch/x_promo.py` の `SYSTEM_PROMPT` を編集してください。招待リンクを
+  差し替えたい場合はSecrets/環境変数 `DISCORD_INVITE_URL` を設定します。
 
 ### セットアップ
 
@@ -292,32 +298,36 @@ DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... python -m fc26_watch.discord_setup
    - Access Token / Access Token Secret（**User authentication settings で
      Read and Write を有効にした後に**発行し直してください。先に発行した
      トークンは読み取り専用のままになるため再発行が必要です）
-3. このリポジトリの `Settings > Secrets and variables > Actions` に、以下を
+3. [Anthropic Console](https://console.anthropic.com/) でAPIキーを発行します
+   （投稿文の生成に使います。使った分だけの従量課金です）。
+4. このリポジトリの `Settings > Secrets and variables > Actions` に、以下を
    登録します。
 
    | Secret 名                | 内容                     |
    | ------------------------- | ------------------------ |
+   | `ANTHROPIC_API_KEY`         | Anthropic APIキー         |
    | `X_API_KEY`                | API Key                  |
    | `X_API_SECRET`              | API Key Secret            |
    | `X_ACCESS_TOKEN`            | Access Token              |
    | `X_ACCESS_TOKEN_SECRET`      | Access Token Secret       |
 
-4. `.github/workflows/x-promo-bot.yml` はデフォルトで毎日UTC 08:00
+5. `.github/workflows/x-promo-bot.yml` はデフォルトで毎日UTC 08:00
    （日本時間 17:00）に1日1回自動実行されます。頻度を変えたい場合は `cron` の
    値を編集してください（Xの無料/Basicプランには月間の投稿数上限があるため、
    上げすぎないよう [Developer Portal](https://developer.twitter.com/en/portal/dashboard)
    の利用状況欄で上限を確認しながら調整することを推奨します）。
-5. 手動実行やデバッグは `Actions` タブ → `X (Twitter) FC27 Discord Promo Bot` →
+6. 手動実行やデバッグは `Actions` タブ → `X (Twitter) FC27 Discord Promo Bot` →
    `Run workflow` から、`dry_run` オプションを付けて（投稿・state保存なしで
-   文面だけ確認）行えます。
+   生成された文面だけ確認）行えます。
 
 ### ローカルでの実行・デバッグ
 
 ```bash
-# 投稿・state保存を行わず、次に投稿される文面だけ表示する
-python -m fc26_watch.x_promo --dry-run -v
+# 投稿・state保存を行わず、Claudeが生成した文面だけ表示する
+ANTHROPIC_API_KEY=... python -m fc26_watch.x_promo --dry-run -v
 
 # 実際に投稿する
-X_API_KEY=... X_API_SECRET=... X_ACCESS_TOKEN=... X_ACCESS_TOKEN_SECRET=... \
+ANTHROPIC_API_KEY=... \
+  X_API_KEY=... X_API_SECRET=... X_ACCESS_TOKEN=... X_ACCESS_TOKEN_SECRET=... \
   python -m fc26_watch.x_promo -v
 ```
