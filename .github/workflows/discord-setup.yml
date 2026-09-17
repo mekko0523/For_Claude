@@ -18,6 +18,10 @@ on:
         description: "Post the report-channel usage guide message to 運営への報告"
         type: boolean
         default: false
+      post_channel_guides:
+        description: "Post the usage guide message to every 雑談/お知らせ channel"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -67,3 +71,9 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         run: python -m fc26_watch.announce report_guide
+
+      - name: Post 雑談/お知らせ channel guides
+        if: ${{ github.event.inputs.post_channel_guides == 'true' }}
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: python -m fc26_watch.announce channel_guides
