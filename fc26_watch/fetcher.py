@@ -87,17 +87,19 @@ def _extract_title(anchor, fallback_url: str) -> str:
 
     Which heading tag holds the short title isn't consistent across sites:
     fut.gg's cards have a single <h3> with the clean headline, while FUT
-    Mind's cards have both an <h2> with the short title (e.g. "Repeat
-    Delivery") AND an <h3> with a long description -- the opposite
-    assignment. Rather than hard-coding a tag priority that's only right
-    for one of them, collect every heading and take the shortest
-    non-empty one: real titles are short labels, and anything else on
-    these cards (descriptions, requirement text) is a full sentence.
-    Falls back to the flattened text for anchors without any heading."""
-    headings = [" ".join(h.get_text().split()) for h in anchor.find_all(["h1", "h2", "h3", "h4"])]
-    headings = [h for h in headings if h]
-    if headings:
-        return min(headings, key=len)
+    Mind's cards have an <h2> with the short title (e.g. "Repeat
+    Delivery") followed by an <h3> description -- and sometimes a further
+    <h3>"Requirements" section below that. Picking by tag priority breaks
+    fut.gg-vs-FUT-Mind, and picking the shortest heading breaks on cards
+    with a "Requirements"-style heading shorter than the real title. What
+    holds in every case seen (via --dump-links) is document order: the
+    title heading always comes first, whatever level it is. Falls back to
+    the flattened text for anchors without any heading."""
+    heading = anchor.find(["h1", "h2", "h3", "h4"])
+    if heading:
+        heading_text = " ".join(heading.get_text().split())
+        if heading_text:
+            return heading_text
     return _clean_title(anchor.get_text(), fallback_url)
 
 
