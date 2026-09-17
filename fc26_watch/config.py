@@ -77,11 +77,13 @@ SOURCES: list[Source] = [
     # an issue here. Titles need no translation (already Japanese) -- just
     # the same clean-title extraction every other source gets.
     #
-    # 4Gamer's dedicated FC27 (PS5 edition) game page/news hub. Confirmed
-    # real article: https://www.4gamer.net/games/027/G102741/20260724019/
+    # 4Gamer's dedicated FC27 (PS5 edition) game page. The page itself only
+    # links to one article; the actual news list lives on its
+    # index_news.html sub-page (verified via --dump-links). Confirmed real
+    # article: https://www.4gamer.net/games/027/G102741/20260724019/
     Source(
         name="4gamer_fc27",
-        page_url="https://www.4gamer.net/games/027/G102741/",
+        page_url="https://www.4gamer.net/games/027/G102741/index_news.html",
         base_url="https://www.4gamer.net",
         link_pattern=re.compile(r"^/games/027/G102741/\d+/?$"),
     ),
@@ -93,15 +95,13 @@ SOURCES: list[Source] = [
         base_url="https://fifafutguide.com",
         link_pattern=re.compile(r"^/archives/\d+/?$"),
     ),
-    # FIFAUTeam -- a longstanding English-language FUT news/guide site.
-    # Not yet verified against the live site (this environment can't reach
-    # it directly); run --dump-links and adjust if it comes back empty.
-    Source(
-        name="fifauteam_fc27",
-        page_url="https://fifauteam.com/",
-        base_url="https://fifauteam.com",
-        link_pattern=re.compile(r"^/[a-z0-9][a-z0-9-]{3,}/?$"),
-    ),
+    # fifauteam.com was also tried, but its homepage turned out to be a
+    # static navigation hub (permanent tracker/reference pages like
+    # "CALENDAR", "STADIUMS", "PACKS") rather than a chronological news
+    # feed -- confirmed via --dump-links, which found 81 matches, nearly
+    # all of them evergreen pages rather than actual news. Dropped rather
+    # than flood アップデート情報 with one-time "news" that's really just
+    # its site nav. No dedicated news/blog listing page was found for it.
 ]
 
 # Source names whose items are categorized as CATEGORY_EA_OFFICIAL regardless
