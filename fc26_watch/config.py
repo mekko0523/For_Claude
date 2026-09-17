@@ -40,18 +40,22 @@ SOURCES: list[Source] = [
     # a couple of top nav links to /evolutions/ and /objectives/ themselves,
     # but no links to specific evolution/objective instances (confirmed via
     # --dump-links: 0 matches every run). The actual listing pages are
-    # /evolutions/ and /objectives/ directly.
+    # /evolutions/ and /objectives/ directly. Their own filter/nav links
+    # (/evolutions/best/, /evolutions/trending/, /objectives/mastery/, etc.)
+    # match a bare "/evolutions?/[slug]" pattern too, so real individual
+    # items are only recognized by requiring a leading numeric id, e.g.
+    # /evolutions/2491-intro-to-evolutions/ (confirmed via --dump-links).
     Source(
         name="futgg_evolutions",
         page_url="https://www.fut.gg/evolutions/",
         base_url="https://www.fut.gg",
-        link_pattern=re.compile(r"^/evolutions?/[a-z0-9][a-z0-9-]*/?$"),
+        link_pattern=re.compile(r"^/evolutions?/\d[a-z0-9-]*/?$"),
     ),
     Source(
         name="futgg_objectives",
         page_url="https://www.fut.gg/objectives/",
         base_url="https://www.fut.gg",
-        link_pattern=re.compile(r"^/objectives?/[a-z0-9][a-z0-9-]*/?$"),
+        link_pattern=re.compile(r"^/objectives?/\d[a-z0-9-]*/?$"),
     ),
     Source(
         name="futgg_sbc",

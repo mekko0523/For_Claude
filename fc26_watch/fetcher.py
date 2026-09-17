@@ -164,3 +164,9 @@ def _dump_all_links(source: Source, html: str) -> None:
             headline_text = " ".join(headline.get_text().split())
             if headline_text:
                 print(f"       h2/h3: {headline_text[:80]!r}")
+        if matched == "MATCH":
+            for tag in anchor.find_all(True):
+                tag_text = " ".join(tag.get_text().split())[:70]
+                classes = " ".join(tag.get("class") or [])
+                alt = tag.get("alt")
+                print(f"         <{tag.name} class={classes!r} alt={alt!r}> {tag_text!r}")
