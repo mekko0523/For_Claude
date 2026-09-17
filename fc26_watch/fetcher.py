@@ -53,6 +53,13 @@ def fetch_page(url: str) -> str | None:
     try:
         resp = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
+        # requests defaults text/* to ISO-8859-1 when the Content-Type header
+        # doesn't declare a charset (RFC 2616), which mojibakes any site that
+        # serves UTF-8/Shift_JIS bytes without an explicit header (seen on
+        # 4gamer.net). Fall back to requests' own content-sniffed guess in
+        # that case; sites that do declare a charset are unaffected.
+        if resp.encoding is None or resp.encoding.lower() == "iso-8859-1":
+            resp.encoding = resp.apparent_encoding
         return resp.text
     except requests.RequestException as exc:
         log.warning("Failed to fetch %s: %s", url, exc)
@@ -68,21 +75,21 @@ def _clean_title(link_text: str, fallback_url: str) -> str:
     return slug.replace("-", " ").title()
 
 
-def _extract_title(anchor, source: Source, fallback_url: str) -> str:
-    """EA's news cards pack the anchor's flattened text into one run-on
-    string (date + headline + description, e.g. "2026年9月14日EA SPORTS
-    FC™ 27 | Launch UpdateExplore what's coming..."), which also breaks
-    translate.py's is_japanese() check: the Japanese date prefix makes it
-    think the whole blob is already Japanese and skip translating an
-    otherwise-English headline. Pull just the <h3> headline text instead,
-    when the card has one (falls back to the flattened text for anchors
-    without this structure, e.g. futbin/fut.gg's plain link cards)."""
-    if source.name in EA_SOURCE_NAMES:
-        headline = anchor.find("h3")
-        if headline:
-            headline_text = " ".join(headline.get_text().split())
-            if headline_text:
-                return headline_text
+def _extract_title(anchor, fallback_url: str) -> str:
+    """Most of these sites' news cards pack the anchor's flattened text
+    into one run-on string -- category label + headline + description +
+    date + author, e.g. "GuidesFC 27Which Starter League Should You Pick
+    in EA FC 27?...September 16, 2026Faruk K." for fut.gg, or a Japanese
+    date prefix ahead of an English headline for EA (which also breaks
+    translate.py's is_japanese() check: the date makes the whole blob
+    look "already Japanese" and skip translating the headline). Pull just
+    the <h2>/<h3> headline text instead, when the card has one (falls back
+    to the flattened text for anchors without this structure)."""
+    headline = anchor.find("h3") or anchor.find("h2")
+    if headline:
+        headline_text = " ".join(headline.get_text().split())
+        if headline_text:
+            return headline_text
     return _clean_title(anchor.get_text(), fallback_url)
 
 
@@ -102,7 +109,7 @@ def extract_items(source: Source, html: str) -> list[Item]:
             continue
         seen_urls.add(absolute_url)
 
-        title = _extract_title(anchor, source, absolute_url) or anchor.get("title", "")
+        title = _extract_title(anchor, absolute_url) or anchor.get("title", "")
         items.append(
             Item(
                 source_name=source.name,
@@ -152,3 +159,8 @@ def _dump_all_links(source: Source, html: str) -> None:
         matched = "MATCH" if source.link_pattern.match(path) else "     "
         text = " ".join(anchor.get_text().split())[:60]
         print(f"[{matched}] {path}  {text!r}")
+        headline = anchor.find("h3") or anchor.find("h2")
+        if headline:
+            headline_text = " ".join(headline.get_text().split())
+            if headline_text:
+                print(f"       h2/h3: {headline_text[:80]!r}")

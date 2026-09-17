@@ -1,8 +1,10 @@
 # FC27 Update Watch
 
-[futbin.com](https://www.futbin.com/) と [fut.gg](https://www.fut.gg/) を定期的にチェックし、
-EA SPORTS FC 27 関連の新着情報（ニュース、パッチノート/タイトルアップデート、SBC、EVO）を
-検出したら Gmail 経由でメール通知する仕組みです。GitHub Actions で定期実行します。
+[futbin.com](https://www.futbin.com/)、[fut.gg](https://www.fut.gg/)、EA公式サイト、
+[futwiz.com](https://www.futwiz.com/)、[4gamer.net](https://www.4gamer.net/)、
+[fifafutguide.com](https://fifafutguide.com/) を定期的にチェックし、EA SPORTS FC 27 関連の
+新着情報（ニュース、パッチノート/タイトルアップデート、SBC、EVO）を検出したら Gmail 経由で
+メール通知する仕組みです。GitHub Actions で定期実行します。
 
 ## 仕組み
 
@@ -15,10 +17,10 @@ EA SPORTS FC 27 関連の新着情報（ニュース、パッチノート/タイ
 - 初回実行時はメール送信せず、現在存在するリンクをすべて「既知」として `state.json` に
   記録するだけです（そうしないと初回に大量の誤通知が発生するため）。
 - `state.json` は GitHub Actions が実行のたびに自動でリポジトリにコミット・push します。
-- 重複投稿の防止は二段構えです。① `state.json` の URL 一覧により、一度投稿したURLは
-  何度実行されても再投稿されません。② 同じニュースが futbin.com / fut.gg 双方から
-  別URLで報告された場合に備え、同一バッチ内でタイトルが一致するものは1件にまとめます
-  （`fc26_watch/main.py` の `dedupe_by_title`）。
+- 重複投稿の防止は二段構えで、ソースの数が増えても自動的に効きます。① `state.json` の
+  URL 一覧により、一度投稿したURLは何度実行されても再投稿されません。② 同じニュースが
+  複数サイトから別URLで報告された場合に備え、同一バッチ内でタイトルが一致するものは
+  1件にまとめます（`fc26_watch/main.py` の `dedupe_by_title`）。
 - Discordに投稿するニュースのタイトルは、DeepL APIキー（`DEEPL_API_KEY`）が設定されて
   いれば日本語に自動翻訳されます。**リンク自体は常に原文記事のURLのまま**です。
   未設定の場合は原文タイトルのまま投稿されます。
@@ -63,27 +65,28 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
 
 ## 既知の制限
 
-- futbin.com / fut.gg は公開ニュース API・RSS を提供していないため、HTML 内のリンクを
+- 各サイトは公開ニュース API・RSS を提供していないため、HTML 内のリンクを
   URL パターンでスキャンする方式を採っています。サイトの構造が変わるとリンクが検出できなく
   なることがあります。その場合は `--dump-links` で実際のリンク一覧を確認し、
   `fc26_watch/config.py` の `SOURCES` にある `link_pattern` を更新してください。
-- このプロジェクトを作成した実行環境からは futbin.com / fut.gg への直接アクセスができな
-  かったため、`link_pattern` は公開情報（検索結果に出てきた URL 例など）から推測した
-  ベストエフォートの設定です。**運用開始直後に一度 `--dump-links` で実際のリンク構造を
-  確認し、各ソースが期待通り拾えているか確認することを強く推奨します。**
+- **futbin.com と futwiz.com はこのプロジェクトの実行環境からのアクセスをブロックしており
+  （403エラー）、常に0件になります。** ボット対策が解除されれば、コード変更なしで自動的に
+  拾えるようになるため、そのまま残してあります。
 - SBC / EVO のタイトルにはゲームバージョン（`27` など）が含まれないことが多く、
   `APPLY_FC_VERSION_FILTER` が有効だとこれらの新着が通知から漏れる可能性があります。
   SBC/EVO はバージョンを問わず全件通知したい場合は、`fc26_watch/config.py` の該当
   `Source` を分けてフィルタを個別に無効化するか、ワークフローの環境変数で
   `APPLY_FC_VERSION_FILTER=false` を設定してください。
 - `FC_VERSION_PATTERN`（`fc26_watch/config.py`）は現在 FC27 関連の新着のみを
-  対象にしています。両サイトには過去作（FC26 等）の記事も残っているため、
+  対象にしています。各サイトには過去作（FC26 等）の記事も残っているため、
   それらは自動的にフィルタで除外されます。次のタイトルが出た際はここを
   更新してください。
 - スクレイピング元サイトの利用規約・robots.txt の範囲内でご利用ください。
-- EA公式ニュース（`ea_official_news` ソース）のURL・リンクパターンは実サイトで検証できて
-  いないベストエフォートの値です。`--dump-links` で実際のリンク構造を確認し、
-  `fc26_watch/config.py` の該当 `Source` を調整してください。
+- `link_pattern` は `--dump-links` の実行結果で検証済みです。サイトのマークアップが
+  変わって新着が0件になった場合は、同様に `--dump-links` で確認・調整してください。
+- 4gamer.net や fifafutguide.com など日本語ソースの記事タイトルは翻訳不要でそのまま
+  投稿されます。DeepL による翻訳は、タイトルに日本語が含まれない場合のみ行われます
+  （`fc26_watch/translate.py` の `is_japanese`）。
 
 ## Discord コミュニティサーバー連携
 
@@ -96,7 +99,7 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
 
 - **雑談**: `クラブ雑談` / `グラウンズ雑談` / `アルティメット雑談` / `自己紹介`
 - **お知らせ**:
-  - `アップデート情報`（futbin/fut.ggの一般ニュース・パッチノート。Bot専用・書き込み不可）
+  - `アップデート情報`（各ソースの一般ニュース・パッチノート。Bot専用・書き込み不可）
   - `EVO情報`（Evolutions。Bot専用・書き込み不可）
   - `選手情報・SBC`（SBC / Objectives。いずれも選手カード獲得手段のため統合。Bot専用・書き込み不可）
   - `EA公式情報`（EA公式サイトのFC27関連アップデート情報。Bot専用・書き込み不可）
@@ -111,7 +114,7 @@ GMAIL_USER=... GMAIL_APP_PASSWORD=... MAIL_TO=... \
   （Discord APIの制約でボイスチャンネル自体にはトピックを設定できないため、
   使い方の説明はこのテキストチャンネルに集約しています）
 
-新着情報の分類は、futbin.com / fut.gg から実際に取得できる URL 構造
+新着情報の分類は、各ソースから実際に取得できる URL 構造
 （`/evolutions/...` `/sbc/...` `/objectives/...` `/news/...`）を元に
 `fc26_watch/fetcher.py` の `categorize_path` で機械的に判定しています
 （EA公式ソースの記事は URL に関わらず常に `EA公式情報` に分類されます）。

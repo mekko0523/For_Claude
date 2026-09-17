@@ -60,6 +60,50 @@ SOURCES: list[Source] = [
         base_url="https://www.ea.com",
         link_pattern=re.compile(r"^/ja/games/ea-sports-fc/fc-27/news/[a-z0-9-]+/?$"),
     ),
+    # futwiz.com is a major FUT companion site like futbin/fut.gg, but --
+    # like futbin -- returns 403 to this scraper (bot-protected). Kept
+    # anyway, same as futbin_news below: costs nothing to leave in, and
+    # starts working automatically without a code change if that ever
+    # relaxes. See README "known limitations".
+    Source(
+        name="futwiz_news",
+        page_url="https://www.futwiz.com/en/fc27/news",
+        base_url="https://www.futwiz.com",
+        link_pattern=re.compile(r"^/en/fc27/news/[a-z0-9][a-z0-9-]*/?$"),
+    ),
+    # Two Japanese-language sources, found and confirmed (real example
+    # article URLs, not guessed) via web search rather than --dump-links,
+    # since neither futbin/futwiz-style blocking nor a wrong URL guess is
+    # an issue here. Titles need no translation (already Japanese) -- just
+    # the same clean-title extraction every other source gets.
+    #
+    # 4Gamer's dedicated FC27 (PS5 edition) game page. index_news.html was
+    # also tried, expecting a fuller news list, but --dump-links showed it's
+    # actually a sitewide "latest news across all games" widget (dozens of
+    # unrelated titles, 0 matches for this game) -- worse than this hub page,
+    # which finds this game's own article link. Confirmed real article:
+    # https://www.4gamer.net/games/027/G102741/20260724019/
+    Source(
+        name="4gamer_fc27",
+        page_url="https://www.4gamer.net/games/027/G102741/",
+        base_url="https://www.4gamer.net",
+        link_pattern=re.compile(r"^/games/027/G102741/\d+/?$"),
+    ),
+    # EAFC UTGUIDE, a Japanese FC27 Ultimate Team-focused guide site.
+    # Confirmed real article: https://fifafutguide.com/archives/6567
+    Source(
+        name="fifafutguide_fc27",
+        page_url="https://fifafutguide.com/",
+        base_url="https://fifafutguide.com",
+        link_pattern=re.compile(r"^/archives/\d+/?$"),
+    ),
+    # fifauteam.com was also tried, but its homepage turned out to be a
+    # static navigation hub (permanent tracker/reference pages like
+    # "CALENDAR", "STADIUMS", "PACKS") rather than a chronological news
+    # feed -- confirmed via --dump-links, which found 81 matches, nearly
+    # all of them evergreen pages rather than actual news. Dropped rather
+    # than flood アップデート情報 with one-time "news" that's really just
+    # its site nav. No dedicated news/blog listing page was found for it.
 ]
 
 # Source names whose items are categorized as CATEGORY_EA_OFFICIAL regardless
