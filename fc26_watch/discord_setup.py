@@ -138,7 +138,22 @@ def _get_or_create_role(
         if role["name"].casefold() == name.casefold():
             return role["id"]
 
-    payload = {"name": name, "color": color, "hoist": True, "mentionable": True, "unicode_emoji": emoji}
+    # Explicit "permissions": "0" matters here -- if omitted, Discord's API
+    # defaults a new role's permissions to a snapshot of @everyone's *current*
+    # permissions at creation time (not a live link to them). This guild's
+    # @everyone previously carried "Mention @everyone" (Discord's own default
+    # for new servers), so roles created before that was manually locked down
+    # silently inherited it and kept it even after @everyone was fixed. These
+    # are cosmetic self-assign roles (console tags) with no reason to carry
+    # any permission of their own.
+    payload = {
+        "name": name,
+        "color": color,
+        "hoist": True,
+        "mentionable": True,
+        "unicode_emoji": emoji,
+        "permissions": "0",
+    }
     try:
         created = _request("POST", f"/guilds/{guild_id}/roles", json=payload)
     except requests.HTTPError:
