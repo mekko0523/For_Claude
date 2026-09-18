@@ -328,7 +328,7 @@ def setup_server(guild_id: str) -> dict[str, str]:
 
     recruit_cat = _get_or_create_category(layout.RECRUIT_CATEGORY, existing, guild_id)
     for name in layout.RECRUIT_CHANNELS:
-        _get_or_create_channel(
+        news_channel_ids[name] = _get_or_create_channel(
             name, CHANNEL_TYPE_TEXT, recruit_cat, existing, guild_id, topic=layout.TOPICS.get(name)
         )
 
