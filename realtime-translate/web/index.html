@@ -46,6 +46,11 @@
   </main>
 
   <footer class="controls">
+    <div class="toolbar">
+      <button type="button" class="tool-btn" id="newBtn">＋ 新規</button>
+      <button type="button" class="tool-btn" id="saveBtn">保存・共有</button>
+      <button type="button" class="tool-btn" id="historyBtn">履歴</button>
+    </div>
     <button class="main-btn" id="toggleBtn">開始</button>
   </footer>
 
@@ -62,16 +67,21 @@
         <button type="button" class="small-btn" id="fontDown">A−</button>
         <button type="button" class="small-btn" id="fontUp">A＋</button>
       </div>
-      <div class="row">
-        <button type="button" class="small-btn" id="exportBtn">字幕を保存</button>
-        <button type="button" class="small-btn danger" id="clearBtn">字幕を消去</button>
-      </div>
       <details class="diag-log">
         <summary>診断ログ</summary>
         <pre id="diagLog"></pre>
         <button type="button" class="small-btn" id="copyDiagBtn">診断ログをコピー</button>
       </details>
       <p class="hint">無音 <span id="silenceSec"></span> 秒で自動停止 / 最長 <span id="maxMin"></span> 分</p>
+      <button class="small-btn primary" value="ok">閉じる</button>
+    </form>
+  </dialog>
+
+  <dialog id="history">
+    <form method="dialog" class="settings-form">
+      <h2>セッション履歴</h2>
+      <p class="hint">字幕は端末に自動保存されます。「開く」で表示し、「再開」で続きを翻訳できます。</p>
+      <ul class="history-list" id="historyList"></ul>
       <button class="small-btn primary" value="ok">閉じる</button>
     </form>
   </dialog>

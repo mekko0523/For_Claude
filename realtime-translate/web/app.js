@@ -17,6 +17,10 @@ const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月�
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
 const LS_PASSPHRASE = "rt.passphrase";
 const LS_FONT = "rt.fontScale";
+const LS_SESSIONS = "rt.sessions";        // セッション一覧(目次)
+const LS_SESSION_PREFIX = "rt.session.";  // 各セッションの字幕本体
+const LS_CURRENT = "rt.currentSession";
+const AUTOSAVE_MS = 2_000;                // 字幕の自動保存間隔
 
 // ===== DOM =====
 const $ = (id) => document.getElementById(id);
@@ -45,7 +49,10 @@ let wakeLock = null;
 let tickTimer = null;
 let liveSince = 0;           // 課金対象(接続完了)の開始時刻
 let lastInputAt = 0;         // 最後に英語の文字起こしが届いた時刻
-let accumulatedMs = 0;       // 過去セッションを含む累計時間(料金表示用)
+let session = null;          // 表示中のセッション {id, createdAt, updatedAt, durationMs, entries}
+let dirty = false;           // 未保存の字幕があるか
+let lastSaveAt = 0;
+let storageWarned = false;
 let fontScale = 1;
 let lastError = "";          // 手動停止しても消さずに残すエラー
 let statsTimer = null;       // 送信音量(WebRTC 統計)の取得
@@ -56,7 +63,6 @@ let lastEventType = "";
 const diagLines = [];        // 診断ログ(設定画面に表示・コピー可)
 const DIAG_MAX = 80;
 
-const log = [];              // 書き出し用 {lang, t, text}
 const panes = {
   en: { el: enText, p: null, entry: null, lastAt: 0 },
   ja: { el: jaText, p: null, entry: null, lastAt: 0 },
@@ -76,15 +82,22 @@ toggleBtn.addEventListener("click", () => (state === "idle" ? start() : stop("us
 $("settingsBtn").addEventListener("click", () => settings.showModal());
 $("fontUp").addEventListener("click", () => applyFontScale(fontScale + 0.1));
 $("fontDown").addEventListener("click", () => applyFontScale(fontScale - 0.1));
-$("exportBtn").addEventListener("click", exportLog);
-$("clearBtn").addEventListener("click", clearSubtitles);
+$("newBtn").addEventListener("click", newSession);
+$("saveBtn").addEventListener("click", () => shareSession(session));
+$("historyBtn").addEventListener("click", openHistory);
 $("copyDiagBtn").addEventListener("click", copyDiag);
 $("settingsBtn").addEventListener("click", renderDiagLog);
 settings.addEventListener("close", () => savePassphrase(passInput.value));
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state === "live") acquireWakeLock();
+  if (document.visibilityState === "hidden") saveSession();
 });
+window.addEventListener("pagehide", () => saveSession());
+
+// 前回表示していたセッションを復元
+session = loadSession(lsGet(LS_CURRENT)) || createSession();
+renderSession();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -214,8 +227,9 @@ async function start() {
 // ===== 停止 =====
 function stop(reason, message) {
   generation++; // 進行中の非同期処理を無効化
-  if (liveSince) accumulatedMs += Date.now() - liveSince;
+  if (liveSince) session.durationMs += Date.now() - liveSince;
   liveSince = 0;
+  saveSession();
 
   try { dc?.close(); } catch {}
   try { pc?.close(); } catch {}
@@ -307,12 +321,13 @@ function appendDelta(lang, delta) {
     pane.p = document.createElement("p");
     pane.el.appendChild(pane.p);
     pane.entry = { lang, t: now, text: "" };
-    log.push(pane.entry);
+    session.entries.push(pane.entry);
     delta = delta.replace(/^\s+/, "");
   }
   pane.lastAt = now;
   pane.entry.text += delta;
   pane.p.textContent = pane.entry.text;
+  dirty = true;
 
   // ユーザーが読み返しているとき以外は自動スクロール
   if (nearBottom) pane.el.scrollTop = pane.el.scrollHeight;
@@ -348,6 +363,7 @@ function tick() {
       countdownEl.hidden = true;
     }
   }
+  if (dirty && now - lastSaveAt >= AUTOSAVE_MS) saveSession();
   render();
 }
 
@@ -406,13 +422,15 @@ function setMeter(level) {
 
 function render() {
   diagCount.textContent = `受信 ${eventCount} 件`;
-  const sessionMs = liveSince ? Date.now() - liveSince : 0;
-  const shown = liveSince ? sessionMs : accumulatedMs;
-  elapsedEl.textContent = fmtTime(shown);
-  costEl.textContent = `$${((accumulatedMs + sessionMs) / 60_000 * PRICE_PER_MIN_USD).toFixed(3)}`;
-  costEl.title = "このページを開いてからの累計概算";
-  toggleBtn.textContent = state === "idle" ? "開始" : "停止";
+  // 経過時間と料金は「表示中のセッション」の合計
+  const totalMs = (session?.durationMs || 0) + (liveSince ? Date.now() - liveSince : 0);
+  elapsedEl.textContent = fmtTime(totalMs);
+  costEl.textContent = `$${(totalMs / 60_000 * PRICE_PER_MIN_USD).toFixed(3)}`;
+  costEl.title = "このセッションの概算料金";
+  toggleBtn.textContent = state === "idle" ? (session?.entries.length ? "再開" : "開始") : "停止";
   toggleBtn.classList.toggle("stop", state !== "idle");
+  $("newBtn").disabled = state !== "idle";
+  $("historyBtn").disabled = state !== "idle";
 }
 
 function setState(s) {
@@ -451,27 +469,191 @@ function applyFontScale(v) {
   lsSet(LS_FONT, String(fontScale));
 }
 
-function clearSubtitles() {
-  if (!confirm("表示中の字幕をすべて消去しますか?")) return;
-  enText.textContent = "";
-  jaText.textContent = "";
-  log.length = 0;
-  for (const pane of Object.values(panes)) { pane.p = null; pane.entry = null; }
+// ===== セッション(字幕の保存・切り替え) =====
+function createSession() {
+  const now = Date.now();
+  const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  lsSet(LS_CURRENT, id);
+  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [] };
 }
 
-function exportLog() {
-  if (!log.length) { alert("保存する字幕がありません"); return; }
-  const lines = [...log]
-    .sort((a, b) => a.t - b.t)
-    .map((e) => `[${new Date(e.t).toLocaleTimeString("ja-JP")}] ${e.lang.toUpperCase()}: ${e.text}`);
-  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+function loadSession(id) {
+  if (!id) return null;
+  try {
+    const obj = JSON.parse(lsGet(LS_SESSION_PREFIX + id));
+    return obj && Array.isArray(obj.entries) ? obj : null;
+  } catch { return null; }
+}
+
+function loadIndex() {
+  try { return JSON.parse(lsGet(LS_SESSIONS)) || []; } catch { return []; }
+}
+
+// 字幕が1行もないセッションは一覧に載せない
+function saveSession() {
+  lastSaveAt = Date.now();
+  dirty = false;
+  if (!session || (!session.entries.length && !session.durationMs)) return;
+  session.updatedAt = Date.now();
+  const firstEn = session.entries.find((e) => e.lang === "en")?.text || "";
+  const meta = {
+    id: session.id,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    durationMs: session.durationMs,
+    preview: firstEn.slice(0, 60),
+  };
+  const index = loadIndex().filter((m) => m.id !== session.id);
+  index.unshift(meta);
+  index.sort((a, b) => b.createdAt - a.createdAt);
+  const ok = lsSet(LS_SESSION_PREFIX + session.id, JSON.stringify(session)) && lsSet(LS_SESSIONS, JSON.stringify(index));
+  if (!ok && !storageWarned) {
+    storageWarned = true;
+    showNotice("端末の保存容量が足りず、字幕を保存できませんでした。履歴から古いセッションを削除してください", true);
+  }
+}
+
+function renderSession() {
+  enText.textContent = "";
+  jaText.textContent = "";
+  for (const e of session.entries) {
+    const p = document.createElement("p");
+    p.textContent = e.text;
+    (e.lang === "en" ? enText : jaText).appendChild(p);
+  }
+  for (const pane of Object.values(panes)) {
+    pane.p = null;
+    pane.entry = null;
+    pane.el.scrollTop = pane.el.scrollHeight;
+  }
+  lsSet(LS_CURRENT, session.id);
+  render();
+}
+
+function newSession() {
+  if (state !== "idle") return;
+  if (!session.entries.length) { showNotice("新しいセッションです"); return; }
+  saveSession();
+  session = createSession();
+  renderSession();
+  showNotice("新しいセッションを開始しました。前のセッションは「履歴」に保存されています");
+}
+
+function switchSession(id) {
+  if (state !== "idle") return;
+  const target = loadSession(id);
+  if (!target) { alert("このセッションを読み込めませんでした"); return; }
+  saveSession();
+  session = target;
+  renderSession();
+  $("history").close();
+  showNotice(`${fmtDateTime(session.createdAt)} のセッションを表示中。「再開」で続きを翻訳できます`);
+}
+
+function deleteSession(id) {
+  if (!confirm("このセッションの字幕を削除しますか?(元に戻せません)")) return;
+  try { localStorage.removeItem(LS_SESSION_PREFIX + id); } catch {}
+  lsSet(LS_SESSIONS, JSON.stringify(loadIndex().filter((m) => m.id !== id)));
+  if (session.id === id) {
+    session = createSession();
+    renderSession();
+  }
+  openHistory();
+}
+
+function openHistory() {
+  if (state !== "idle") return;
+  saveSession();
+  const list = $("historyList");
+  list.textContent = "";
+  const index = loadIndex();
+  if (!index.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "保存されたセッションはまだありません";
+    list.appendChild(li);
+  }
+  for (const m of index) {
+    const li = document.createElement("li");
+    if (m.id === session.id) li.classList.add("current");
+    const info = document.createElement("div");
+    info.className = "info";
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = `${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
+    const preview = document.createElement("div");
+    preview.className = "preview";
+    preview.textContent = m.preview || "(英語なし)";
+    info.append(title, preview);
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    btns.append(
+      mkBtn("開く", () => switchSession(m.id)),
+      mkBtn("保存", () => { const s2 = loadSession(m.id); if (s2) shareSession(s2); }),
+      mkBtn("削除", () => deleteSession(m.id), "danger"),
+    );
+    li.append(info, btns);
+    list.appendChild(li);
+  }
+  if (!$("history").open) $("history").showModal();
+}
+
+function mkBtn(label, onClick, cls = "") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `small-btn ${cls}`;
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// 英語・日本語それぞれの全文と、時刻順の対訳をまとめたテキスト
+function sessionToText(sess) {
+  const entries = [...sess.entries].sort((a, b) => a.t - b.t);
+  const time = (t) => new Date(t).toLocaleTimeString("ja-JP", { hour12: false });
+  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => e.text.trim()).filter(Boolean).join("\n");
+  return [
+    `英日字幕 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
+    "",
+    "■ 英語原文",
+    join("en") || "(なし)",
+    "",
+    "■ 日本語訳",
+    join("ja") || "(なし)",
+    "",
+    "■ 対訳(時刻順)",
+    ...entries.map((e) => `[${time(e.t)}] ${e.lang === "en" ? "EN" : "JA"}: ${e.text.trim()}`),
+    "",
+  ].join("\n");
+}
+
+async function shareSession(sess) {
+  if (!sess?.entries.length) { alert("保存する字幕がありません"); return; }
+  const d = new Date(sess.createdAt);
+  const pad = (n) => String(n).padStart(2, "0");
+  const name = `subtitles_en-ja_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+  const file = new File([sessionToText(sess)], name, { type: "text/plain" });
+  // iPhone では共有シートから「ファイルに保存」「メモ」「AirDrop」などを選べる
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+      return;
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+    }
+  }
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `subtitles-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.txt`;
+  a.href = URL.createObjectURL(file);
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function fmtDateTime(t) {
+  const d = new Date(t);
+  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function fmtTime(ms) {
@@ -500,4 +682,4 @@ function savePassphrase(v) {
 }
 
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
-function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } }
