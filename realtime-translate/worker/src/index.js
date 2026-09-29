@@ -1,9 +1,13 @@
 // client secret を発行するだけの Cloudflare Worker。
 // OPENAI_API_KEY は Worker Secret にのみ保存し、ブラウザには短時間有効な client secret だけを返す。
+// Secret(値は GitHub Secrets → Actions 経由で登録。ここには書かない):
+//   OPENAI_API_KEY, APP_PASSPHRASE
 
 const OPENAI_CLIENT_SECRETS_URL =
   "https://api.openai.com/v1/realtime/translations/client_secrets";
 const MODEL = "gpt-realtime-translate";
+// 英語原文の文字起こし(session.input_transcript.delta)に必要
+const INPUT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
 
 export default {
   async fetch(request, env) {
@@ -27,7 +31,7 @@ export default {
     if (!originOk) {
       return json({ error: "forbidden_origin" }, 403, cors);
     }
-    if (!env.OPENAI_API_KEY || !env.PASSPHRASE) {
+    if (!env.OPENAI_API_KEY || !env.APP_PASSPHRASE) {
       return json({ error: "server_not_configured" }, 500, cors);
     }
 
@@ -39,7 +43,7 @@ export default {
     }
 
     const passphrase = typeof body?.passphrase === "string" ? body.passphrase : "";
-    if (!(await safeEqual(passphrase, env.PASSPHRASE))) {
+    if (!(await safeEqual(passphrase, env.APP_PASSPHRASE))) {
       return json({ error: "invalid_passphrase" }, 401, cors);
     }
 
@@ -49,26 +53,43 @@ export default {
         Authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
         // 合言葉のハッシュを利用者 ID として送る(生の値は送らない)
-        "OpenAI-Safety-Identifier": await sha256Hex(`rt-translate:${env.PASSPHRASE}`),
+        "OpenAI-Safety-Identifier": await sha256Hex(`rt-translate:${env.APP_PASSPHRASE}`),
       },
       body: JSON.stringify({
         session: {
           model: MODEL,
-          audio: { output: { language: env.TARGET_LANGUAGE || "ja" } },
+          audio: {
+            input: {
+              transcription: { model: INPUT_TRANSCRIPTION_MODEL },
+              noise_reduction: env.NOISE_REDUCTION ? { type: env.NOISE_REDUCTION } : null,
+            },
+            output: { language: env.TARGET_LANGUAGE || "ja" },
+          },
         },
       }),
     });
 
     const data = await upstream.json().catch(() => ({}));
     if (!upstream.ok) {
+      const detail = data?.error ?? data;
+      if (isSpendLimit(upstream.status, detail)) {
+        return json({ error: "spend_limit_exceeded", status: upstream.status, detail }, 429, cors);
+      }
       // OpenAI 側のエラー内容はそのまま返す(API キーは含まれない)
-      return json({ error: "openai_error", status: upstream.status, detail: data?.error ?? data }, 502, cors);
+      return json({ error: "openai_error", status: upstream.status, detail }, 502, cors);
     }
 
     // ブラウザに必要なのは value(と有効期限)だけ
     return json({ value: data.value, expires_at: data.expires_at }, 200, cors);
   },
 };
+
+// プロジェクトの月間上限到達(429 project_spend_limit_exceeded など)
+function isSpendLimit(status, detail) {
+  if (status !== 429) return false;
+  const text = `${detail?.code ?? ""} ${detail?.type ?? ""} ${detail?.message ?? ""}`;
+  return /spend_limit|insufficient_quota|billing|quota/i.test(text);
+}
 
 function allowedOrigins(env) {
   return (env.ALLOWED_ORIGIN || "")

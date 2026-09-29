@@ -1,0 +1,8 @@
+# Cloudflare Worker のローカル用 Secret(絶対にコミットしない)
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
+node_modules/
+.env
+.env.*

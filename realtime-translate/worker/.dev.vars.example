@@ -1,0 +1,3 @@
+# cp .dev.vars.example .dev.vars して値を入れる(.dev.vars はコミットしない)
+OPENAI_API_KEY=
+APP_PASSPHRASE=

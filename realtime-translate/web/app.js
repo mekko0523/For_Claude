@@ -7,6 +7,10 @@ const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強�
 const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
 const TICK_MS = 250;
+// マイク処理。翻訳音声は再生しないのでエコーキャンセル不要。
+// 端末外のスピーカー(動画・TV)の音を拾うため、ブラウザ側のノイズ抑制も切る(サーバー側で far_field 除去)。
+const MIC_CONSTRAINTS = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月間上限)。来月まで利用できません";
 
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
 const LS_PASSPHRASE = "rt.passphrase";
@@ -78,7 +82,7 @@ async function start() {
   }
   const workerUrl = (window.APP_CONFIG?.WORKER_URL || "").replace(/\/$/, "");
   if (!workerUrl || workerUrl.includes("YOUR-SUBDOMAIN")) {
-    showNotice("config.js の WORKER_URL を設定してください", true);
+    showNotice("Worker の URL が未設定です(GitHub Actions のデプロイを確認してください)", true);
     return;
   }
 
@@ -100,14 +104,18 @@ async function start() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.value) {
       if (data.error === "invalid_passphrase") throw new Error("合言葉が違います");
-      throw new Error(`client secret の取得に失敗 (${res.status} ${data.error || ""})`);
+      if (data.error === "spend_limit_exceeded" || isSpendLimit(data.status, data.detail)) {
+        throw new Error(SPEND_LIMIT_MSG);
+      }
+      if (data.error === "forbidden_origin") throw new Error("このページのアドレスは Worker で許可されていません");
+      const detail = data.detail?.message ? `: ${data.detail.message}` : "";
+      throw new Error(`client secret の取得に失敗 (${res.status} ${data.error || ""})${detail}`);
     }
     if (!alive()) return;
 
     // 2) マイク
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("このブラウザはマイクに対応していません(Safari で開いてください)");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
     if (!alive()) { stream.getTracks().forEach((t) => t.stop()); return; }
     micStream = stream;
 
@@ -144,7 +152,12 @@ async function start() {
       headers: { Authorization: `Bearer ${data.value}`, "Content-Type": "application/sdp" },
     });
     const answer = await sdpRes.text();
-    if (!sdpRes.ok) throw new Error(`WebRTC 接続に失敗 (${sdpRes.status}) ${answer.slice(0, 200)}`);
+    if (!sdpRes.ok) {
+      let err = null;
+      try { err = JSON.parse(answer).error; } catch {}
+      if (isSpendLimit(sdpRes.status, err)) throw new Error(SPEND_LIMIT_MSG);
+      throw new Error(`WebRTC 接続に失敗 (${sdpRes.status}) ${err?.message || answer.slice(0, 200)}`);
+    }
     if (!alive()) return;
     await thisPc.setRemoteDescription({ type: "answer", sdp: answer });
   } catch (err) {
@@ -203,9 +216,21 @@ function handleEvent(raw) {
       stop("error", "セッションがサーバー側で終了しました");
       break;
     case "error":
-      stop("error", ev.error?.message || "サーバーからエラーが返されました");
+      if (isSpendLimit(429, ev.error)) {
+        stop("error", SPEND_LIMIT_MSG);
+      } else {
+        // 致命的でないエラーもあるので接続は維持する(本当に切れた場合は dc/pc のイベントで停止する)
+        showNotice(ev.error?.message || "サーバーからエラーが返されました", true);
+      }
       break;
   }
+}
+
+// OpenAI のプロジェクト月間上限(429 project_spend_limit_exceeded など)
+function isSpendLimit(status, err) {
+  if (status !== 429 || !err) return false;
+  const text = `${err.code ?? ""} ${err.type ?? ""} ${err.message ?? ""}`;
+  return /spend_limit|insufficient_quota|billing|quota/i.test(text);
 }
 
 function appendDelta(lang, delta) {

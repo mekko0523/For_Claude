@@ -1,0 +1,125 @@
+name: Deploy realtime-translate (Worker + GitHub Pages)
+
+# デフォルトブランチへの push で
+#   1. Cloudflare Worker をデプロイし、OPENAI_API_KEY / APP_PASSPHRASE を Worker Secret に登録
+#   2. Worker の URL を config.js に書き込んで web/ を GitHub Pages に公開
+# Secret の値は GitHub Secrets にのみ存在し、リポジトリには一切書かない。
+on:
+  push:
+    paths:
+      - "realtime-translate/**"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: realtime-translate-deploy
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.url.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          APP_PASSPHRASE: ${{ secrets.APP_PASSPHRASE }}
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID OPENAI_API_KEY APP_PASSPHRASE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::GitHub Secret '$name' が未登録です(Settings → Secrets and variables → Actions)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Compute GitHub Pages origin
+        id: origin
+        run: echo "origin=https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        env:
+          ALLOWED_ORIGIN: ${{ steps.origin.outputs.origin }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: realtime-translate/worker
+          wranglerVersion: "4"
+          command: deploy
+          vars: |
+            ALLOWED_ORIGIN
+
+      # 初回でも Worker が存在してから登録できるよう、デプロイ後に Secret を入れる
+      - name: Upload Worker secrets
+        uses: cloudflare/wrangler-action@v4
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          APP_PASSPHRASE: ${{ secrets.APP_PASSPHRASE }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: realtime-translate/worker
+          wranglerVersion: "4"
+          command: secret list
+          secrets: |
+            OPENAI_API_KEY
+            APP_PASSPHRASE
+
+      - name: Resolve Worker URL
+        id: url
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+          COMMAND_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+        run: |
+          url="$DEPLOYMENT_URL"
+          if [ -z "$url" ]; then
+            url=$(printf '%s' "$COMMAND_OUTPUT" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | head -n1 || true)
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Worker の URL を取得できませんでした。Cloudflare で workers.dev サブドメインが有効か確認してください"
+            exit 1
+          fi
+          echo "Worker URL: $url"
+          echo "url=${url%/}" >> "$GITHUB_OUTPUT"
+
+  pages:
+    needs: worker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write config.js and bump SW cache
+        env:
+          WORKER_URL: ${{ needs.worker.outputs.url }}
+        run: |
+          cd realtime-translate/web
+          printf '// GitHub Actions が自動生成\nwindow.APP_CONFIG = { WORKER_URL: "%s" };\n' "$WORKER_URL" > config.js
+          sed -i "s/const CACHE = \"rt-translate-[^\"]*\"/const CACHE = \"rt-translate-${GITHUB_SHA::8}\"/" sw.js
+          cat config.js
+          grep -n "const CACHE" sw.js
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: realtime-translate/web
+      - id: deployment
+        uses: actions/deploy-pages@v4

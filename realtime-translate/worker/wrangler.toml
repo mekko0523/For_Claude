@@ -4,10 +4,14 @@ compatibility_date = "2026-09-01"
 
 [vars]
 # GitHub Pages のオリジン(パスは含めない)。カンマ区切りで複数指定可。
+# GitHub Actions からのデプロイ時は https://<owner>.github.io で上書きされる。
 ALLOWED_ORIGIN = "https://mekko0523.github.io"
 # 出力言語(本アプリは ja 固定)
 TARGET_LANGUAGE = "ja"
+# サーバー側ノイズ除去: near_field(口元のマイク) / far_field(離れたスピーカーや部屋の音)
+NOISE_REDUCTION = "far_field"
 
-# Secret(wrangler secret put で登録。ここには書かない)
+# Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
 #   OPENAI_API_KEY : OpenAI の API キー
-#   PASSPHRASE     : フロントで入力する合言葉
+#   APP_PASSPHRASE : フロントで入力する合言葉
+# ローカル開発では .dev.vars に書く(.gitignore 済み)。.dev.vars.example を参照。
