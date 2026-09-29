@@ -62,8 +62,11 @@ const panes = {
 // ===== 初期化 =====
 $("silenceSec").textContent = SILENCE_TIMEOUT_MS / 1000;
 $("maxMin").textContent = MAX_SESSION_MS / 60_000;
-passInput.value = lsGet(LS_PASSPHRASE) || "";
-passInput.addEventListener("change", () => lsSet(LS_PASSPHRASE, passInput.value.trim()));
+passInput.value = loadPassphrase();
+passInput.addEventListener("input", () => savePassphrase(passInput.value));
+passInput.addEventListener("change", () => savePassphrase(passInput.value));
+// iOS に保存データを消さないよう依頼(対応ブラウザのみ)
+navigator.storage?.persist?.().catch(() => {});
 applyFontScale(Number(lsGet(LS_FONT)) || 1);
 
 toggleBtn.addEventListener("click", () => (state === "idle" ? start() : stop("user")));
@@ -74,7 +77,7 @@ $("exportBtn").addEventListener("click", exportLog);
 $("clearBtn").addEventListener("click", clearSubtitles);
 $("copyDiagBtn").addEventListener("click", copyDiag);
 $("settingsBtn").addEventListener("click", renderDiagLog);
-settings.addEventListener("close", () => lsSet(LS_PASSPHRASE, passInput.value.trim()));
+settings.addEventListener("close", () => savePassphrase(passInput.value));
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state === "live") acquireWakeLock();
@@ -130,6 +133,7 @@ async function start() {
       const detail = data.detail?.message ? `: ${data.detail.message}` : "";
       throw new Error(`client secret の取得に失敗 (${res.status} ${data.error || ""})${detail}`);
     }
+    savePassphrase(passphrase); // 通った合言葉は確実に保存
     if (!alive()) return;
 
     // 2) マイク
@@ -470,6 +474,23 @@ function fmtTime(ms) {
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+// 合言葉は localStorage と Cookie の両方に保存し、片方が消えても復元する
+function loadPassphrase() {
+  const fromLs = lsGet(LS_PASSPHRASE);
+  if (fromLs) return fromLs;
+  const m = document.cookie.match(/(?:^|; )rt_pass=([^;]*)/);
+  const fromCookie = m ? decodeURIComponent(m[1]) : "";
+  if (fromCookie) lsSet(LS_PASSPHRASE, fromCookie);
+  return fromCookie;
+}
+function savePassphrase(v) {
+  v = (v || "").trim();
+  if (!v) return;
+  lsSet(LS_PASSPHRASE, v);
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `rt_pass=${encodeURIComponent(v)}; Max-Age=34560000; Path=/; SameSite=Strict${secure}`;
 }
 
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }

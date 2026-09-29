@@ -52,8 +52,10 @@
   <dialog id="settings">
     <form method="dialog" class="settings-form">
       <h2>設定</h2>
-      <label>合言葉
-        <input type="password" id="passphrase" autocomplete="current-password" required>
+      <!-- iCloud キーチェーンに保存・自動入力させるためのユーザー名(表示しない) -->
+      <input type="text" name="username" autocomplete="username" value="英日字幕" hidden readonly>
+      <label>合言葉(一度入れれば保存されます)
+        <input type="password" id="passphrase" name="password" autocomplete="current-password" required>
       </label>
       <div class="row">
         <span>文字サイズ</span>
