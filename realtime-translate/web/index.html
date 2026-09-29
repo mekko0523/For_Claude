@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>英日リアルタイム字幕</title>
+  <meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="英日字幕">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="status" id="status" data-state="idle">待機中</div>
+    <div class="meter">
+      <span id="elapsed">00:00</span>
+      <span class="sep">·</span>
+      <span id="cost">$0.000</span>
+    </div>
+    <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙︎</button>
+  </header>
+
+  <div class="notice" id="notice" hidden></div>
+  <div class="countdown" id="countdown" hidden></div>
+
+  <main class="panes">
+    <section class="pane en" aria-label="英語原文">
+      <div class="pane-label">English</div>
+      <div class="text" id="enText"></div>
+    </section>
+    <section class="pane ja" aria-label="日本語訳">
+      <div class="pane-label">日本語</div>
+      <div class="text" id="jaText"></div>
+    </section>
+  </main>
+
+  <footer class="controls">
+    <button class="main-btn" id="toggleBtn">開始</button>
+  </footer>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>設定</h2>
+      <label>合言葉
+        <input type="password" id="passphrase" autocomplete="current-password" required>
+      </label>
+      <div class="row">
+        <span>文字サイズ</span>
+        <button type="button" class="small-btn" id="fontDown">A−</button>
+        <button type="button" class="small-btn" id="fontUp">A＋</button>
+      </div>
+      <div class="row">
+        <button type="button" class="small-btn" id="exportBtn">字幕を保存</button>
+        <button type="button" class="small-btn danger" id="clearBtn">字幕を消去</button>
+      </div>
+      <p class="hint">無音 <span id="silenceSec"></span> 秒で自動停止 / 最長 <span id="maxMin"></span> 分</p>
+      <button class="small-btn primary" value="ok">閉じる</button>
+    </form>
+  </dialog>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

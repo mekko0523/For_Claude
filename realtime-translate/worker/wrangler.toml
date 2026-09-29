@@ -1,0 +1,13 @@
+name = "realtime-translate-session"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+# GitHub Pages のオリジン(パスは含めない)。カンマ区切りで複数指定可。
+ALLOWED_ORIGIN = "https://mekko0523.github.io"
+# 出力言語(本アプリは ja 固定)
+TARGET_LANGUAGE = "ja"
+
+# Secret(wrangler secret put で登録。ここには書かない)
+#   OPENAI_API_KEY : OpenAI の API キー
+#   PASSPHRASE     : フロントで入力する合言葉
