@@ -7,9 +7,11 @@ const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強�
 const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
 const TICK_MS = 250;
-// マイク処理。翻訳音声は再生しないのでエコーキャンセル不要。
-// 端末外のスピーカー(動画・TV)の音を拾うため、ブラウザ側のノイズ抑制も切る(サーバー側で far_field 除去)。
-const MIC_CONSTRAINTS = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+// マイクは OS 標準の設定で取得する。iOS Safari では echoCancellation:false などを指定すると
+// 無音しか送られないことがあるため、公式サンプルと同じ { audio: true } にする。
+const MIC_CONSTRAINTS = true;
+const STATS_INTERVAL_MS = 500;           // 送信音量の取得間隔
+const STATS_LOG_MS = 5_000;              // 診断ログに送信状況を書く間隔
 const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月間上限)。来月まで利用できません";
 
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
@@ -46,8 +48,9 @@ let lastInputAt = 0;         // 最後に英語の文字起こしが届いた時
 let accumulatedMs = 0;       // 過去セッションを含む累計時間(料金表示用)
 let fontScale = 1;
 let lastError = "";          // 手動停止しても消さずに残すエラー
-let audioCtx = null;         // マイク音量メーター用
-let analyser = null;
+let statsTimer = null;       // 送信音量(WebRTC 統計)の取得
+let lastStatsLogAt = 0;
+let remoteAudio = null;      // 翻訳音声(ミュートで受けるだけ)
 let eventCount = 0;
 let lastEventType = "";
 const diagLines = [];        // 診断ログ(設定画面に表示・コピー可)
@@ -111,7 +114,11 @@ async function start() {
   lastEventType = "";
   diagEl.hidden = false;
   diag(`開始 ${navigator.userAgent}`);
-  prepareAudioContext(); // iOS はタップ直後に作らないと suspended のままになる
+  // 翻訳音声の受け皿(iOS で WebRTC の音声経路を確実に動かすため。ミュートなので鳴らない)
+  remoteAudio = new Audio();
+  remoteAudio.muted = true;
+  remoteAudio.autoplay = true;
+  remoteAudio.setAttribute("playsinline", "");
   lastInputAt = Date.now();
   startTicking();
   acquireWakeLock();
@@ -142,17 +149,20 @@ async function start() {
     if (!alive()) { stream.getTracks().forEach((t) => t.stop()); return; }
     micStream = stream;
     const track = stream.getAudioTracks()[0];
-    diag(`マイク取得: ${track?.label || "(名前なし)"} ${JSON.stringify(track?.getSettings?.() || {})}`);
+    diag(`マイク取得: ${track?.label || "(名前なし)"} muted=${track?.muted} state=${track?.readyState} ${JSON.stringify(track?.getSettings?.() || {})}`);
     track?.addEventListener("mute", () => diag("マイクトラック mute(iOS がマイクを止めた可能性)"));
     track?.addEventListener("unmute", () => diag("マイクトラック unmute"));
     track?.addEventListener("ended", () => diag("マイクトラック ended"));
-    startMicMeter(stream);
 
     // 3) WebRTC
     pc = new RTCPeerConnection();
     const thisPc = pc;
     // 翻訳音声は届くが再生しない(要素に接続しないので鳴らない)
-    thisPc.ontrack = () => {};
+    thisPc.ontrack = ({ streams }) => {
+      if (!remoteAudio) return;
+      remoteAudio.srcObject = streams[0];
+      remoteAudio.play?.().catch(() => {});
+    };
     thisPc.onconnectionstatechange = () => {
       if (!alive()) return;
       const s = thisPc.connectionState;
@@ -169,6 +179,7 @@ async function start() {
       setState("live");
       markSessionStart();
       diag("データチャネル接続");
+      startStats(thisPc);
     };
     dc.onmessage = (e) => { if (alive()) handleEvent(e.data); };
     dc.onclose = () => { diag("データチャネル切断"); if (alive() && state !== "idle") stop("error", "サーバーとの接続が閉じられました"); };
@@ -210,7 +221,8 @@ function stop(reason, message) {
   try { pc?.close(); } catch {}
   micStream?.getTracks().forEach((t) => t.stop());
   dc = null; pc = null; micStream = null;
-  stopMicMeter();
+  stopStats();
+  if (remoteAudio) { remoteAudio.srcObject = null; remoteAudio = null; }
   diag(`停止: ${reason}${message ? ` / ${message}` : ""} (受信 ${eventCount} 件)`);
   releaseWakeLock();
   stopTicking();
@@ -355,50 +367,44 @@ async function copyDiag() {
   catch { prompt("コピーしてください", text); }
 }
 
-function prepareAudioContext() {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    audioCtx?.close().catch(() => {});
-    audioCtx = new Ctx();
-    audioCtx.resume?.().catch(() => {});
-  } catch { audioCtx = null; }
+// 実際に OpenAI へ送っている音声の音量を WebRTC 統計から取る(AudioContext は iOS の録音を妨げることがあるため使わない)
+function startStats(peer) {
+  stopStats();
+  lastStatsLogAt = Date.now();
+  statsTimer = setInterval(async () => {
+    let level = null, bytesSent = null, packetsSent = null;
+    try {
+      const report = await peer.getStats();
+      report.forEach((r) => {
+        if (r.type === "media-source" && r.kind === "audio" && typeof r.audioLevel === "number") level = r.audioLevel;
+        if (r.type === "outbound-rtp" && (r.kind === "audio" || r.mediaType === "audio")) {
+          bytesSent = r.bytesSent; packetsSent = r.packetsSent;
+        }
+      });
+    } catch { return; }
+    if (level !== null) setMeter(level);
+    if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
+      lastStatsLogAt = Date.now();
+      diag(`送信: ${bytesSent ?? "?"} bytes / ${packetsSent ?? "?"} packets / 音量 ${level === null ? "取得不可" : level.toFixed(3)}`);
+    }
+  }, STATS_INTERVAL_MS);
 }
-function startMicMeter(stream) {
-  try {
-    if (!audioCtx) prepareAudioContext();
-    audioCtx.resume?.().catch(() => {});
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-    audioCtx.createMediaStreamSource(stream).connect(analyser);
-  } catch (e) {
-    diag(`音量メーターを作れません: ${e?.message || e}`);
-    analyser = null;
-  }
-}
-function stopMicMeter() {
-  analyser = null;
-  audioCtx?.close().catch(() => {});
-  audioCtx = null;
+function stopStats() {
+  clearInterval(statsTimer);
+  statsTimer = null;
   meterLevel = 0;
   micBar.style.width = "0%";
 }
-const meterBuf = new Float32Array(512);
 let meterLevel = 0;
-function renderMeter() {
-  if (!analyser) return;
-  analyser.getFloatTimeDomainData(meterBuf);
-  let sum = 0;
-  for (const v of meterBuf) sum += v * v;
-  const rms = Math.sqrt(sum / meterBuf.length);
-  // -60dB〜0dB を 0〜100% に
-  const db = 20 * Math.log10(rms || 1e-8);
+function setMeter(level) {
+  // audioLevel(0〜1)を dB 換算して -60dB〜0dB を 0〜100% に
+  const db = 20 * Math.log10(level || 1e-8);
   const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
-  meterLevel = Math.max(pct, meterLevel * 0.7); // ピークを少し保持して見やすく
+  meterLevel = Math.max(pct, meterLevel * 0.7);
   micBar.style.width = `${meterLevel}%`;
 }
 
 function render() {
-  renderMeter();
   diagCount.textContent = `受信 ${eventCount} 件`;
   const sessionMs = liveSince ? Date.now() - liveSince : 0;
   const shown = liveSince ? sessionMs : accumulatedMs;
