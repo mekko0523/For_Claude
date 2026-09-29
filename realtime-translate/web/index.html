@@ -26,6 +26,11 @@
     <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙︎</button>
   </header>
 
+  <div class="diag" id="diag" hidden>
+    <span class="mic-label">🎤</span>
+    <span class="mic-meter"><span id="micBar"></span></span>
+    <span id="diagCount">受信 0 件</span>
+  </div>
   <div class="notice" id="notice" hidden></div>
   <div class="countdown" id="countdown" hidden></div>
 
@@ -59,6 +64,11 @@
         <button type="button" class="small-btn" id="exportBtn">字幕を保存</button>
         <button type="button" class="small-btn danger" id="clearBtn">字幕を消去</button>
       </div>
+      <details class="diag-log">
+        <summary>診断ログ</summary>
+        <pre id="diagLog"></pre>
+        <button type="button" class="small-btn" id="copyDiagBtn">診断ログをコピー</button>
+      </details>
       <p class="hint">無音 <span id="silenceSec"></span> 秒で自動停止 / 最長 <span id="maxMin"></span> 分</p>
       <button class="small-btn primary" value="ok">閉じる</button>
     </form>

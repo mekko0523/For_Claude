@@ -28,6 +28,10 @@ const jaText = $("jaText");
 const toggleBtn = $("toggleBtn");
 const settings = $("settings");
 const passInput = $("passphrase");
+const diagEl = $("diag");
+const micBar = $("micBar");
+const diagCount = $("diagCount");
+const diagLogEl = $("diagLog");
 
 // ===== 状態 =====
 let state = "idle";          // idle | connecting | live
@@ -41,6 +45,13 @@ let liveSince = 0;           // 課金対象(接続完了)の開始時刻
 let lastInputAt = 0;         // 最後に英語の文字起こしが届いた時刻
 let accumulatedMs = 0;       // 過去セッションを含む累計時間(料金表示用)
 let fontScale = 1;
+let lastError = "";          // 手動停止しても消さずに残すエラー
+let audioCtx = null;         // マイク音量メーター用
+let analyser = null;
+let eventCount = 0;
+let lastEventType = "";
+const diagLines = [];        // 診断ログ(設定画面に表示・コピー可)
+const DIAG_MAX = 80;
 
 const log = [];              // 書き出し用 {lang, t, text}
 const panes = {
@@ -61,6 +72,8 @@ $("fontUp").addEventListener("click", () => applyFontScale(fontScale + 0.1));
 $("fontDown").addEventListener("click", () => applyFontScale(fontScale - 0.1));
 $("exportBtn").addEventListener("click", exportLog);
 $("clearBtn").addEventListener("click", clearSubtitles);
+$("copyDiagBtn").addEventListener("click", copyDiag);
+$("settingsBtn").addEventListener("click", renderDiagLog);
 settings.addEventListener("close", () => lsSet(LS_PASSPHRASE, passInput.value.trim()));
 
 document.addEventListener("visibilitychange", () => {
@@ -90,6 +103,12 @@ async function start() {
   const alive = () => gen === generation;
   setState("connecting");
   showNotice("");
+  lastError = "";
+  eventCount = 0;
+  lastEventType = "";
+  diagEl.hidden = false;
+  diag(`開始 ${navigator.userAgent}`);
+  prepareAudioContext(); // iOS はタップ直後に作らないと suspended のままになる
   lastInputAt = Date.now();
   startTicking();
   acquireWakeLock();
@@ -118,6 +137,12 @@ async function start() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
     if (!alive()) { stream.getTracks().forEach((t) => t.stop()); return; }
     micStream = stream;
+    const track = stream.getAudioTracks()[0];
+    diag(`マイク取得: ${track?.label || "(名前なし)"} ${JSON.stringify(track?.getSettings?.() || {})}`);
+    track?.addEventListener("mute", () => diag("マイクトラック mute(iOS がマイクを止めた可能性)"));
+    track?.addEventListener("unmute", () => diag("マイクトラック unmute"));
+    track?.addEventListener("ended", () => diag("マイクトラック ended"));
+    startMicMeter(stream);
 
     // 3) WebRTC
     pc = new RTCPeerConnection();
@@ -127,6 +152,7 @@ async function start() {
     thisPc.onconnectionstatechange = () => {
       if (!alive()) return;
       const s = thisPc.connectionState;
+      diag(`WebRTC: ${s}`);
       if (s === "failed" || s === "disconnected") stop("error", "接続が切断されました");
     };
     for (const track of stream.getAudioTracks()) thisPc.addTrack(track, stream);
@@ -138,9 +164,10 @@ async function start() {
       lastInputAt = liveSince; // 開始時点から無音カウント
       setState("live");
       markSessionStart();
+      diag("データチャネル接続");
     };
     dc.onmessage = (e) => { if (alive()) handleEvent(e.data); };
-    dc.onclose = () => { if (alive() && state !== "idle") stop("error", "サーバーとの接続が閉じられました"); };
+    dc.onclose = () => { diag("データチャネル切断"); if (alive() && state !== "idle") stop("error", "サーバーとの接続が閉じられました"); };
 
     const offer = await thisPc.createOffer();
     await thisPc.setLocalDescription(offer);
@@ -179,6 +206,8 @@ function stop(reason, message) {
   try { pc?.close(); } catch {}
   micStream?.getTracks().forEach((t) => t.stop());
   dc = null; pc = null; micStream = null;
+  stopMicMeter();
+  diag(`停止: ${reason}${message ? ` / ${message}` : ""} (受信 ${eventCount} 件)`);
   releaseWakeLock();
   stopTicking();
   countdownEl.hidden = true;
@@ -194,6 +223,11 @@ function stop(reason, message) {
     statusEl.dataset.state = "error";
     statusEl.textContent = "エラー";
     showNotice(message || "エラーが発生しました", true);
+  } else if (lastError) {
+    // セッション中に出たエラーは手動停止しても残す
+    showNotice(lastError, true);
+  } else if (reason === "user" && eventCount <= 1) {
+    showNotice("字幕イベントを受信できませんでした。⚙︎ の診断ログを確認してください", true);
   } else {
     showNotice("");
   }
@@ -203,8 +237,15 @@ function stop(reason, message) {
 // ===== 受信イベント =====
 function handleEvent(raw) {
   let ev;
-  try { ev = JSON.parse(raw); } catch { return; }
-  switch (ev.type) {
+  try { ev = JSON.parse(raw); } catch { diag(`JSON 以外を受信: ${String(raw).slice(0, 120)}`); return; }
+  eventCount++;
+  const type = String(ev.type || "");
+  if (type !== lastEventType) {
+    // 同じ種類の連続(delta など)は1行にまとめる
+    diag(type.endsWith(".delta") ? `受信: ${type}` : `受信: ${type} ${JSON.stringify(ev).slice(0, 300)}`);
+    lastEventType = type;
+  }
+  switch (type) {
     case "session.input_transcript.delta":
       lastInputAt = Date.now();
       appendDelta("en", ev.delta);
@@ -220,9 +261,16 @@ function handleEvent(raw) {
         stop("error", SPEND_LIMIT_MSG);
       } else {
         // 致命的でないエラーもあるので接続は維持する(本当に切れた場合は dc/pc のイベントで停止する)
-        showNotice(ev.error?.message || "サーバーからエラーが返されました", true);
+        lastError = `サーバーエラー: ${ev.error?.message || ev.error?.code || "不明"}`;
+        showNotice(lastError, true);
       }
       break;
+    default:
+      // イベント名が想定と違っても字幕を出せるよう、名前のパターンで振り分ける
+      if (/delta$/.test(type) && !/audio\.delta$/.test(type) && typeof ev.delta === "string") {
+        if (/input|source/.test(type)) { lastInputAt = Date.now(); appendDelta("en", ev.delta); }
+        else appendDelta("ja", ev.delta);
+      }
   }
 }
 
@@ -287,7 +335,67 @@ function tick() {
   render();
 }
 
+// ===== 診断 =====
+function diag(msg) {
+  const t = new Date().toLocaleTimeString("ja-JP", { hour12: false });
+  diagLines.push(`${t} ${msg}`);
+  if (diagLines.length > DIAG_MAX) diagLines.shift();
+  if (settings.open) renderDiagLog();
+}
+function renderDiagLog() {
+  diagLogEl.textContent = diagLines.length ? diagLines.join("\n") : "(まだありません)";
+}
+async function copyDiag() {
+  const text = diagLines.join("\n");
+  try { await navigator.clipboard.writeText(text); alert("診断ログをコピーしました"); }
+  catch { prompt("コピーしてください", text); }
+}
+
+function prepareAudioContext() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    audioCtx?.close().catch(() => {});
+    audioCtx = new Ctx();
+    audioCtx.resume?.().catch(() => {});
+  } catch { audioCtx = null; }
+}
+function startMicMeter(stream) {
+  try {
+    if (!audioCtx) prepareAudioContext();
+    audioCtx.resume?.().catch(() => {});
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    audioCtx.createMediaStreamSource(stream).connect(analyser);
+  } catch (e) {
+    diag(`音量メーターを作れません: ${e?.message || e}`);
+    analyser = null;
+  }
+}
+function stopMicMeter() {
+  analyser = null;
+  audioCtx?.close().catch(() => {});
+  audioCtx = null;
+  meterLevel = 0;
+  micBar.style.width = "0%";
+}
+const meterBuf = new Float32Array(512);
+let meterLevel = 0;
+function renderMeter() {
+  if (!analyser) return;
+  analyser.getFloatTimeDomainData(meterBuf);
+  let sum = 0;
+  for (const v of meterBuf) sum += v * v;
+  const rms = Math.sqrt(sum / meterBuf.length);
+  // -60dB〜0dB を 0〜100% に
+  const db = 20 * Math.log10(rms || 1e-8);
+  const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+  meterLevel = Math.max(pct, meterLevel * 0.7); // ピークを少し保持して見やすく
+  micBar.style.width = `${meterLevel}%`;
+}
+
 function render() {
+  renderMeter();
+  diagCount.textContent = `受信 ${eventCount} 件`;
   const sessionMs = liveSince ? Date.now() - liveSince : 0;
   const shown = liveSince ? sessionMs : accumulatedMs;
   elapsedEl.textContent = fmtTime(shown);
