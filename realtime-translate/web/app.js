@@ -21,6 +21,17 @@ const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月�
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
 const LS_PASSPHRASE = "rt.passphrase";
 const LS_FONT = "rt.fontScale";
+const LS_BOOST = "rt.micBoost";
+const LS_GLOSSARY = "rt.glossary";
+// 集音ブースト: 送る前にアプリ内で音量を上げる(コンプレッサーで音割れを防ぐ)
+const BOOST_GAIN = { off: 1, normal: 3, strong: 6 };
+const DEFAULT_GLOSSARY = `# 1行に「誤り → 正しい」の形で書きます(英語・日本語どちらも可)
+# 字幕の表示と保存テキストで自動的に置き換わります。# で始まる行は無視されます
+グリフォサート → グリホサート
+パラクアット → パラコート
+クロルピリフォス → クロルピリホス
+イミダクロプリッド → イミダクロプリド
+`;
 const LS_SESSIONS = "rt.sessions";        // セッション一覧(目次)
 const LS_SESSION_PREFIX = "rt.session.";  // 各セッションの字幕本体
 const LS_CURRENT = "rt.currentSession";
@@ -63,6 +74,8 @@ let statsTimer = null;       // 送信音量(WebRTC 統計)の取得
 let lastStatsLogAt = 0;
 let micCheckSince = 0;       // 無音マイク判定の起点
 let micMaxLevel = 0;         // 判定期間中の最大音量
+let boostCtx = null;         // 集音ブースト用 AudioContext
+let glossaryRules = [];      // [{from: RegExp|string, to}]
 let micRecoveries = 0;       // マイク再取得を試みた回数
 let quietCheckSince = 0;     // 「音が小さい」判定の起点(英語が届いたら 0)
 let quietMaxLevel = 0;
@@ -87,6 +100,17 @@ passInput.addEventListener("change", () => savePassphrase(passInput.value));
 // iOS に保存データを消さないよう依頼(対応ブラウザのみ)
 navigator.storage?.persist?.().catch(() => {});
 applyFontScale(Number(lsGet(LS_FONT)) || 1);
+const boostSel = $("micBoost");
+boostSel.value = BOOST_GAIN[lsGet(LS_BOOST)] ? lsGet(LS_BOOST) : "normal";
+boostSel.addEventListener("change", () => lsSet(LS_BOOST, boostSel.value));
+const glossaryEl = $("glossary");
+glossaryEl.value = lsGet(LS_GLOSSARY) ?? DEFAULT_GLOSSARY;
+compileGlossary();
+glossaryEl.addEventListener("input", () => {
+  lsSet(LS_GLOSSARY, glossaryEl.value);
+  compileGlossary();
+  if (state === "idle" && session) renderSession();
+});
 
 toggleBtn.addEventListener("click", () => (state === "idle" ? start() : stop("user")));
 $("settingsBtn").addEventListener("click", () => settings.showModal());
@@ -194,7 +218,9 @@ async function start() {
       diag(`WebRTC: ${s}`);
       if (s === "failed" || s === "disconnected") stop("error", "接続が切断されました");
     };
-    for (const track of stream.getAudioTracks()) thisPc.addTrack(track, stream);
+    const sendTrack = (await buildBoostedTrack(stream)) || track;
+    if (!alive()) return;
+    thisPc.addTrack(sendTrack, new MediaStream([sendTrack]));
 
     dc = thisPc.createDataChannel("oai-events");
     dc.onopen = () => {
@@ -247,6 +273,7 @@ function stop(reason, message) {
   try { dc?.close(); } catch {}
   try { pc?.close(); } catch {}
   micStream?.getTracks().forEach((t) => t.stop());
+  closeBoost();
   dc = null; pc = null; micStream = null;
   stopStats();
   if (remoteAudio) { remoteAudio.srcObject = null; remoteAudio = null; }
@@ -340,7 +367,7 @@ function appendDelta(lang, delta) {
   }
   pane.lastAt = now;
   pane.entry.text += delta;
-  pane.p.textContent = pane.entry.text;
+  pane.p.textContent = fixTerms(pane.entry.text);
   dirty = true;
 
   // ユーザーが読み返しているとき以外は自動スクロール
@@ -435,6 +462,68 @@ function checkQuietAudio(level) {
   }
 }
 
+// ===== 集音ブースト =====
+async function buildBoostedTrack(stream) {
+  const level = boostSel.value;
+  const gain = BOOST_GAIN[level] || 1;
+  if (gain === 1) { diag("集音ブースト: オフ"); return null; }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const src = ctx.createMediaStreamSource(stream);
+    const amp = ctx.createGain();
+    amp.gain.value = gain;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -12;
+    comp.knee.value = 6;
+    comp.ratio.value = 12;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.25;
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(amp).connect(comp).connect(dest);
+    await ctx.resume?.().catch(() => {});
+    if (ctx.state !== "running") {
+      diag(`集音ブースト: AudioContext が ${ctx.state} のため使いません`);
+      ctx.close().catch(() => {});
+      return null;
+    }
+    boostCtx = ctx;
+    diag(`集音ブースト: ×${gain}`);
+    return dest.stream.getAudioTracks()[0];
+  } catch (e) {
+    diag(`集音ブースト失敗: ${e?.message || e}`);
+    return null;
+  }
+}
+function closeBoost() {
+  boostCtx?.close().catch(() => {});
+  boostCtx = null;
+}
+
+// ===== 用語集(表示と保存テキストの置き換え) =====
+function compileGlossary() {
+  glossaryRules = [];
+  for (const raw of glossaryEl.value.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = line.match(/^(.+?)\s*(?:→|->|=>|＝|=)\s*(.*)$/);
+    if (!m || !m[1].trim()) continue;
+    const from = m[1].trim();
+    const to = m[2].trim();
+    // 英数字の語は大文字小文字を区別せず、単語単位で置き換える
+    const pattern = /^[\x20-\x7e]+$/.test(from)
+      ? new RegExp(`\\b${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi")
+      : from;
+    glossaryRules.push({ from: pattern, to });
+  }
+}
+function fixTerms(text) {
+  for (const r of glossaryRules) {
+    text = typeof r.from === "string" ? text.split(r.from).join(r.to) : text.replace(r.from, r.to);
+  }
+  return text;
+}
+
 // ===== マイク不調の検知と復旧 =====
 function watchMicTrack(track) {
   $("micName").textContent = shortMicName(track?.label);
@@ -481,8 +570,9 @@ async function recoverMic(peer) {
     if (gen !== generation || !pc) { stream.getTracks().forEach((t) => t.stop()); return; }
     const newTrack = stream.getAudioTracks()[0];
     const sender = peer.getSenders().find((sd) => sd.track?.kind === "audio");
-    await sender?.replaceTrack(newTrack);
+    await sender?.replaceTrack(newTrack); // 復旧時はブーストを通さず生のマイクを送る
     micStream?.getTracks().forEach((t) => t.stop());
+    closeBoost();
     micStream = stream;
     watchMicTrack(newTrack);
   } catch (e) {
@@ -603,7 +693,7 @@ function renderSession() {
   jaText.textContent = "";
   for (const e of session.entries) {
     const p = document.createElement("p");
-    p.textContent = e.text;
+    p.textContent = fixTerms(e.text);
     (e.lang === "en" ? enText : jaText).appendChild(p);
   }
   for (const pane of Object.values(panes)) {
@@ -696,7 +786,7 @@ function mkBtn(label, onClick, cls = "") {
 function sessionToText(sess) {
   const entries = [...sess.entries].sort((a, b) => a.t - b.t);
   const time = (t) => new Date(t).toLocaleTimeString("ja-JP", { hour12: false });
-  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => e.text.trim()).filter(Boolean).join("\n");
+  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text).trim()).filter(Boolean).join("\n");
   return [
     `英日字幕 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
     "",
@@ -707,7 +797,7 @@ function sessionToText(sess) {
     join("ja") || "(なし)",
     "",
     "■ 対訳(時刻順)",
-    ...entries.map((e) => `[${time(e.t)}] ${e.lang === "en" ? "EN" : "JA"}: ${e.text.trim()}`),
+    ...entries.map((e) => `[${time(e.t)}] ${e.lang === "en" ? "EN" : "JA"}: ${fixTerms(e.text).trim()}`),
     "",
   ].join("\n");
 }

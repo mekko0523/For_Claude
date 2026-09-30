@@ -68,6 +68,16 @@
         <button type="button" class="small-btn" id="fontDown">A−</button>
         <button type="button" class="small-btn" id="fontUp">A＋</button>
       </div>
+      <label>集音ブースト(小さい声・遠い音を大きくして送る)
+        <select id="micBoost">
+          <option value="off">オフ</option>
+          <option value="normal">標準(×3)</option>
+          <option value="strong">強(×6・雑音も大きくなります)</option>
+        </select>
+      </label>
+      <label>用語集(誤り → 正しい)
+        <textarea id="glossary" rows="7" spellcheck="false" autocapitalize="off"></textarea>
+      </label>
       <details class="diag-log">
         <summary>診断ログ</summary>
         <pre id="diagLog"></pre>
