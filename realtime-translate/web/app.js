@@ -14,6 +14,8 @@ const STATS_INTERVAL_MS = 500;           // 送信音量の取得間隔
 const STATS_LOG_MS = 5_000;              // 診断ログに送信状況を書く間隔
 const SILENT_MIC_MS = 6_000;             // この間ずっと音量ゼロならマイク不調とみなす
 const SILENT_LEVEL = 0.0005;             // 静かな部屋でも通常はこれ以上の音量がある
+const QUIET_CHECK_MS = 8_000;            // 英語が届かないままこの時間たったら音量を確認
+const QUIET_LEVEL = 0.02;                // 認識できた会話の音量は 0.03〜0.06 程度だった
 const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月間上限)。来月まで利用できません";
 
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
@@ -62,6 +64,9 @@ let lastStatsLogAt = 0;
 let micCheckSince = 0;       // 無音マイク判定の起点
 let micMaxLevel = 0;         // 判定期間中の最大音量
 let micRecoveries = 0;       // マイク再取得を試みた回数
+let quietCheckSince = 0;     // 「音が小さい」判定の起点(英語が届いたら 0)
+let quietMaxLevel = 0;
+let inputSeen = false;       // この接続で英語の文字起こしが届いたか
 let remoteAudio = null;      // 翻訳音声(ミュートで受けるだけ)
 let eventCount = 0;
 let lastEventType = "";
@@ -130,6 +135,9 @@ async function start() {
   lastError = "";
   micRecoveries = 0;
   micCheckSince = 0;
+  inputSeen = false;
+  quietCheckSince = 0;
+  quietMaxLevel = 0;
   eventCount = 0;
   lastEventType = "";
   diagEl.hidden = false;
@@ -196,6 +204,7 @@ async function start() {
       setState("live");
       markSessionStart();
       diag("データチャネル接続");
+      quietCheckSince = Date.now();
       startStats(thisPc);
     };
     dc.onmessage = (e) => { if (alive()) handleEvent(e.data); };
@@ -282,6 +291,7 @@ function handleEvent(raw) {
   switch (type) {
     case "session.input_transcript.delta":
       lastInputAt = Date.now();
+      if (!inputSeen) { inputSeen = true; if (!lastError) showNotice(""); }
       appendDelta("en", ev.delta);
       break;
     case "session.output_transcript.delta":
@@ -405,6 +415,7 @@ function startStats(peer) {
     if (level !== null) {
       setMeter(level);
       checkSilentMic(peer, level);
+      checkQuietAudio(level);
     }
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
@@ -412,6 +423,18 @@ function startStats(peer) {
     }
   }, STATS_INTERVAL_MS);
 }
+// 英語がまだ1つも届かず、音も小さいままなら、近づける・音量を上げるよう案内する(1回だけ)
+function checkQuietAudio(level) {
+  if (state !== "live" || inputSeen || !quietCheckSince) return;
+  quietMaxLevel = Math.max(quietMaxLevel, level);
+  if (Date.now() - quietCheckSince < QUIET_CHECK_MS) return;
+  quietCheckSince = 0;
+  diag(`英語未受信・最大音量 ${quietMaxLevel.toFixed(3)}`);
+  if (quietMaxLevel < QUIET_LEVEL) {
+    showNotice("音が小さいようです。スピーカーの音量を上げるか、iPhone をスピーカーに近づけてください(🎤 のバーが半分以上動くのが目安)");
+  }
+}
+
 // ===== マイク不調の検知と復旧 =====
 function watchMicTrack(track) {
   $("micName").textContent = shortMicName(track?.label);
