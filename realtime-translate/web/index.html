@@ -20,11 +20,16 @@
     <div class="status" id="status" data-state="idle">待機中</div>
     <div class="meter">
       <span id="elapsed">00:00</span>
-      <span class="sep">·</span>
+      <span class="sep" id="costSep">·</span>
       <span id="cost">$0.000</span>
     </div>
     <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙︎</button>
   </header>
+
+  <div class="mode-switch" role="group" aria-label="モード">
+    <button type="button" data-mode="translate" aria-pressed="true">🌐 英→日 翻訳</button>
+    <button type="button" data-mode="transcribe" aria-pressed="false">🎙 日本語 文字起こし</button>
+  </div>
 
   <div class="diag" id="diag" hidden>
     <span class="mic-label">🎤</span>
@@ -41,7 +46,7 @@
       <div class="text" id="enText"></div>
     </section>
     <section class="pane ja" aria-label="日本語訳">
-      <div class="pane-label">日本語</div>
+      <div class="pane-label" id="jaLabel">日本語</div>
       <div class="text" id="jaText"></div>
     </section>
   </main>

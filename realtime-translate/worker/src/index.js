@@ -8,6 +8,11 @@ const OPENAI_CLIENT_SECRETS_URL =
 const MODEL = "gpt-realtime-translate";
 // 英語原文の文字起こし(session.input_transcript.delta)に必要
 const INPUT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
+// 日本語の文字起こしモード(/session に mode: "transcribe")
+const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
+const DEFAULT_TRANSCRIBE_MODEL = "gpt-live-transcribe";
+const FALLBACK_TRANSCRIBE_MODEL = "gpt-transcribe";
+const TRANSCRIBE_PROMPT = "日本語の会話・打ち合わせ。農業、農薬、ドローン散布に関する話題が多い。";
 // 要約メモ(/summary)
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_SUMMARY_MODEL = "gpt-6.1-sol";
@@ -39,6 +44,36 @@ const SUMMARY_INSTRUCTIONS = `あなたは農業・農薬分野に詳しい日�
 
 【話者付き書き起こし】が与えられた場合(話者ラベルは音声から自動識別したもの):
 - 先頭に「■ 参加者」を追加し、話者ごとに立場や役割が分かれば1行で書く(例: 話者A:農薬メーカーの担当者らしい)
+- 会話中に名前が出ていれば、話者ラベルの代わりに名前を使う(確証がなければ「話者A(田中さん?)」のように書く)
+- 要点・決定事項・アクションは「誰の発言・誰の担当か」を明記する
+- 録音が複数に分かれている場合、同じ人に別ラベルが付くことがあるので、内容から同一人物と判断できればまとめる
+- この場合は全体で900字程度まで`;
+
+const TRANSCRIBE_SUMMARY_INSTRUCTIONS = `あなたは農業・農薬分野に詳しい日本語の議事録担当です。
+日本語の会話の自動文字起こしから、共有用の簡潔な議事メモを日本語で作成してください。
+
+出力形式(プレーンテキスト。Markdown の記号 # * は使わない):
+■ 概要
+2〜4文で、何の話だったか。
+■ 要点
+・重要なポイントを箇条書きで3〜8個
+■ 決定事項
+・決まったこと(なければ「特になし」)
+■ アクション
+・誰が/何を/いつまでに(不明な部分は「(担当未定)」「(期限未定)」と書く。なければ「特になし」)
+■ 課題・確認事項
+・未解決の論点や、次回までに確認が必要なこと(なければ省略)
+■ 数値・固有名詞メモ
+・製品名、農薬名、成分名、数量、金額、日付など、正確さが大事なもの(なければ省略)
+
+ルール:
+- 自動文字起こしなので誤変換や聞き間違いがある。文脈から明らかな誤りは直して読む
+- 用語集が与えられた場合はその表記に従う
+- 話されていないことを推測で足さない。聞き取れていない部分は無理に埋めない
+- 全体で600字程度まで
+
+【話者付き書き起こし】が与えられた場合(話者ラベルは音声から自動識別したもの):
+- 先頭に「■ 参加者」を追加し、話者ごとに立場や役割が分かれば1行で書く
 - 会話中に名前が出ていれば、話者ラベルの代わりに名前を使う(確証がなければ「話者A(田中さん?)」のように書く)
 - 要点・決定事項・アクションは「誰の発言・誰の担当か」を明記する
 - 録音が複数に分かれている場合、同じ人に別ラベルが付くことがあるので、内容から同一人物と判断できればまとめる
@@ -86,6 +121,7 @@ export default {
     }
 
     if (url.pathname === "/summary") return summarize(body, env, cors);
+    if (body.mode === "transcribe") return transcribeSession(body, env, cors);
 
     const upstream = await fetch(OPENAI_CLIENT_SECRETS_URL, {
       method: "POST",
@@ -124,6 +160,60 @@ export default {
   },
 };
 
+// 日本語の文字起こしセッション用の client secret。
+// gpt-live-transcribe(キーワード・低遅延対応)で作り、受け付けられなければ gpt-transcribe の最小構成で作り直す
+async function transcribeSession(body, env, cors) {
+  const keywords = (Array.isArray(body.keywords) ? body.keywords : [])
+    .filter((k) => typeof k === "string" && k.trim())
+    .map((k) => k.trim().slice(0, 50))
+    .slice(0, 100);
+  const noise = env.NOISE_REDUCTION ? { type: env.NOISE_REDUCTION } : null;
+  const attempts = [
+    {
+      model: env.TRANSCRIBE_MODEL || DEFAULT_TRANSCRIBE_MODEL,
+      transcription: {
+        model: env.TRANSCRIBE_MODEL || DEFAULT_TRANSCRIBE_MODEL,
+        languages: ["ja"],
+        prompt: TRANSCRIBE_PROMPT,
+        ...(keywords.length ? { keywords } : {}),
+        delay: "low",
+      },
+    },
+    {
+      model: FALLBACK_TRANSCRIBE_MODEL,
+      transcription: { model: FALLBACK_TRANSCRIBE_MODEL, language: "ja", prompt: TRANSCRIBE_PROMPT },
+    },
+  ];
+  let last = null;
+  for (const a of attempts) {
+    const upstream = await fetch(OPENAI_REALTIME_CLIENT_SECRETS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+        "OpenAI-Safety-Identifier": await sha256Hex(`rt-translate:${env.APP_PASSPHRASE}`),
+      },
+      body: JSON.stringify({
+        session: {
+          type: "transcription",
+          audio: { input: { transcription: a.transcription, noise_reduction: noise, turn_detection: null } },
+        },
+      }),
+    });
+    const data = await upstream.json().catch(() => ({}));
+    if (upstream.ok && data.value) {
+      return json({ value: data.value, expires_at: data.expires_at, model: a.model, fallback: a !== attempts[0], firstError: last?.detail?.message }, 200, cors);
+    }
+    last = { status: upstream.status, detail: data?.error ?? data };
+    if (isSpendLimit(upstream.status, last.detail)) {
+      return json({ error: "spend_limit_exceeded", ...last }, 429, cors);
+    }
+    // 設定の問題(400系)のときだけ次の構成を試す
+    if (upstream.status < 400 || upstream.status >= 500 || upstream.status === 401) break;
+  }
+  return json({ error: "openai_error", ...last }, 502, cors);
+}
+
 // 字幕(英語原文・日本語訳)から日本語の要約メモを作る
 async function summarize(body, env, cors) {
   const en = typeof body.en === "string" ? body.en : "";
@@ -133,11 +223,12 @@ async function summarize(body, env, cors) {
   if (!en.trim() && !ja.trim()) return json({ error: "empty_transcript" }, 400, cors);
   if (en.length + ja.length + speakers.length > SUMMARY_MAX_CHARS) return json({ error: "transcript_too_long" }, 413, cors);
 
+  const transcribe = body.mode === "transcribe";
   const input = [
     glossary.trim() ? `【用語集(誤り → 正しい)】\n${glossary}` : "",
-    speakers.trim() ? `【話者付き書き起こし(英語・話者は音声から自動識別)】\n${speakers}` : "",
-    `【英語原文】\n${en || "(なし)"}`,
-    `【日本語訳(機械翻訳)】\n${ja || "(なし)"}`,
+    speakers.trim() ? `【話者付き書き起こし(話者は音声から自動識別)】\n${speakers}` : "",
+    transcribe ? `【日本語の文字起こし(自動)】\n${ja || "(なし)"}` : `【英語原文】\n${en || "(なし)"}`,
+    transcribe ? "" : `【日本語訳(機械翻訳)】\n${ja || "(なし)"}`,
   ].filter(Boolean).join("\n\n");
 
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
@@ -149,7 +240,7 @@ async function summarize(body, env, cors) {
     },
     body: JSON.stringify({
       model: env.SUMMARY_MODEL || DEFAULT_SUMMARY_MODEL,
-      instructions: SUMMARY_INSTRUCTIONS,
+      instructions: transcribe ? TRANSCRIBE_SUMMARY_INSTRUCTIONS : SUMMARY_INSTRUCTIONS,
       input,
       max_output_tokens: 2_000,
       store: false,

@@ -19,6 +19,12 @@ const QUIET_LEVEL = 0.02;                // 認識できた会話の音量は 0.
 const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月間上限)。来月まで利用できません";
 
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
+// 日本語の文字起こしモード
+const TX_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
+const LS_MODE = "rt.mode";
+const TX_COMMIT_PAUSE_MS = 1_500;        // 文字起こしが途切れてこの時間たったら区切って確定させる
+const TX_COMMIT_MAX_MS = 15_000;         // 話し続けていてもこの間隔で区切る
+const TX_COMMIT_MAX_FALLBACK_MS = 8_000; // 途中経過を返さないモードでは短めに区切る
 const LS_PASSPHRASE = "rt.passphrase";
 const LS_FONT = "rt.fontScale";
 const LS_BOOST = "rt.micBoost";
@@ -32,6 +38,7 @@ const REC_KEEP_DAYS = 14;                // これより古い録音は自動で
 const BOOST_GAIN = { off: 1, normal: 3, strong: 6 };
 const DEFAULT_GLOSSARY = `# 1行に「誤り → 正しい」の形で書きます(英語・日本語どちらも可)
 # 字幕の表示と保存テキストで自動的に置き換わります。# で始まる行は無視されます
+# 矢印なしで単語だけ書くと、日本語の文字起こしで聞き取ってほしいキーワードになります
 グリフォサート → グリホサート
 パラクアット → パラコート
 クロルピリフォス → クロルピリホス
@@ -81,6 +88,12 @@ let micCheckSince = 0;       // 無音マイク判定の起点
 let micMaxLevel = 0;         // 判定期間中の最大音量
 let boostCtx = null;         // 集音ブースト用 AudioContext
 let glossaryRules = [];      // [{from: RegExp|string, to}]
+let glossaryKeywords = [];   // 文字起こしモードでモデルに渡すキーワード
+let txModel = "";            // 文字起こしモードで実際に使われたモデル
+let lastCommitAt = 0;
+let lastTxDeltaAt = 0;
+let txDeltasSinceCommit = 0;
+const txItems = new Map();   // item_id → {entry, p}
 let micRecoveries = 0;       // マイク再取得を試みた回数
 let quietCheckSince = 0;     // 「音が小さい」判定の起点(英語が届いたら 0)
 let quietMaxLevel = 0;
@@ -127,6 +140,9 @@ $("fontUp").addEventListener("click", () => applyFontScale(fontScale + 0.1));
 $("fontDown").addEventListener("click", () => applyFontScale(fontScale - 0.1));
 $("newBtn").addEventListener("click", newSession);
 $("saveBtn").addEventListener("click", () => openShare(session));
+for (const b of document.querySelectorAll(".mode-switch button")) {
+  b.addEventListener("click", () => switchMode(b.dataset.mode));
+}
 $("summarizeBtn").addEventListener("click", generateSummary);
 $("shareSummaryBtn").addEventListener("click", shareSummary);
 $("shareFullBtn").addEventListener("click", () => shareSession(shareTarget));
@@ -197,9 +213,15 @@ async function start() {
     const res = await fetch(`${workerUrl}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passphrase }),
+      body: JSON.stringify(isTx()
+        ? { passphrase, mode: "transcribe", keywords: glossaryKeywords }
+        : { passphrase }),
     });
     const data = await res.json().catch(() => ({}));
+    if (isTx() && data.value) {
+      txModel = data.model || "";
+      diag(`文字起こしモデル: ${txModel}${data.fallback ? `(最初の設定は不可: ${data.firstError || "?"})` : ""}`);
+    }
     if (!res.ok || !data.value) {
       if (data.error === "invalid_passphrase") throw new Error("合言葉が違います");
       if (data.error === "spend_limit_exceeded" || isSpendLimit(data.status, data.detail)) {
@@ -259,7 +281,7 @@ async function start() {
     await thisPc.setLocalDescription(offer);
     if (!alive()) return;
 
-    const sdpRes = await fetch(CALLS_URL, {
+    const sdpRes = await fetch(isTx() ? TX_CALLS_URL : CALLS_URL, {
       method: "POST",
       body: offer.sdp,
       headers: { Authorization: `Bearer ${data.value}`, "Content-Type": "application/sdp" },
@@ -344,10 +366,21 @@ function handleEvent(raw) {
     case "session.output_transcript.delta":
       appendDelta("ja", ev.delta);
       break;
+    case "conversation.item.input_audio_transcription.delta":
+      noteInput();
+      txDelta(ev.item_id, ev.delta);
+      break;
+    case "conversation.item.input_audio_transcription.completed":
+      noteInput();
+      txComplete(ev.item_id, ev.transcript);
+      break;
     case "session.closed":
       stop("error", "セッションがサーバー側で終了しました");
       break;
     case "error":
+      if (/commit_empty|buffer_too_small/.test(ev.error?.code || "")) {
+        break; // 無音の区間を区切っただけ
+      }
       if (isSpendLimit(429, ev.error)) {
         stop("error", SPEND_LIMIT_MSG);
       } else {
@@ -357,6 +390,7 @@ function handleEvent(raw) {
       }
       break;
     default:
+      if (isTx()) break;
       // イベント名が想定と違っても字幕を出せるよう、名前のパターンで振り分ける
       if (/delta$/.test(type) && !/audio\.delta$/.test(type) && typeof ev.delta === "string") {
         if (/input|source/.test(type)) { lastInputAt = Date.now(); appendDelta("en", ev.delta); }
@@ -397,6 +431,92 @@ function appendDelta(lang, delta) {
 function markSessionStart() {
   // 2回目以降の開始では区切り線代わりに段落を切る
   for (const pane of Object.values(panes)) { pane.p = null; pane.entry = null; }
+  txItems.clear();
+  lastCommitAt = Date.now();
+  txDeltasSinceCommit = 0;
+}
+
+// ===== 日本語の文字起こしモード =====
+function isTx(sess = session) { return sess?.mode === "transcribe"; }
+
+function noteInput() {
+  lastInputAt = Date.now();
+  if (!inputSeen) { inputSeen = true; if (!lastError) showNotice(""); }
+}
+
+// 発話(item)ごとに1段落。途中経過(delta)を足していき、確定(completed)で正式な文に置き換える
+function txParagraph(itemId) {
+  let it = txItems.get(itemId);
+  if (!it) {
+    const p = document.createElement("p");
+    jaText.appendChild(p);
+    const entry = { lang: "ja", t: Date.now(), text: "" };
+    session.entries.push(entry);
+    it = { entry, p };
+    txItems.set(itemId, it);
+  }
+  return it;
+}
+function txShow(it) {
+  const el = jaText;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  it.p.textContent = fixTerms(it.entry.text);
+  dirty = true;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
+}
+function txDelta(itemId, delta) {
+  if (!delta) return;
+  const it = txParagraph(itemId || `x${Date.now()}`);
+  it.entry.text += delta;
+  lastTxDeltaAt = Date.now();
+  txDeltasSinceCommit++;
+  txShow(it);
+}
+function txComplete(itemId, transcript) {
+  if (typeof transcript !== "string") return;
+  if (!transcript.trim() && !txItems.has(itemId)) return;
+  const it = txParagraph(itemId || `x${Date.now()}`);
+  it.entry.text = transcript.trim();
+  txShow(it);
+}
+
+// ターン検出を使わないので、区切り(commit)はアプリが送る
+function txMaybeCommit(now) {
+  if (!isTx() || state !== "live" || dc?.readyState !== "open") return;
+  const maxMs = txModel === "gpt-transcribe" ? TX_COMMIT_MAX_FALLBACK_MS : TX_COMMIT_MAX_MS;
+  const paused = txDeltasSinceCommit > 0 && now - lastTxDeltaAt >= TX_COMMIT_PAUSE_MS;
+  if (!paused && now - lastCommitAt < maxMs) return;
+  try { dc.send(JSON.stringify({ type: "input_audio_buffer.commit" })); } catch { return; }
+  lastCommitAt = now;
+  txDeltasSinceCommit = 0;
+}
+
+function switchMode(mode) {
+  if (state !== "idle" || (session.mode || "translate") === mode) return;
+  lsSet(LS_MODE, mode);
+  if (session.entries.length) {
+    saveSession();
+    session = createSession();
+    showNotice(mode === "transcribe"
+      ? "日本語の文字起こしモードにしました(新しいセッション)。前のセッションは「履歴」にあります"
+      : "英→日 翻訳モードにしました(新しいセッション)。前のセッションは「履歴」にあります");
+  } else {
+    session.mode = mode;
+    showNotice("");
+  }
+  renderSession();
+}
+
+function applyModeUI() {
+  const tx = isTx();
+  document.body.classList.toggle("mode-transcribe", tx);
+  for (const b of document.querySelectorAll(".mode-switch button")) {
+    b.setAttribute("aria-pressed", String((session?.mode || "translate") === b.dataset.mode));
+    b.disabled = state !== "idle";
+  }
+  $("jaLabel").textContent = tx ? "文字起こし(日本語)" : "日本語";
+  costEl.hidden = tx;
+  $("costSep").hidden = tx;
 }
 
 // ===== タイマー(経過時間・料金・無音判定) =====
@@ -424,6 +544,7 @@ function tick() {
       countdownEl.hidden = true;
     }
   }
+  txMaybeCommit(now);
   if (dirty && now - lastSaveAt >= AUTOSAVE_MS) saveSession();
   render();
 }
@@ -523,11 +644,14 @@ function closeBoost() {
 // ===== 用語集(表示と保存テキストの置き換え) =====
 function compileGlossary() {
   glossaryRules = [];
+  glossaryKeywords = [];
   for (const raw of glossaryEl.value.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const m = line.match(/^(.+?)\s*(?:→|->|=>|＝|=)\s*(.*)$/);
-    if (!m || !m[1].trim()) continue;
+    if (!m) { glossaryKeywords.push(line); continue; } // 単語だけの行はキーワード
+    if (!m[1].trim()) continue;
+    if (m[2].trim()) glossaryKeywords.push(m[2].trim());
     const from = m[1].trim();
     const to = m[2].trim();
     // 英数字の語は大文字小文字を区別せず、単語単位で置き換える
@@ -628,12 +752,13 @@ function render() {
   toggleBtn.classList.toggle("stop", state !== "idle");
   $("newBtn").disabled = state !== "idle";
   $("historyBtn").disabled = state !== "idle";
+  applyModeUI();
 }
 
 function setState(s) {
   state = s;
   statusEl.dataset.state = s;
-  statusEl.textContent = { idle: "待機中", connecting: "接続中…", live: "翻訳中" }[s];
+  statusEl.textContent = { idle: "待機中", connecting: "接続中…", live: isTx() ? "文字起こし中" : "翻訳中" }[s];
   render();
 }
 
@@ -671,7 +796,7 @@ function createSession() {
   const now = Date.now();
   const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   lsSet(LS_CURRENT, id);
-  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [] };
+  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [], mode: lsGet(LS_MODE) === "transcribe" ? "transcribe" : "translate" };
 }
 
 function loadSession(id) {
@@ -696,7 +821,7 @@ function saveSession() {
 function persistSession(sess) {
   if (!sess || (!sess.entries.length && !sess.durationMs)) return;
   sess.updatedAt = Date.now();
-  const firstEn = sess.entries.find((e) => e.lang === "en")?.text || "";
+  const firstEn = sess.entries.find((e) => e.lang === (isTx(sess) ? "ja" : "en"))?.text || "";
   const meta = {
     id: sess.id,
     createdAt: sess.createdAt,
@@ -704,6 +829,7 @@ function persistSession(sess) {
     durationMs: sess.durationMs,
     preview: firstEn.slice(0, 60),
     hasSummary: !!sess.summary,
+    mode: sess.mode || "translate",
   };
   const index = loadIndex().filter((m) => m.id !== sess.id);
   index.unshift(meta);
@@ -749,7 +875,7 @@ function switchSession(id) {
   session = target;
   renderSession();
   $("history").close();
-  showNotice(`${fmtDateTime(session.createdAt)} のセッションを表示中。「再開」で続きを翻訳できます`);
+  showNotice(`${fmtDateTime(session.createdAt)} のセッションを表示中。「再開」で続きを${isTx() ? "文字起こし" : "翻訳"}できます`);
 }
 
 function deleteSession(id) {
@@ -783,7 +909,7 @@ function openHistory() {
     info.className = "info";
     const title = document.createElement("div");
     title.className = "title";
-    title.textContent = `${m.hasSummary ? "📝 " : ""}${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
+    title.textContent = `${m.mode === "transcribe" ? "🎙 " : "🌐 "}${m.hasSummary ? "📝 " : ""}${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
     const preview = document.createElement("div");
     preview.className = "preview";
     preview.textContent = m.preview || "(英語なし)";
@@ -818,6 +944,17 @@ function sessionToText(sess) {
   const entries = [...sess.entries].sort((a, b) => a.t - b.t);
   const time = (t) => new Date(t).toLocaleTimeString("ja-JP", { hour12: false });
   const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text).trim()).filter(Boolean).join("\n");
+  if (isTx(sess)) {
+    return [
+      `文字起こし ${fmtDateTime(sess.createdAt)}(録音時間 ${fmtTime(sess.durationMs)})`,
+      "",
+      ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
+      ...(sess.speakerTranscript ? ["■ 話者別書き起こし(話者は音声から自動識別)", sess.speakerTranscript, ""] : []),
+      "■ 文字起こし(時刻順)",
+      ...entries.map((e) => `[${time(e.t)}] ${fixTerms(e.text).trim()}`).filter((l) => !l.endsWith("] ")),
+      "",
+    ].join("\n");
+  }
   return [
     `英日字幕 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
     "",
@@ -839,7 +976,7 @@ async function shareSession(sess) {
   if (!sess?.entries.length) { alert("保存する字幕がありません"); return; }
   const d = new Date(sess.createdAt);
   const pad = (n) => String(n).padStart(2, "0");
-  const name = `subtitles_en-ja_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+  const name = `${isTx(sess) ? "transcript_ja" : "subtitles_en-ja"}_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
   const file = new File([sessionToText(sess)], name, { type: "text/plain" });
   // iPhone では共有シートから「ファイルに保存」「メモ」「AirDrop」などを選べる
   if (navigator.canShare?.({ files: [file] })) {
@@ -873,7 +1010,8 @@ function openShare(sess) {
   if (!sess?.entries.length) { alert("保存する字幕がありません"); return; }
   if (sess === session) saveSession();
   shareTarget = sess;
-  $("shareTitle").textContent = `${fmtDateTime(sess.createdAt)} のセッション`;
+  $("shareTitle").textContent = `${fmtDateTime(sess.createdAt)} の${isTx(sess) ? "文字起こし" : "翻訳"}セッション`;
+  $("shareFullBtn").textContent = isTx(sess) ? "文字起こしの全文をファイルで保存・共有" : "英日の全文をファイルで保存・共有";
   $("summaryText").value = sess.summary || "";
   $("summaryStatus").textContent = sess.summary ? "" : "字幕の内容から、要点・決定事項・アクションを日本語でまとめます";
   shareRecordings = [];
@@ -926,7 +1064,7 @@ async function generateSummary() {
     const res = await fetch(`${workerUrl}/summary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passphrase, en: join("en"), ja: join("ja"), glossary, speakers }),
+      body: JSON.stringify({ passphrase, mode: sess.mode || "translate", en: isTx(sess) ? "" : join("en"), ja: join("ja"), glossary, speakers }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.summary) {

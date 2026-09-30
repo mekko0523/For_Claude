@@ -228,3 +228,17 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 #summaryText { font-size: 15px; line-height: 1.6; }
 .settings-form label.check { flex-direction: row; align-items: flex-start; gap: 10px; }
 .settings-form label.check input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; }
+
+.mode-switch {
+  display: flex; margin: 8px 16px 0; padding: 3px; gap: 3px;
+  background: var(--border); border-radius: 10px;
+}
+.mode-switch button {
+  flex: 1; min-height: 34px; border: none; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.mode-switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.mode-switch button:disabled { cursor: default; }
+body.mode-transcribe .pane.en { display: none; }
+body.mode-transcribe .panes { grid-template-rows: 1fr; }
+body.mode-transcribe .ja .text { font-size: calc(var(--ja-size) * 0.85); font-weight: 400; }

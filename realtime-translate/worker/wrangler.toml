@@ -14,6 +14,8 @@ NOISE_REDUCTION = "far_field"
 SUMMARY_MODEL = "gpt-6.1-sol"
 # 話者分け(/diarize)に使う書き起こしモデル
 DIARIZE_MODEL = "gpt-4o-transcribe-diarize"
+# 日本語の文字起こしモードのモデル(受け付けられない場合は gpt-transcribe に自動で切り替え)
+TRANSCRIBE_MODEL = "gpt-live-transcribe"
 
 # Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
 #   OPENAI_API_KEY : OpenAI の API キー
