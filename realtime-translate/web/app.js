@@ -12,6 +12,8 @@ const TICK_MS = 250;
 const MIC_CONSTRAINTS = true;
 const STATS_INTERVAL_MS = 500;           // 送信音量の取得間隔
 const STATS_LOG_MS = 5_000;              // 診断ログに送信状況を書く間隔
+const SILENT_MIC_MS = 6_000;             // この間ずっと音量ゼロならマイク不調とみなす
+const SILENT_LEVEL = 0.0005;             // 静かな部屋でも通常はこれ以上の音量がある
 const SPEND_LIMIT_MSG = "今月の利用上限に達しました(OpenAI の月間上限)。来月まで利用できません";
 
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
@@ -57,6 +59,9 @@ let fontScale = 1;
 let lastError = "";          // 手動停止しても消さずに残すエラー
 let statsTimer = null;       // 送信音量(WebRTC 統計)の取得
 let lastStatsLogAt = 0;
+let micCheckSince = 0;       // 無音マイク判定の起点
+let micMaxLevel = 0;         // 判定期間中の最大音量
+let micRecoveries = 0;       // マイク再取得を試みた回数
 let remoteAudio = null;      // 翻訳音声(ミュートで受けるだけ)
 let eventCount = 0;
 let lastEventType = "";
@@ -123,6 +128,8 @@ async function start() {
   setState("connecting");
   showNotice("");
   lastError = "";
+  micRecoveries = 0;
+  micCheckSince = 0;
   eventCount = 0;
   lastEventType = "";
   diagEl.hidden = false;
@@ -162,10 +169,7 @@ async function start() {
     if (!alive()) { stream.getTracks().forEach((t) => t.stop()); return; }
     micStream = stream;
     const track = stream.getAudioTracks()[0];
-    diag(`マイク取得: ${track?.label || "(名前なし)"} muted=${track?.muted} state=${track?.readyState} ${JSON.stringify(track?.getSettings?.() || {})}`);
-    track?.addEventListener("mute", () => diag("マイクトラック mute(iOS がマイクを止めた可能性)"));
-    track?.addEventListener("unmute", () => diag("マイクトラック unmute"));
-    track?.addEventListener("ended", () => diag("マイクトラック ended"));
+    watchMicTrack(track);
 
     // 3) WebRTC
     pc = new RTCPeerConnection();
@@ -398,13 +402,71 @@ function startStats(peer) {
         }
       });
     } catch { return; }
-    if (level !== null) setMeter(level);
+    if (level !== null) {
+      setMeter(level);
+      checkSilentMic(peer, level);
+    }
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
       diag(`送信: ${bytesSent ?? "?"} bytes / ${packetsSent ?? "?"} packets / 音量 ${level === null ? "取得不可" : level.toFixed(3)}`);
     }
   }, STATS_INTERVAL_MS);
 }
+// ===== マイク不調の検知と復旧 =====
+function watchMicTrack(track) {
+  $("micName").textContent = shortMicName(track?.label);
+  diag(`マイク取得: ${track?.label || "(名前なし)"} muted=${track?.muted} state=${track?.readyState} ${JSON.stringify(track?.getSettings?.() || {})}`);
+  track?.addEventListener("mute", () => diag("マイクトラック mute(iOS がマイクを止めた可能性)"));
+  track?.addEventListener("unmute", () => diag("マイクトラック unmute"));
+  track?.addEventListener("ended", () => diag("マイクトラック ended"));
+  micCheckSince = Date.now();
+  micMaxLevel = 0;
+}
+
+function shortMicName(label) {
+  if (!label) return "";
+  return label.length > 14 ? `${label.slice(0, 13)}…` : label;
+}
+
+// 送っている音声がずっと完全な無音なら、マイクを取り直す(1回)。それでもだめなら画面で知らせる
+function checkSilentMic(peer, level) {
+  if (state !== "live" || !micCheckSince) return;
+  micMaxLevel = Math.max(micMaxLevel, level);
+  if (micMaxLevel >= SILENT_LEVEL) { micCheckSince = 0; return; } // 音が入っている
+  if (Date.now() - micCheckSince < SILENT_MIC_MS) return;
+  micCheckSince = 0;
+  if (micRecoveries === 0) {
+    micRecoveries++;
+    diag("マイクの音量がゼロのまま → マイクを取り直します");
+    recoverMic(peer);
+  } else {
+    const name = micStream?.getAudioTracks()[0]?.label || "不明";
+    lastError = `マイクに音が入っていません(使用中: ${name})。AirPods などのイヤホンを外す、他のアプリの通話・録音を終了する、を試してから「停止」→「再開」してください`;
+    showNotice(lastError, true);
+    diag("再取得後も音量ゼロ");
+  }
+}
+
+async function recoverMic(peer) {
+  const gen = generation;
+  try {
+    // iPhone 本体のマイクがあれば優先する(イヤホンのマイクが選ばれて無音になる場合への対策)
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const builtIn = devices.find((d) => d.kind === "audioinput" && /iphone|ipad|built-?in|内蔵/i.test(d.label));
+    const audio = builtIn ? { deviceId: { exact: builtIn.deviceId } } : true;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio });
+    if (gen !== generation || !pc) { stream.getTracks().forEach((t) => t.stop()); return; }
+    const newTrack = stream.getAudioTracks()[0];
+    const sender = peer.getSenders().find((sd) => sd.track?.kind === "audio");
+    await sender?.replaceTrack(newTrack);
+    micStream?.getTracks().forEach((t) => t.stop());
+    micStream = stream;
+    watchMicTrack(newTrack);
+  } catch (e) {
+    diag(`マイク再取得に失敗: ${e?.message || e}`);
+  }
+}
+
 function stopStats() {
   clearInterval(statsTimer);
   statsTimer = null;
