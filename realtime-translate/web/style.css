@@ -226,3 +226,5 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .share-section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
 .share-section h3 { margin: 0; font-size: 15px; }
 #summaryText { font-size: 15px; line-height: 1.6; }
+.settings-form label.check { flex-direction: row; align-items: flex-start; gap: 10px; }
+.settings-form label.check input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; }

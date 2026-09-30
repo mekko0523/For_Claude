@@ -12,6 +12,8 @@ TARGET_LANGUAGE = "ja"
 NOISE_REDUCTION = "far_field"
 # 要約メモ(/summary)に使うモデル
 SUMMARY_MODEL = "gpt-6.1-sol"
+# 話者分け(/diarize)に使う書き起こしモデル
+DIARIZE_MODEL = "gpt-4o-transcribe-diarize"
 
 # Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
 #   OPENAI_API_KEY : OpenAI の API キー

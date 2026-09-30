@@ -144,3 +144,12 @@ const MAX_SESSION_MS     = 90 * 60_000;
 - 「要約メモを共有」はテキストとして iOS の共有シートに渡します(LINE・メール・メモなどに貼れる)。
 - Worker の `POST /summary` が OpenAI Responses API を呼びます(モデルは `wrangler.toml` の
   `SUMMARY_MODEL`、既定 `gpt-6.1-sol`、`store: false`)。料金は同じ OpenAI プロジェクトの上限内で課金されます。
+
+## 話者分け(要約メモ)
+
+- 翻訳中の音声を端末内(IndexedDB)に録音します(⚙︎ で オン/オフ。32kbps・20分ごとに分割・14日で自動削除)。
+- 要約時に「話者を分けて要約する」をオンにすると、録音を Worker の `POST /diarize` 経由で
+  OpenAI `gpt-4o-transcribe-diarize`(`response_format=diarized_json`)に送り、「話者A/B…: 発言」の書き起こしを作って
+  要約に渡します。要約には「■ 参加者」が加わり、発言・アクションの担当が話者ごとに書かれます。
+- 話者ラベルは声の違いから自動推定したもので、名前は会話中に出た場合のみ推測されます。
+  識別結果はセッションに保存され、要約を作り直しても再送信しません。全文ファイルにも含まれます。

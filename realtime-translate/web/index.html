@@ -75,6 +75,10 @@
           <option value="strong">強(×6・雑音も大きくなります)</option>
         </select>
       </label>
+      <label class="check">
+        <input type="checkbox" id="recordAudio">
+        <span>話者分けのために音声を録音する(端末内に14日間保存。要約時だけ送信)</span>
+      </label>
       <label>用語集(誤り → 正しい)
         <textarea id="glossary" rows="7" spellcheck="false" autocapitalize="off"></textarea>
       </label>
@@ -103,6 +107,10 @@
       <p class="hint" id="shareTitle"></p>
       <section class="share-section">
         <h3>要約メモ(日本語)</h3>
+        <label class="check" id="speakerOption" hidden>
+          <input type="checkbox" id="useSpeakers" checked>
+          <span>話者を分けて要約する<br><small class="hint" id="speakerInfo"></small></span>
+        </label>
         <button type="button" class="small-btn" id="summarizeBtn">📝 要約メモを作成</button>
         <p class="hint" id="summaryStatus"></p>
         <textarea id="summaryText" rows="12" hidden></textarea>

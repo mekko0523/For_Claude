@@ -23,6 +23,11 @@ const LS_PASSPHRASE = "rt.passphrase";
 const LS_FONT = "rt.fontScale";
 const LS_BOOST = "rt.micBoost";
 const LS_GLOSSARY = "rt.glossary";
+const LS_RECORD = "rt.recordAudio";
+// 録音(話者分け用)。端末内(IndexedDB)にだけ保存し、要約時に Worker 経由で OpenAI へ送る
+const REC_BITRATE = 32_000;              // 1時間で約15MB(OpenAI の上限は1ファイル25MB)
+const REC_ROTATE_MS = 20 * 60_000;       // 長い録音は20分ごとに別ファイルに分ける
+const REC_KEEP_DAYS = 14;                // これより古い録音は自動で削除
 // 集音ブースト: 送る前にアプリ内で音量を上げる(コンプレッサーで音割れを防ぐ)
 const BOOST_GAIN = { off: 1, normal: 3, strong: 6 };
 const DEFAULT_GLOSSARY = `# 1行に「誤り → 正しい」の形で書きます(英語・日本語どちらも可)
@@ -103,6 +108,10 @@ applyFontScale(Number(lsGet(LS_FONT)) || 1);
 const boostSel = $("micBoost");
 boostSel.value = BOOST_GAIN[lsGet(LS_BOOST)] ? lsGet(LS_BOOST) : "normal";
 boostSel.addEventListener("change", () => lsSet(LS_BOOST, boostSel.value));
+const recordEl = $("recordAudio");
+recordEl.checked = lsGet(LS_RECORD) !== "off";
+recordEl.addEventListener("change", () => lsSet(LS_RECORD, recordEl.checked ? "on" : "off"));
+pruneRecordings();
 const glossaryEl = $("glossary");
 glossaryEl.value = lsGet(LS_GLOSSARY) ?? DEFAULT_GLOSSARY;
 compileGlossary();
@@ -229,6 +238,7 @@ async function start() {
     const sendTrack = (await buildBoostedTrack(stream)) || track;
     if (!alive()) return;
     thisPc.addTrack(sendTrack, new MediaStream([sendTrack]));
+    const recordTrack = sendTrack;
 
     dc = thisPc.createDataChannel("oai-events");
     dc.onopen = () => {
@@ -240,6 +250,7 @@ async function start() {
       diag("データチャネル接続");
       quietCheckSince = Date.now();
       startStats(thisPc);
+      startRecorder(recordTrack);
     };
     dc.onmessage = (e) => { if (alive()) handleEvent(e.data); };
     dc.onclose = () => { diag("データチャネル切断"); if (alive() && state !== "idle") stop("error", "サーバーとの接続が閉じられました"); };
@@ -278,6 +289,7 @@ function stop(reason, message) {
   liveSince = 0;
   saveSession();
 
+  stopRecorder(); // マイクを止める前に録音を確定させる
   try { dc?.close(); } catch {}
   try { pc?.close(); } catch {}
   micStream?.getTracks().forEach((t) => t.stop());
@@ -579,6 +591,8 @@ async function recoverMic(peer) {
     const newTrack = stream.getAudioTracks()[0];
     const sender = peer.getSenders().find((sd) => sd.track?.kind === "audio");
     await sender?.replaceTrack(newTrack); // 復旧時はブーストを通さず生のマイクを送る
+    stopRecorder();
+    startRecorder(newTrack);
     micStream?.getTracks().forEach((t) => t.stop());
     closeBoost();
     micStream = stream;
@@ -741,6 +755,7 @@ function switchSession(id) {
 function deleteSession(id) {
   if (!confirm("このセッションの字幕を削除しますか?(元に戻せません)")) return;
   try { localStorage.removeItem(LS_SESSION_PREFIX + id); } catch {}
+  deleteRecordings(id);
   lsSet(LS_SESSIONS, JSON.stringify(loadIndex().filter((m) => m.id !== id)));
   if (session.id === id) {
     session = createSession();
@@ -813,6 +828,7 @@ function sessionToText(sess) {
     "■ 日本語訳",
     join("ja") || "(なし)",
     "",
+    ...(sess.speakerTranscript ? ["■ 話者別書き起こし(英語・話者は音声から自動識別)", sess.speakerTranscript, ""] : []),
     "■ 対訳(時刻順)",
     ...entries.map((e) => `[${time(e.t)}] ${e.lang === "en" ? "EN" : "JA"}: ${fixTerms(e.text).trim()}`),
     "",
@@ -846,6 +862,7 @@ async function shareSession(sess) {
 // ===== 要約メモ =====
 let shareTarget = null;      // 共有画面で扱っているセッション
 let summarizing = false;
+let shareRecordings = [];    // 共有画面のセッションの録音
 
 function getWorkerUrl() {
   const u = (window.APP_CONFIG?.WORKER_URL || "").replace(/\/$/, "");
@@ -859,8 +876,18 @@ function openShare(sess) {
   $("shareTitle").textContent = `${fmtDateTime(sess.createdAt)} のセッション`;
   $("summaryText").value = sess.summary || "";
   $("summaryStatus").textContent = sess.summary ? "" : "字幕の内容から、要点・決定事項・アクションを日本語でまとめます";
+  shareRecordings = [];
+  $("speakerOption").hidden = true;
   renderShareButtons();
   $("shareDialog").showModal();
+  getRecordings(sess.id).then((recs) => {
+    if (shareTarget !== sess) return;
+    shareRecordings = recs;
+    const mb = recs.reduce((n, r) => n + r.blob.size, 0) / 1024 / 1024;
+    const min = recs.reduce((n, r) => n + (r.endedAt - r.startedAt), 0) / 60_000;
+    $("speakerOption").hidden = !recs.length;
+    $("speakerInfo").textContent = `録音 ${recs.length} 件・${min < 1 ? "1分未満" : `約${Math.round(min)}分`}(${mb.toFixed(1)}MB)${sess.speakerTranscript ? "・識別済み" : ""}`;
+  });
 }
 
 function renderShareButtons() {
@@ -884,13 +911,22 @@ async function generateSummary() {
   const glossary = glossaryEl.value.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).join("\n");
 
   summarizing = true;
-  $("summaryStatus").textContent = "要約メモを作成しています(10〜30秒ほど)…";
   renderShareButtons();
   try {
+    let speakers = "";
+    let speakerNote = "";
+    if ($("useSpeakers").checked && shareRecordings.length) {
+      try {
+        speakers = await diarizeSession(sess, shareRecordings, workerUrl, passphrase);
+      } catch (e) {
+        speakerNote = `(話者の識別に失敗したため、話者なしで要約しました: ${e?.message || e})`;
+      }
+    }
+    $("summaryStatus").textContent = "要約メモを作成しています(10〜30秒ほど)…";
     const res = await fetch(`${workerUrl}/summary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passphrase, en: join("en"), ja: join("ja"), glossary }),
+      body: JSON.stringify({ passphrase, en: join("en"), ja: join("ja"), glossary, speakers }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.summary) {
@@ -906,7 +942,7 @@ async function generateSummary() {
     persistSession(sess);
     if (shareTarget === sess) {
       $("summaryText").value = data.summary;
-      $("summaryStatus").textContent = "内容を確認・修正してから共有できます(修正は自動保存)";
+      $("summaryStatus").textContent = speakerNote || `内容を確認・修正してから共有できます(修正は自動保存)${speakers ? "。話者は音声から自動で推定しています" : ""}`;
     }
   } catch (e) {
     $("summaryStatus").textContent = e?.message || String(e);
@@ -914,6 +950,130 @@ async function generateSummary() {
     summarizing = false;
     renderShareButtons();
   }
+}
+
+// 録音ごとに話者分け付き書き起こしを取り、時刻付きの「話者: 発言」行にする(結果はセッションに保存して再利用)
+async function diarizeSession(sess, recs, workerUrl, passphrase) {
+  if (sess.speakerTranscript && sess.speakerRecCount === recs.length) return sess.speakerTranscript;
+  const time = (t) => new Date(t).toLocaleTimeString("ja-JP", { hour12: false });
+  const lines = [];
+  for (let i = 0; i < recs.length; i++) {
+    const rec = recs[i];
+    const min = Math.max(1, Math.round((rec.endedAt - rec.startedAt) / 60_000));
+    $("summaryStatus").textContent = `話者を識別しています(${i + 1}/${recs.length}・約${min}分の録音)…長い録音は1〜2分かかります`;
+    const res = await fetch(`${workerUrl}/diarize`, {
+      method: "POST",
+      headers: { "Content-Type": rec.blob.type || "audio/mp4", "X-Passphrase": passphrase },
+      body: rec.blob,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (data.error === "spend_limit_exceeded") throw new Error(SPEND_LIMIT_MSG);
+      if (data.error === "audio_too_large") throw new Error("録音ファイルが大きすぎます");
+      throw new Error(`${res.status} ${data.error || ""} ${data.detail?.message || ""}`.trim());
+    }
+    const prefix = recs.length > 1 ? `録音${i + 1}-` : "";
+    let prev = null;
+    for (const sg of data.segments || []) {
+      const who = `${prefix}話者${sg.speaker}`;
+      const text = fixTerms(sg.text);
+      // 同じ話者の連続した発言は1行にまとめる
+      if (prev && prev.who === who) { prev.text += ` ${text}`; continue; }
+      prev = { who, t: rec.startedAt + sg.start * 1000, text };
+      lines.push(prev);
+    }
+  }
+  const transcript = lines.map((l) => `[${time(l.t)}] ${l.who}: ${l.text}`).join("\n");
+  sess.speakerTranscript = transcript;
+  sess.speakerRecCount = recs.length;
+  persistSession(sess);
+  return transcript;
+}
+
+// ===== 録音(話者分け用) =====
+let recorder = null;
+let recRotateTimer = null;
+
+function startRecorder(track) {
+  if (!recordEl.checked || typeof MediaRecorder === "undefined" || !track) return;
+  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported?.(m)) || "";
+  try {
+    const rec = new MediaRecorder(new MediaStream([track]), { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: REC_BITRATE });
+    const chunks = [];
+    const startedAt = Date.now();
+    const sessionId = session.id;
+    rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: (rec.mimeType || mime || "audio/mp4").split(";")[0] });
+      if (blob.size > 2_000) saveRecording({ sessionId, startedAt, endedAt: Date.now(), blob });
+    };
+    rec.start(10_000);
+    recorder = rec;
+    clearTimeout(recRotateTimer);
+    recRotateTimer = setTimeout(() => {
+      if (recorder !== rec) return;
+      stopRecorder();
+      startRecorder(track);
+    }, REC_ROTATE_MS);
+    diag(`録音開始 (${rec.mimeType || mime || "既定"})`);
+  } catch (e) {
+    diag(`録音できません: ${e?.message || e}`);
+  }
+}
+
+function stopRecorder() {
+  clearTimeout(recRotateTimer);
+  const rec = recorder;
+  recorder = null;
+  if (rec && rec.state !== "inactive") { try { rec.stop(); } catch {} }
+}
+
+function openAudioDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("rt-audio", 1);
+    req.onupgradeneeded = () => {
+      const store = req.result.createObjectStore("recordings", { keyPath: "id", autoIncrement: true });
+      store.createIndex("sessionId", "sessionId");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function idbDone(req) {
+  return new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
+}
+async function saveRecording(rec) {
+  try {
+    const db = await openAudioDb();
+    await idbDone(db.transaction("recordings", "readwrite").objectStore("recordings").add(rec));
+    diag(`録音を保存 ${(rec.blob.size / 1024 / 1024).toFixed(1)}MB`);
+  } catch (e) {
+    diag(`録音の保存に失敗: ${e?.message || e}`);
+  }
+}
+async function getRecordings(sessionId) {
+  try {
+    const db = await openAudioDb();
+    const recs = await idbDone(db.transaction("recordings").objectStore("recordings").index("sessionId").getAll(sessionId));
+    return recs.sort((a, b) => a.startedAt - b.startedAt);
+  } catch { return []; }
+}
+async function deleteRecordings(sessionId) {
+  try {
+    const db = await openAudioDb();
+    const store = db.transaction("recordings", "readwrite").objectStore("recordings");
+    const keys = await idbDone(store.index("sessionId").getAllKeys(sessionId));
+    for (const k of keys) store.delete(k);
+  } catch {}
+}
+async function pruneRecordings() {
+  try {
+    const db = await openAudioDb();
+    const store = db.transaction("recordings", "readwrite").objectStore("recordings");
+    const all = await idbDone(store.getAll());
+    const limit = Date.now() - REC_KEEP_DAYS * 86_400_000;
+    for (const r of all) if (r.startedAt < limit) store.delete(r.id);
+  } catch {}
 }
 
 async function shareSummary() {
