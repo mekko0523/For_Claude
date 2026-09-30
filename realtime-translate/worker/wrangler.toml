@@ -10,6 +10,8 @@ ALLOWED_ORIGIN = "https://mekko0523.github.io"
 TARGET_LANGUAGE = "ja"
 # サーバー側ノイズ除去: near_field(口元のマイク) / far_field(離れたスピーカーや部屋の音)
 NOISE_REDUCTION = "far_field"
+# 要約メモ(/summary)に使うモデル
+SUMMARY_MODEL = "gpt-6.1-sol"
 
 # Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
 #   OPENAI_API_KEY : OpenAI の API キー

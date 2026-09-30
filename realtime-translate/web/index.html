@@ -97,6 +97,26 @@
     </form>
   </dialog>
 
+  <dialog id="shareDialog">
+    <form method="dialog" class="settings-form">
+      <h2>保存・共有</h2>
+      <p class="hint" id="shareTitle"></p>
+      <section class="share-section">
+        <h3>要約メモ(日本語)</h3>
+        <button type="button" class="small-btn" id="summarizeBtn">📝 要約メモを作成</button>
+        <p class="hint" id="summaryStatus"></p>
+        <textarea id="summaryText" rows="12" hidden></textarea>
+        <button type="button" class="small-btn primary" id="shareSummaryBtn" disabled>要約メモを共有</button>
+      </section>
+      <section class="share-section">
+        <h3>全文</h3>
+        <button type="button" class="small-btn" id="shareFullBtn">英日の全文をファイルで保存・共有</button>
+        <p class="hint">要約メモがある場合は先頭に含まれます</p>
+      </section>
+      <button class="small-btn" value="ok">閉じる</button>
+    </form>
+  </dialog>
+
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>

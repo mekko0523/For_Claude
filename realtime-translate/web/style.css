@@ -223,3 +223,6 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 }
 .settings-form textarea { resize: vertical; line-height: 1.5; }
 .settings-form { max-height: 85vh; overflow-y: auto; }
+.share-section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
+.share-section h3 { margin: 0; font-size: 15px; }
+#summaryText { font-size: 15px; line-height: 1.6; }

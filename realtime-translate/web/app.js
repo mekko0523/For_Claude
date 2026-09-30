@@ -117,7 +117,15 @@ $("settingsBtn").addEventListener("click", () => settings.showModal());
 $("fontUp").addEventListener("click", () => applyFontScale(fontScale + 0.1));
 $("fontDown").addEventListener("click", () => applyFontScale(fontScale - 0.1));
 $("newBtn").addEventListener("click", newSession);
-$("saveBtn").addEventListener("click", () => shareSession(session));
+$("saveBtn").addEventListener("click", () => openShare(session));
+$("summarizeBtn").addEventListener("click", generateSummary);
+$("shareSummaryBtn").addEventListener("click", shareSummary);
+$("shareFullBtn").addEventListener("click", () => shareSession(shareTarget));
+$("summaryText").addEventListener("input", () => {
+  if (!shareTarget) return;
+  shareTarget.summary = $("summaryText").value;
+  persistSession(shareTarget);
+});
 $("historyBtn").addEventListener("click", openHistory);
 $("copyDiagBtn").addEventListener("click", copyDiag);
 $("settingsBtn").addEventListener("click", renderDiagLog);
@@ -146,8 +154,8 @@ async function start() {
     passInput.focus();
     return;
   }
-  const workerUrl = (window.APP_CONFIG?.WORKER_URL || "").replace(/\/$/, "");
-  if (!workerUrl || workerUrl.includes("YOUR-SUBDOMAIN")) {
+  const workerUrl = getWorkerUrl();
+  if (!workerUrl) {
     showNotice("Worker の URL が未設定です(GitHub Actions のデプロイを確認してください)", true);
     return;
   }
@@ -668,20 +676,25 @@ function loadIndex() {
 function saveSession() {
   lastSaveAt = Date.now();
   dirty = false;
-  if (!session || (!session.entries.length && !session.durationMs)) return;
-  session.updatedAt = Date.now();
-  const firstEn = session.entries.find((e) => e.lang === "en")?.text || "";
+  persistSession(session);
+}
+
+function persistSession(sess) {
+  if (!sess || (!sess.entries.length && !sess.durationMs)) return;
+  sess.updatedAt = Date.now();
+  const firstEn = sess.entries.find((e) => e.lang === "en")?.text || "";
   const meta = {
-    id: session.id,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    durationMs: session.durationMs,
+    id: sess.id,
+    createdAt: sess.createdAt,
+    updatedAt: sess.updatedAt,
+    durationMs: sess.durationMs,
     preview: firstEn.slice(0, 60),
+    hasSummary: !!sess.summary,
   };
-  const index = loadIndex().filter((m) => m.id !== session.id);
+  const index = loadIndex().filter((m) => m.id !== sess.id);
   index.unshift(meta);
   index.sort((a, b) => b.createdAt - a.createdAt);
-  const ok = lsSet(LS_SESSION_PREFIX + session.id, JSON.stringify(session)) && lsSet(LS_SESSIONS, JSON.stringify(index));
+  const ok = lsSet(LS_SESSION_PREFIX + sess.id, JSON.stringify(sess)) && lsSet(LS_SESSIONS, JSON.stringify(index));
   if (!ok && !storageWarned) {
     storageWarned = true;
     showNotice("端末の保存容量が足りず、字幕を保存できませんでした。履歴から古いセッションを削除してください", true);
@@ -755,7 +768,7 @@ function openHistory() {
     info.className = "info";
     const title = document.createElement("div");
     title.className = "title";
-    title.textContent = `${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
+    title.textContent = `${m.hasSummary ? "📝 " : ""}${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
     const preview = document.createElement("div");
     preview.className = "preview";
     preview.textContent = m.preview || "(英語なし)";
@@ -764,7 +777,10 @@ function openHistory() {
     btns.className = "btns";
     btns.append(
       mkBtn("開く", () => switchSession(m.id)),
-      mkBtn("保存", () => { const s2 = loadSession(m.id); if (s2) shareSession(s2); }),
+      mkBtn("保存・共有", () => {
+        const s2 = m.id === session.id ? session : loadSession(m.id);
+        if (s2) { $("history").close(); openShare(s2); }
+      }),
       mkBtn("削除", () => deleteSession(m.id), "danger"),
     );
     li.append(info, btns);
@@ -790,6 +806,7 @@ function sessionToText(sess) {
   return [
     `英日字幕 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
     "",
+    ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
     "■ 英語原文",
     join("en") || "(なし)",
     "",
@@ -824,6 +841,93 @@ async function shareSession(sess) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ===== 要約メモ =====
+let shareTarget = null;      // 共有画面で扱っているセッション
+let summarizing = false;
+
+function getWorkerUrl() {
+  const u = (window.APP_CONFIG?.WORKER_URL || "").replace(/\/$/, "");
+  return !u || u.includes("YOUR-SUBDOMAIN") ? "" : u;
+}
+
+function openShare(sess) {
+  if (!sess?.entries.length) { alert("保存する字幕がありません"); return; }
+  if (sess === session) saveSession();
+  shareTarget = sess;
+  $("shareTitle").textContent = `${fmtDateTime(sess.createdAt)} のセッション`;
+  $("summaryText").value = sess.summary || "";
+  $("summaryStatus").textContent = sess.summary ? "" : "字幕の内容から、要点・決定事項・アクションを日本語でまとめます";
+  renderShareButtons();
+  $("shareDialog").showModal();
+}
+
+function renderShareButtons() {
+  const has = !!$("summaryText").value.trim();
+  $("summarizeBtn").textContent = summarizing ? "作成中…" : has ? "要約を作り直す" : "📝 要約メモを作成";
+  $("summarizeBtn").disabled = summarizing;
+  $("shareSummaryBtn").disabled = !has || summarizing;
+  $("summaryText").hidden = !has && !summarizing;
+}
+
+async function generateSummary() {
+  const sess = shareTarget;
+  if (!sess || summarizing) return;
+  if ($("summaryText").value.trim() && !confirm("今の要約メモを作り直しますか?(編集した内容は消えます)")) return;
+  const workerUrl = getWorkerUrl();
+  const passphrase = passInput.value.trim();
+  if (!workerUrl || !passphrase) { alert("合言葉(⚙︎ 設定)を入力してください"); return; }
+
+  const entries = [...sess.entries].sort((a, b) => a.t - b.t);
+  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text).trim()).filter(Boolean).join("\n");
+  const glossary = glossaryEl.value.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).join("\n");
+
+  summarizing = true;
+  $("summaryStatus").textContent = "要約メモを作成しています(10〜30秒ほど)…";
+  renderShareButtons();
+  try {
+    const res = await fetch(`${workerUrl}/summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase, en: join("en"), ja: join("ja"), glossary }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.summary) {
+      const msg = {
+        invalid_passphrase: "合言葉が違います",
+        spend_limit_exceeded: SPEND_LIMIT_MSG,
+        transcript_too_long: "字幕が長すぎて要約できません(約2時間分まで)",
+        empty_transcript: "要約する字幕がありません",
+      }[data.error] || `要約の作成に失敗しました (${res.status} ${data.error || ""}) ${data.detail?.message || ""}`;
+      throw new Error(msg);
+    }
+    sess.summary = data.summary;
+    persistSession(sess);
+    if (shareTarget === sess) {
+      $("summaryText").value = data.summary;
+      $("summaryStatus").textContent = "内容を確認・修正してから共有できます(修正は自動保存)";
+    }
+  } catch (e) {
+    $("summaryStatus").textContent = e?.message || String(e);
+  } finally {
+    summarizing = false;
+    renderShareButtons();
+  }
+}
+
+async function shareSummary() {
+  const text = $("summaryText").value.trim();
+  if (!text || !shareTarget) return;
+  const title = `要約メモ ${fmtDateTime(shareTarget.createdAt)}`;
+  const body = `${title}\n\n${text}\n`;
+  // LINE・メール・メモなどにそのまま貼れるよう、テキストとして共有する
+  if (navigator.share) {
+    try { await navigator.share({ title, text: body }); return; }
+    catch (e) { if (e?.name === "AbortError") return; }
+  }
+  try { await navigator.clipboard.writeText(body); alert("要約メモをコピーしました"); }
+  catch { prompt("コピーしてください", body); }
 }
 
 function fmtDateTime(t) {

@@ -136,3 +136,11 @@ const MAX_SESSION_MS     = 90 * 60_000;
   (英数字は大文字小文字を区別せず単語単位)。`gpt-realtime-translate` のセッションには用語や指示を渡す
   設定がないため(設定できるのは noise_reduction / transcription.model / output.language のみ)、
   アプリ側での置き換えで対応しています。
+
+## 要約メモ(保存・共有)
+
+- 「保存・共有」→「📝 要約メモを作成」で、字幕(英語原文+日本語訳+用語集)から日本語の要約メモ
+  (概要・要点・決定事項・アクション・数値/固有名詞)を作ります。内容は編集でき、自動保存されます。
+- 「要約メモを共有」はテキストとして iOS の共有シートに渡します(LINE・メール・メモなどに貼れる)。
+- Worker の `POST /summary` が OpenAI Responses API を呼びます(モデルは `wrangler.toml` の
+  `SUMMARY_MODEL`、既定 `gpt-6.1-sol`、`store: false`)。料金は同じ OpenAI プロジェクトの上限内で課金されます。
