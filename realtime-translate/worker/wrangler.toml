@@ -16,6 +16,8 @@ SUMMARY_MODEL = "gpt-6.1-sol"
 DIARIZE_MODEL = "gpt-4o-transcribe-diarize"
 # 日本語の文字起こしモードのモデル(受け付けられない場合は gpt-transcribe に自動で切り替え)
 TRANSCRIBE_MODEL = "gpt-live-transcribe"
+# 清書(/clean)に使う録音ファイル用の文字起こしモデル
+CLEAN_MODEL = "gpt-transcribe"
 
 # Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
 #   OPENAI_API_KEY : OpenAI の API キー

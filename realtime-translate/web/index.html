@@ -42,7 +42,7 @@
 
   <main class="panes">
     <section class="pane en" aria-label="英語原文">
-      <div class="pane-label">English</div>
+      <div class="pane-label" id="enLabel">English</div>
       <div class="text" id="enText"></div>
     </section>
     <section class="pane ja" aria-label="日本語訳">
@@ -56,6 +56,7 @@
       <button type="button" class="tool-btn" id="newBtn">＋ 新規</button>
       <button type="button" class="tool-btn" id="saveBtn">保存・共有</button>
       <button type="button" class="tool-btn" id="historyBtn">履歴</button>
+      <button type="button" class="tool-btn" id="glossaryBtn">用語集</button>
     </div>
     <button class="main-btn" id="toggleBtn">開始</button>
   </footer>
@@ -91,9 +92,6 @@
         <input type="checkbox" id="recordAudio">
         <span>話者分けのために音声を録音する(端末内に14日間保存。要約時だけ送信)</span>
       </label>
-      <label>用語集(誤り → 正しい)
-        <textarea id="glossary" rows="7" spellcheck="false" autocapitalize="off"></textarea>
-      </label>
       <details class="diag-log">
         <summary>診断ログ</summary>
         <pre id="diagLog"></pre>
@@ -117,6 +115,16 @@
     <form method="dialog" class="settings-form">
       <h2>保存・共有</h2>
       <p class="hint" id="shareTitle"></p>
+      <section class="share-section" id="cleanSection">
+        <h3>清書(録音から高精度に文字起こし)</h3>
+        <p class="hint" id="cleanInfo"></p>
+        <button type="button" class="small-btn" id="cleanBtn">✨ 清書する</button>
+        <div class="row" id="cleanViewRow" hidden>
+          <span>画面の表示</span>
+          <button type="button" class="small-btn" id="viewCleanBtn">清書版</button>
+          <button type="button" class="small-btn" id="viewLiveBtn">リアルタイム版</button>
+        </div>
+      </section>
       <section class="share-section">
         <h3>要約メモ(日本語)</h3>
         <label class="check" id="speakerOption" hidden>
@@ -134,6 +142,31 @@
         <p class="hint">要約メモがある場合は先頭に含まれます</p>
       </section>
       <button class="small-btn" value="ok">閉じる</button>
+    </form>
+  </dialog>
+
+  <dialog id="glossaryDialog">
+    <form method="dialog" class="settings-form">
+      <h2>用語集</h2>
+      <p class="hint">登録した言葉は、字幕・文字起こしの表示、清書、要約メモ、保存ファイルのすべてに使われます。</p>
+      <section class="share-section">
+        <h3>言い換え(誤り → 正しい)</h3>
+        <p class="hint">よく間違える言葉を正しい表記に自動で直します。英語は大文字・小文字を区別しません。</p>
+        <div class="term-list" id="ruleList"></div>
+        <button type="button" class="small-btn" id="addRuleBtn">＋ 言い換えを追加</button>
+      </section>
+      <section class="share-section">
+        <h3>キーワード</h3>
+        <p class="hint">聞き取ってほしい言葉(製品名・成分名・人名・地名など)。日本語の文字起こしと清書でモデルに伝えます。言い換えの「正しい」側も自動で含まれます。</p>
+        <div class="term-list" id="keywordList"></div>
+        <button type="button" class="small-btn" id="addKeywordBtn">＋ キーワードを追加</button>
+      </section>
+      <details class="diag-log">
+        <summary>テキストでまとめて編集</summary>
+        <p class="hint">1行に「誤り → 正しい」、またはキーワードだけを書きます。# で始まる行は無視されます。</p>
+        <textarea id="glossary" rows="10" spellcheck="false" autocapitalize="off"></textarea>
+      </details>
+      <button class="small-btn primary" value="ok">閉じる</button>
     </form>
   </dialog>
 

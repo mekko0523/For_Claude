@@ -24,6 +24,19 @@ const SUMMARY_MAX_CHARS = 200_000; // 英日+話者付き書き起こしの入�
 const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULT_DIARIZE_MODEL = "gpt-4o-transcribe-diarize";
 const DIARIZE_MAX_BYTES = 25 * 1024 * 1024; // OpenAI のファイル上限
+// 清書(/clean): 録音をまとめて高精度に文字起こしし直す。受け付けられない設定なら順に簡単な構成で試す
+const DEFAULT_CLEAN_MODEL = "gpt-transcribe";
+const CLEAN_PROMPTS = {
+  ja: "日本語の会話・打ち合わせ。農業、農薬、ドローン散布に関する話題が多い。句読点を適切に付ける。",
+  en: "An English conversation or presentation, often about agriculture, pesticides and drone spraying. Use proper punctuation.",
+};
+const TRANSLATE_MAX_CHARS = 120_000;
+const TRANSLATE_INSTRUCTIONS = `あなたは農業・農薬分野に詳しいプロの翻訳者です。
+与えられた英語(会話の高精度な書き起こし)を、自然で読みやすい日本語に翻訳してください。
+- 段落(空行)の区切りはそのまま保つ
+- 用語集が与えられた場合はその表記に従う
+- 製品名・成分名・数値・単位・日付は正確に訳す。固有名詞はカタカナ(必要なら英語を括弧で併記)
+- 訳文だけを出力する(前置きや注釈は書かない)`;
 const SUMMARY_INSTRUCTIONS = `あなたは農業・農薬分野に詳しい日本語の議事録担当です。
 英語の会話(英語原文と、その機械翻訳の日本語訳)から、共有用の簡潔な要約メモを日本語だけで作成してください。
 
@@ -96,7 +109,7 @@ export default {
       return new Response(null, { status: originOk ? 204 : 403, headers: cors });
     }
 
-    if (!["/session", "/summary", "/diarize"].includes(url.pathname)) {
+    if (!["/session", "/summary", "/diarize", "/clean", "/translate"].includes(url.pathname)) {
       return json({ error: "not_found" }, 404, cors);
     }
     if (request.method !== "POST") {
@@ -111,6 +124,7 @@ export default {
 
     // 録音ファイルは本文が音声なので、合言葉はヘッダーで受け取る
     if (url.pathname === "/diarize") return diarize(request, env, cors);
+    if (url.pathname === "/clean") return cleanTranscribe(request, env, cors);
 
     let body;
     try {
@@ -125,6 +139,7 @@ export default {
     }
 
     if (url.pathname === "/summary") return summarize(body, env, cors);
+    if (url.pathname === "/translate") return translateText(body, env, cors);
     if (body.mode === "transcribe") return transcribeSession(body, env, cors);
 
     const upstream = await fetch(OPENAI_CLIENT_SECRETS_URL, {
@@ -329,6 +344,91 @@ async function diarize(request, env, cors) {
   return json({ segments }, 200, cors);
 }
 
+// 清書: 録音1ファイルを gpt-transcribe で文字起こしし直す。
+// 合言葉は X-Passphrase、言語は X-Lang(ja/en)、キーワードは X-Keywords(encodeURIComponent した JSON 配列)
+async function cleanTranscribe(request, env, cors) {
+  if (!(await safeEqual(request.headers.get("X-Passphrase") || "", env.APP_PASSPHRASE))) {
+    return json({ error: "invalid_passphrase" }, 401, cors);
+  }
+  const size = Number(request.headers.get("Content-Length") || 0);
+  if (size > DIARIZE_MAX_BYTES) return json({ error: "audio_too_large" }, 413, cors);
+  const lang = request.headers.get("X-Lang") === "en" ? "en" : "ja";
+  let keywords = [];
+  try { keywords = JSON.parse(decodeURIComponent(request.headers.get("X-Keywords") || "[]")); } catch {}
+  keywords = (Array.isArray(keywords) ? keywords : [])
+    .filter((k) => typeof k === "string")
+    .map((k) => k.replace(/[<>\r\n]/g, " ").trim().slice(0, 50))
+    .filter(Boolean)
+    .slice(0, 100);
+  const type = (request.headers.get("Content-Type") || "audio/mp4").split(";")[0];
+  const ext = { "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/webm": "webm", "audio/mpeg": "mp3", "audio/wav": "wav" }[type] || "m4a";
+  // 再試行できるよう一度だけ読み込む(I/O のみで CPU はほぼ使わない)
+  const audio = new Blob([await request.arrayBuffer()], { type });
+  if (!audio.size) return json({ error: "empty_audio" }, 400, cors);
+
+  const model = env.CLEAN_MODEL || DEFAULT_CLEAN_MODEL;
+  const prompt = CLEAN_PROMPTS[lang];
+  const attempts = [
+    { model, fields: [["languages[]", lang], ...keywords.map((k) => ["keywords[]", k]), ["prompt", prompt]] },
+    { model, fields: [["language", lang], ["prompt", prompt]] },
+    { model: "gpt-4o-transcribe", fields: [["language", lang], ["prompt", prompt]] },
+  ];
+  let last = null;
+  for (const a of attempts) {
+    const form = new FormData();
+    form.append("model", a.model);
+    form.append("response_format", "json");
+    for (const [k, v] of a.fields) form.append(k, v);
+    form.append("file", audio, `audio.${ext}`);
+    const upstream = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "OpenAI-Safety-Identifier": await sha256Hex(`rt-translate:${env.APP_PASSPHRASE}`),
+      },
+      body: form,
+    });
+    const data = await upstream.json().catch(() => ({}));
+    if (upstream.ok) return json({ text: String(data.text || "").trim(), model: a.model, fallback: a !== attempts[0] }, 200, cors);
+    last = { status: upstream.status, detail: data?.error ?? data };
+    if (isSpendLimit(upstream.status, last.detail)) return json({ error: "spend_limit_exceeded", ...last }, 429, cors);
+    if (upstream.status !== 400 && upstream.status !== 404 && upstream.status !== 422) break;
+  }
+  return json({ error: "openai_error", ...last }, 502, cors);
+}
+
+// 清書した英語を日本語に訳す(翻訳モードの清書用)
+async function translateText(body, env, cors) {
+  const en = typeof body.en === "string" ? body.en : "";
+  const glossary = typeof body.glossary === "string" ? body.glossary.slice(0, 5_000) : "";
+  if (!en.trim()) return json({ error: "empty_transcript" }, 400, cors);
+  if (en.length > TRANSLATE_MAX_CHARS) return json({ error: "transcript_too_long" }, 413, cors);
+  const upstream = await fetch(OPENAI_RESPONSES_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+      "OpenAI-Safety-Identifier": await sha256Hex(`rt-translate:${env.APP_PASSPHRASE}`),
+    },
+    body: JSON.stringify({
+      model: env.SUMMARY_MODEL || DEFAULT_SUMMARY_MODEL,
+      instructions: TRANSLATE_INSTRUCTIONS,
+      input: [glossary.trim() ? `【用語集(誤り → 正しい)】\n${glossary}` : "", `【英語】\n${en}`].filter(Boolean).join("\n\n"),
+      max_output_tokens: 32_000,
+      store: false,
+    }),
+  });
+  const data = await upstream.json().catch(() => ({}));
+  if (!upstream.ok) {
+    const detail = data?.error ?? data;
+    if (isSpendLimit(upstream.status, detail)) return json({ error: "spend_limit_exceeded", status: upstream.status, detail }, 429, cors);
+    return json({ error: "openai_error", status: upstream.status, detail }, 502, cors);
+  }
+  const ja = outputText(data).trim();
+  if (!ja) return json({ error: "empty_translation" }, 502, cors);
+  return json({ ja }, 200, cors);
+}
+
 // Responses API の出力からテキスト部分を取り出す
 function outputText(data) {
   if (typeof data?.output_text === "string") return data.output_text;
@@ -357,7 +457,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Passphrase",
+    "Access-Control-Allow-Headers": "Content-Type, X-Passphrase, X-Lang, X-Keywords",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };

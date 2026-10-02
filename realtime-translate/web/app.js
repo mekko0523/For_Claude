@@ -151,6 +151,7 @@ glossaryEl.addEventListener("input", () => {
   compileGlossary();
   if (state === "idle" && session) renderSession();
 });
+glossaryEl.addEventListener("change", () => buildGlossaryUI());
 
 toggleBtn.addEventListener("click", () => (state === "idle" ? start() : stop("user")));
 $("settingsBtn").addEventListener("click", () => settings.showModal());
@@ -170,6 +171,12 @@ $("summaryText").addEventListener("input", () => {
   persistSession(shareTarget);
 });
 $("historyBtn").addEventListener("click", openHistory);
+$("glossaryBtn").addEventListener("click", openGlossary);
+$("addRuleBtn").addEventListener("click", () => { addTermRow("rule"); });
+$("addKeywordBtn").addEventListener("click", () => { addTermRow("keyword"); });
+$("cleanBtn").addEventListener("click", () => cleanSession(shareTarget));
+$("viewCleanBtn").addEventListener("click", () => setCleanView(shareTarget, true));
+$("viewLiveBtn").addEventListener("click", () => setCleanView(shareTarget, false));
 $("copyDiagBtn").addEventListener("click", copyDiag);
 $("settingsBtn").addEventListener("click", renderDiagLog);
 settings.addEventListener("close", () => savePassphrase(passInput.value));
@@ -203,6 +210,7 @@ async function start() {
     return;
   }
 
+  if (session.showClean) { session.showClean = false; renderSession(); } // 続きはリアルタイム版に追記する
   const gen = ++generation;
   const alive = () => gen === generation;
   setState("connecting");
@@ -569,7 +577,9 @@ function applyModeUI() {
     b.setAttribute("aria-pressed", String((session?.mode || "translate") === b.dataset.mode));
     b.disabled = state !== "idle";
   }
-  $("jaLabel").textContent = tx ? "文字起こし(日本語)" : "日本語";
+  const clean = session?.showClean && session.clean ? '<span class="badge">清書版</span>' : "";
+  $("jaLabel").innerHTML = (tx ? "文字起こし(日本語)" : "日本語") + clean;
+  $("enLabel").innerHTML = "English" + clean;
   costEl.hidden = tx;
   $("costSep").hidden = tx;
 }
@@ -839,6 +849,7 @@ function render() {
   toggleBtn.classList.toggle("stop", state !== "idle");
   $("newBtn").disabled = state !== "idle";
   $("historyBtn").disabled = state !== "idle";
+  $("glossaryBtn").disabled = state !== "idle";
   applyModeUI();
 }
 
@@ -931,10 +942,20 @@ function persistSession(sess) {
 function renderSession() {
   enText.textContent = "";
   jaText.textContent = "";
-  for (const e of session.entries) {
-    const p = document.createElement("p");
-    p.textContent = fixTerms(e.text);
-    (e.lang === "en" ? enText : jaText).appendChild(p);
+  if (session.showClean && session.clean) {
+    for (const [el, text] of [[enText, session.clean.en], [jaText, session.clean.ja]]) {
+      for (const para of splitParagraphs(fixTerms(text || ""))) {
+        const p = document.createElement("p");
+        p.textContent = para;
+        el.appendChild(p);
+      }
+    }
+  } else {
+    for (const e of session.entries) {
+      const p = document.createElement("p");
+      p.textContent = fixTerms(e.text);
+      (e.lang === "en" ? enText : jaText).appendChild(p);
+    }
   }
   for (const pane of Object.values(panes)) {
     pane.p = null;
@@ -1036,8 +1057,9 @@ function sessionToText(sess) {
       `ハヤメモ|日本語 文字起こし ${fmtDateTime(sess.createdAt)}(録音時間 ${fmtTime(sess.durationMs)})`,
       "",
       ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
+      ...(sess.clean?.ja ? ["■ 清書(録音から高精度に文字起こし)", splitParagraphs(fixTerms(sess.clean.ja)).join("\n\n"), ""] : []),
       ...(sess.speakerTranscript ? ["■ 話者別書き起こし(話者は音声から自動識別)", sess.speakerTranscript, ""] : []),
-      "■ 文字起こし(時刻順)",
+      "■ 文字起こし(リアルタイム・時刻順)",
       ...entries.map((e) => `[${time(e.t)}] ${fixTerms(e.text).trim()}`).filter((l) => !l.endsWith("] ")),
       "",
     ].join("\n");
@@ -1046,7 +1068,11 @@ function sessionToText(sess) {
     `ハヤメモ|英→日 翻訳 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
     "",
     ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
-    "■ 英語原文",
+    ...(sess.clean?.en ? [
+      "■ 清書:英語(録音から高精度に文字起こし)", splitParagraphs(fixTerms(sess.clean.en)).join("\n\n"), "",
+      "■ 清書:日本語訳", splitParagraphs(fixTerms(sess.clean.ja || "")).join("\n\n") || "(なし)", "",
+    ] : []),
+    "■ 英語原文(リアルタイム)",
     join("en") || "(なし)",
     "",
     "■ 日本語訳",
@@ -1103,6 +1129,7 @@ function openShare(sess) {
   $("summaryStatus").textContent = sess.summary ? "" : "字幕の内容から、要点・決定事項・アクションを日本語でまとめます";
   shareRecordings = [];
   $("speakerOption").hidden = true;
+  renderCleanUI(sess);
   renderShareButtons();
   $("shareDialog").showModal();
   getRecordings(sess.id).then((recs) => {
@@ -1111,6 +1138,7 @@ function openShare(sess) {
     const mb = recs.reduce((n, r) => n + r.blob.size, 0) / 1024 / 1024;
     const min = recs.reduce((n, r) => n + (r.endedAt - r.startedAt), 0) / 60_000;
     $("speakerOption").hidden = !recs.length;
+    renderCleanUI(sess);
     $("speakerInfo").textContent = `録音 ${recs.length} 件・${min < 1 ? "1分未満" : `約${Math.round(min)}分`}(${mb.toFixed(1)}MB)${sess.speakerTranscript ? "・識別済み" : ""}`;
   });
 }
@@ -1151,7 +1179,12 @@ async function generateSummary() {
     const res = await fetch(`${workerUrl}/summary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passphrase, mode: sess.mode || "translate", en: isTx(sess) ? "" : join("en"), ja: join("ja"), glossary, speakers }),
+      // 清書があれば、リアルタイムより正確なそちらを使う
+      body: JSON.stringify({
+        passphrase, mode: sess.mode || "translate", glossary, speakers,
+        en: isTx(sess) ? "" : (sess.clean?.en ? fixTerms(sess.clean.en) : join("en")),
+        ja: sess.clean?.ja ? fixTerms(sess.clean.ja) : join("ja"),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.summary) {
@@ -1299,6 +1332,210 @@ async function pruneRecordings() {
     const limit = Date.now() - REC_KEEP_DAYS * 86_400_000;
     for (const r of all) if (r.startedAt < limit) store.delete(r.id);
   } catch {}
+}
+
+// ===== 清書 =====
+let cleaning = false;
+
+function renderCleanUI(sess) {
+  const has = !!sess.clean;
+  const recs = shareRecordings.length;
+  $("cleanBtn").textContent = cleaning ? "清書中…" : has ? "清書し直す" : "✨ 清書する";
+  $("cleanBtn").disabled = cleaning || !recs;
+  $("cleanViewRow").hidden = !has;
+  $("viewCleanBtn").classList.toggle("primary", has && !!sess.showClean);
+  $("viewLiveBtn").classList.toggle("primary", has && !sess.showClean);
+  if (cleaning) return;
+  $("cleanInfo").textContent = !recs
+    ? "録音がないため清書できません(⚙︎「音声を録音する」をオンにして翻訳・文字起こしすると使えます)"
+    : has
+      ? `清書済み(${fmtDateTime(sess.clean.at)})。要約メモと保存ファイルは清書版を使います`
+      : isTx(sess)
+        ? "録音全体を高精度のモデルで文字起こしし直し、誤変換の少ない文章にします(1分あたり約0.7円)"
+        : "録音全体から英語を高精度に文字起こしし直し、日本語訳も作り直します(1分あたり約1円)";
+}
+
+function setCleanView(sess, on) {
+  if (!sess?.clean) return;
+  sess.showClean = on;
+  persistSession(sess);
+  if (sess === session) renderSession();
+  renderCleanUI(sess);
+}
+
+async function cleanSession(sess) {
+  if (!sess || cleaning || !shareRecordings.length) return;
+  if (sess.clean && !confirm("清書をやり直しますか?(料金がもう一度かかります)")) return;
+  const workerUrl = getWorkerUrl();
+  const passphrase = passInput.value.trim();
+  if (!workerUrl || !passphrase) { alert("合言葉(⚙︎ 設定)を入力してください"); return; }
+  const recs = shareRecordings;
+  const lang = isTx(sess) ? "ja" : "en";
+  cleaning = true;
+  renderCleanUI(sess);
+  try {
+    const parts = [];
+    for (let i = 0; i < recs.length; i++) {
+      const min = Math.max(1, Math.round((recs[i].endedAt - recs[i].startedAt) / 60_000));
+      $("cleanInfo").textContent = `清書しています(${i + 1}/${recs.length}・約${min}分の録音)…長い録音は1〜2分かかります`;
+      const res = await fetch(`${workerUrl}/clean`, {
+        method: "POST",
+        headers: {
+          "Content-Type": recs[i].blob.type || "audio/mp4",
+          "X-Passphrase": passphrase,
+          "X-Lang": lang,
+          "X-Keywords": encodeURIComponent(JSON.stringify(glossaryKeywords)),
+        },
+        body: recs[i].blob,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, "清書"));
+      diag(`清書 ${i + 1}/${recs.length}: ${data.model}${data.fallback ? "(簡易設定)" : ""} ${String(data.text || "").length}文字`);
+      if (data.text) parts.push(data.text);
+    }
+    const source = parts.join("\n\n");
+    if (!source.trim()) throw new Error("録音から文字を起こせませんでした(無音だった可能性があります)");
+    const clean = { at: Date.now() };
+    if (lang === "ja") {
+      clean.ja = source;
+    } else {
+      clean.en = source;
+      $("cleanInfo").textContent = "清書した英語を日本語に翻訳しています…";
+      const res = await fetch(`${workerUrl}/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passphrase, en: fixTerms(source), glossary: glossaryRulesText() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, "翻訳"));
+      clean.ja = data.ja;
+    }
+    sess.clean = clean;
+    sess.showClean = true;
+    persistSession(sess);
+    if (sess === session) renderSession();
+  } catch (e) {
+    cleaning = false;
+    renderCleanUI(sess);
+    $("cleanInfo").textContent = e?.message || String(e);
+    return;
+  }
+  cleaning = false;
+  renderCleanUI(sess);
+}
+
+function apiErrorMessage(status, data, what) {
+  return {
+    invalid_passphrase: "合言葉が違います",
+    spend_limit_exceeded: SPEND_LIMIT_MSG,
+    audio_too_large: "録音ファイルが大きすぎます",
+    transcript_too_long: "長すぎて処理できません",
+  }[data.error] || `${what}に失敗しました (${status} ${data.error || ""}) ${data.detail?.message || ""}`.trim();
+}
+
+// 清書の文章は改行が少ないので、文の区切りで読みやすい段落に分ける
+function splitParagraphs(text) {
+  const out = [];
+  for (const block of String(text).split(/\n\s*\n|\n/)) {
+    const sentences = block.match(/[^。！？!?]+[。！？!?]?|[^.]+\.(\s|$)/g) || (block.trim() ? [block] : []);
+    let cur = "";
+    for (const sn of sentences) {
+      cur += sn;
+      if (cur.length >= 120) { out.push(cur.trim()); cur = ""; }
+    }
+    if (cur.trim()) out.push(cur.trim());
+  }
+  return out;
+}
+
+// ===== 用語集(独立した画面) =====
+function glossaryRulesText() {
+  return glossaryEl.value.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).join("\n");
+}
+
+function openGlossary() {
+  if (state !== "idle") return;
+  buildGlossaryUI();
+  $("glossaryDialog").showModal();
+}
+
+// テキスト(保存形式)から一覧を作る
+function buildGlossaryUI() {
+  const rules = [], keywords = [];
+  for (const raw of glossaryEl.value.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = line.match(/^(.+?)\s*(?:→|->|=>|＝|=)\s*(.*)$/);
+    if (m) rules.push([m[1].trim(), m[2].trim()]);
+    else keywords.push(line);
+  }
+  $("ruleList").textContent = "";
+  $("keywordList").textContent = "";
+  for (const [from, to] of rules) addTermRow("rule", from, to, false);
+  for (const k of keywords) addTermRow("keyword", k, "", false);
+  showEmptyHints();
+}
+
+function addTermRow(kind, a = "", b = "", focus = true) {
+  const list = $(kind === "rule" ? "ruleList" : "keywordList");
+  const row = document.createElement("div");
+  row.className = "term-row";
+  const mk = (val, ph) => {
+    const i = document.createElement("input");
+    i.value = val;
+    i.placeholder = ph;
+    i.autocapitalize = "off";
+    i.spellcheck = false;
+    i.addEventListener("input", saveGlossaryFromUI);
+    return i;
+  };
+  if (kind === "rule") {
+    const arrow = document.createElement("span");
+    arrow.className = "arrow";
+    arrow.textContent = "→";
+    row.append(mk(a, "誤り(例: グリフォサート)"), arrow, mk(b, "正しい(例: グリホサート)"));
+  } else {
+    row.append(mk(a, "例: ドローン散布"));
+  }
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "small-btn danger del";
+  del.textContent = "×";
+  del.setAttribute("aria-label", "削除");
+  del.addEventListener("click", () => { row.remove(); saveGlossaryFromUI(); showEmptyHints(); });
+  row.appendChild(del);
+  list.querySelector(".term-empty")?.remove();
+  list.appendChild(row);
+  if (focus) row.querySelector("input").focus();
+}
+
+function showEmptyHints() {
+  for (const [id, text] of [["ruleList", "まだありません"], ["keywordList", "まだありません"]]) {
+    const list = $(id);
+    if (!list.querySelector(".term-row") && !list.querySelector(".term-empty")) {
+      const p = document.createElement("p");
+      p.className = "term-empty";
+      p.textContent = text;
+      list.appendChild(p);
+    }
+  }
+}
+
+// 一覧の内容を保存形式のテキストに戻して保存する
+function saveGlossaryFromUI() {
+  const lines = [];
+  for (const row of $("ruleList").querySelectorAll(".term-row")) {
+    const [from, to] = [...row.querySelectorAll("input")].map((i) => i.value.trim());
+    if (from && to) lines.push(`${from} → ${to}`);
+  }
+  for (const row of $("keywordList").querySelectorAll(".term-row")) {
+    const k = row.querySelector("input").value.trim();
+    if (k) lines.push(k);
+  }
+  glossaryEl.value = lines.join("\n") + (lines.length ? "\n" : "");
+  lsSet(LS_GLOSSARY, glossaryEl.value);
+  compileGlossary();
+  if (state === "idle" && session) renderSession();
 }
 
 async function shareSummary() {

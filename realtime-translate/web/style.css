@@ -242,3 +242,18 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 body.mode-transcribe .pane.en { display: none; }
 body.mode-transcribe .panes { grid-template-rows: 1fr; }
 body.mode-transcribe .ja .text { font-size: calc(var(--ja-size) * 0.85); font-weight: 400; }
+
+.toolbar .tool-btn { font-size: 13px; padding: 6px 2px; }
+.term-list { display: flex; flex-direction: column; gap: 6px; }
+.term-row { display: flex; align-items: center; gap: 6px; }
+.term-row input {
+  flex: 1; min-width: 0; font-size: 16px; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.term-row .arrow { color: var(--muted); flex: none; }
+.term-row .del { flex: none; padding: 6px 10px; }
+.term-empty { color: var(--muted); font-size: 13px; }
+.pane-label .badge { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: #ffc94a; color: #3a2c00; font-size: 10px; letter-spacing: 0; }
+.term-row { gap: 4px; }
+.term-row input { padding: 8px 6px; font-size: 15px; }
+.term-row .del { padding: 6px 9px; font-size: 16px; line-height: 1; }
