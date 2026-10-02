@@ -88,6 +88,11 @@ let lastStatsLogAt = 0;
 let micCheckSince = 0;       // 無音マイク判定の起点
 let micMaxLevel = 0;         // 判定期間中の最大音量
 let boostCtx = null;         // 集音ブースト用 AudioContext
+let rawMicTrack = null;      // ブースト前の生のマイク
+let enCount = 0, jaCount = 0;
+let lastEnAt = 0, lastJaAt = 0;
+let enStallHandled = false;  // 英語だけ止まったときの対処を済ませたか
+const EN_STALL_MS = 15_000;  // 日本語訳は届くのに英語がこの時間来なければ対処する
 let glossaryRules = [];      // [{from: RegExp|string, to}]
 let glossaryKeywords = [];   // 文字起こしモードでモデルに渡すキーワード
 let txModel = "";            // 文字起こしモードで実際に使われたモデル
@@ -197,6 +202,9 @@ async function start() {
   quietCheckSince = 0;
   quietMaxLevel = 0;
   eventCount = 0;
+  enCount = 0; jaCount = 0;
+  lastEnAt = 0; lastJaAt = 0;
+  enStallHandled = false;
   lastEventType = "";
   diagEl.hidden = false;
   diag(`開始 ${navigator.userAgent}`);
@@ -262,6 +270,7 @@ async function start() {
     if (!alive()) return;
     thisPc.addTrack(sendTrack, new MediaStream([sendTrack]));
     const recordTrack = sendTrack;
+    rawMicTrack = track;
 
     dc = thisPc.createDataChannel("oai-events");
     dc.onopen = () => {
@@ -360,11 +369,16 @@ function handleEvent(raw) {
   }
   switch (type) {
     case "session.input_transcript.delta":
-      lastInputAt = Date.now();
-      if (!inputSeen) { inputSeen = true; if (!lastError) showNotice(""); }
+      noteInput();
+      enCount++;
+      lastEnAt = Date.now();
       appendDelta("en", ev.delta);
       break;
     case "session.output_transcript.delta":
+      // 英語の文字起こしが止まっても、訳が届いている間は会話中とみなす(無音の自動停止を防ぐ)
+      noteInput();
+      jaCount++;
+      lastJaAt = Date.now();
       appendDelta("ja", ev.delta);
       break;
     case "conversation.item.input_audio_transcription.delta":
@@ -546,6 +560,7 @@ function tick() {
     }
   }
   txMaybeCommit(now);
+  checkEnStall(now);
   if (dirty && now - lastSaveAt >= AUTOSAVE_MS) saveSession();
   render();
 }
@@ -588,7 +603,7 @@ function startStats(peer) {
     }
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
-      diag(`送信: ${bytesSent ?? "?"} bytes / ${packetsSent ?? "?"} packets / 音量 ${level === null ? "取得不可" : level.toFixed(3)}`);
+      diag(`送信: ${bytesSent ?? "?"} bytes / ${packetsSent ?? "?"} packets / 音量 ${level === null ? "取得不可" : level.toFixed(3)}${isTx() ? "" : ` / 受信 英${enCount}・日${jaCount}`}`);
     }
   }, STATS_INTERVAL_MS);
 }
@@ -637,6 +652,36 @@ async function buildBoostedTrack(stream) {
     return null;
   }
 }
+// 翻訳モードで、日本語訳は届いているのに英語の文字起こしだけが止まったときの対処(1回だけ)。
+// ブースト(増幅+コンプレッサー)した音だと英語側の区切り検出がうまく働かないことがあるため、生のマイクに切り替える
+function checkEnStall(now) {
+  if (isTx() || state !== "live" || enStallHandled || !liveSince) return;
+  const jaFlowing = lastJaAt && now - lastJaAt < 5_000;
+  const enSilentFor = now - (lastEnAt || liveSince);
+  if (!jaFlowing || enSilentFor < EN_STALL_MS) return;
+  enStallHandled = true;
+  if (boostCtx && rawMicTrack?.readyState === "live" && pc) {
+    diag(`英語だけ${Math.round(enSilentFor / 1000)}秒届かない(英${enCount}・日${jaCount}) → ブーストを外して生のマイクに切り替え`);
+    switchToRawMic();
+  } else {
+    diag(`英語だけ${Math.round(enSilentFor / 1000)}秒届かない(英${enCount}・日${jaCount})。ブーストは未使用`);
+    showNotice("英語の文字起こしが届いていません(日本語訳は続いています)。停止して ⚙︎ の診断ログを送ってください");
+  }
+}
+
+async function switchToRawMic() {
+  try {
+    const sender = pc?.getSenders().find((sd) => sd.track?.kind === "audio");
+    await sender?.replaceTrack(rawMicTrack);
+    stopRecorder();
+    startRecorder(rawMicTrack);
+    closeBoost();
+    showNotice("英語の文字起こしが止まったため、集音ブーストを外しました(⚙︎ で「オフ」にすると次回からこの設定になります)");
+  } catch (e) {
+    diag(`生のマイクへの切り替えに失敗: ${e?.message || e}`);
+  }
+}
+
 function closeBoost() {
   boostCtx?.close().catch(() => {});
   boostCtx = null;
