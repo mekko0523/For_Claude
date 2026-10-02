@@ -992,7 +992,7 @@ function sessionToText(sess) {
   const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text).trim()).filter(Boolean).join("\n");
   if (isTx(sess)) {
     return [
-      `文字起こし ${fmtDateTime(sess.createdAt)}(録音時間 ${fmtTime(sess.durationMs)})`,
+      `ハヤメモ|日本語 文字起こし ${fmtDateTime(sess.createdAt)}(録音時間 ${fmtTime(sess.durationMs)})`,
       "",
       ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
       ...(sess.speakerTranscript ? ["■ 話者別書き起こし(話者は音声から自動識別)", sess.speakerTranscript, ""] : []),
@@ -1002,7 +1002,7 @@ function sessionToText(sess) {
     ].join("\n");
   }
   return [
-    `英日字幕 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
+    `ハヤメモ|英→日 翻訳 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
     "",
     ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
     "■ 英語原文",
@@ -1022,7 +1022,7 @@ async function shareSession(sess) {
   if (!sess?.entries.length) { alert("保存する字幕がありません"); return; }
   const d = new Date(sess.createdAt);
   const pad = (n) => String(n).padStart(2, "0");
-  const name = `${isTx(sess) ? "transcript_ja" : "subtitles_en-ja"}_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+  const name = `${isTx(sess) ? "hayamemo_transcript" : "hayamemo_en-ja"}_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
   const file = new File([sessionToText(sess)], name, { type: "text/plain" });
   // iPhone では共有シートから「ファイルに保存」「メモ」「AirDrop」などを選べる
   if (navigator.canShare?.({ files: [file] })) {
@@ -1263,7 +1263,7 @@ async function pruneRecordings() {
 async function shareSummary() {
   const text = $("summaryText").value.trim();
   if (!text || !shareTarget) return;
-  const title = `要約メモ ${fmtDateTime(shareTarget.createdAt)}`;
+  const title = `ハヤメモ 要約メモ ${fmtDateTime(shareTarget.createdAt)}`;
   const body = `${title}\n\n${text}\n`;
   // LINE・メール・メモなどにそのまま貼れるよう、テキストとして共有する
   if (navigator.share) {
