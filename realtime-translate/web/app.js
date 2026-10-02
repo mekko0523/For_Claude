@@ -1,8 +1,9 @@
 "use strict";
 
 // ===== 定数(ここを変えれば挙動を調整できる) =====
-const SILENCE_TIMEOUT_MS = 30_000;       // 英語の文字起こしがこの時間届かなければ自動停止
-const COUNTDOWN_SHOW_MS = 10_000;        // 残りこの時間になったらカウントダウン表示
+const SILENCE_TIMEOUT_MS = 3 * 60_000;   // 話し声の文字起こしがこの時間届かなければ自動停止(待機時間)
+const COUNTDOWN_SHOW_MS = 30_000;        // 残りこの時間になったらカウントダウン表示
+const CONNECT_TIMEOUT_MS = 30_000;       // 接続がこの時間で完了しなければエラー
 const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強制停止)
 const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
@@ -110,7 +111,7 @@ const panes = {
 };
 
 // ===== 初期化 =====
-$("silenceSec").textContent = SILENCE_TIMEOUT_MS / 1000;
+$("silenceSec").textContent = fmtDuration(SILENCE_TIMEOUT_MS);
 $("maxMin").textContent = MAX_SESSION_MS / 60_000;
 passInput.value = loadPassphrase();
 passInput.addEventListener("input", () => savePassphrase(passInput.value));
@@ -326,7 +327,7 @@ function stop(reason, message) {
   setState("idle");
 
   if (reason === "silence") {
-    showNotice(`無音が${SILENCE_TIMEOUT_MS / 1000}秒続いたため停止しました`);
+    showNotice(`無音が${fmtDuration(SILENCE_TIMEOUT_MS)}続いたため停止しました`);
     statusEl.textContent = "自動停止";
   } else if (reason === "max") {
     showNotice(`最長時間(${MAX_SESSION_MS / 60_000}分)に達したため停止しました`);
@@ -532,7 +533,7 @@ function tick() {
   const now = Date.now();
   if (state !== "idle") {
     const silentFor = now - lastInputAt;
-    const remaining = SILENCE_TIMEOUT_MS - silentFor;
+    const remaining = (state === "live" ? SILENCE_TIMEOUT_MS : CONNECT_TIMEOUT_MS) - silentFor;
     if (remaining <= 0) {
       return state === "live" ? stop("silence") : stop("error", "接続がタイムアウトしました");
     }
@@ -1231,6 +1232,13 @@ async function shareSummary() {
 function fmtDateTime(t) {
   const d = new Date(t);
   return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// 180000 → "3分"、45000 → "45秒"
+function fmtDuration(ms) {
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}秒`;
+  return sec % 60 ? `${Math.floor(sec / 60)}分${sec % 60}秒` : `${sec / 60}分`;
 }
 
 function fmtTime(ms) {
