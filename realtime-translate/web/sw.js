@@ -1,6 +1,6 @@
 // アプリ本体だけをキャッシュする Service Worker。
 // Worker(/session)や OpenAI への通信は別オリジンなので一切触らない。
-const CACHE = "rt-translate-v15";
+const CACHE = "rt-translate-v16";
 const ASSETS = [
   "./",
   "index.html",

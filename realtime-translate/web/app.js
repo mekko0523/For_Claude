@@ -23,9 +23,14 @@ const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
 // 日本語の文字起こしモード
 const TX_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const LS_MODE = "rt.mode";
-const TX_COMMIT_PAUSE_MS = 1_500;        // 文字起こしが途切れてこの時間たったら区切って確定させる
-const TX_COMMIT_MAX_MS = 15_000;         // 話し続けていてもこの間隔で区切る
-const TX_COMMIT_MAX_FALLBACK_MS = 8_000; // 途中経過を返さないモードでは短めに区切る
+// 区切り(commit)は音量で「話し終わり」を判定して送る(公式推奨のクライアント側 VAD)。
+// 文の途中で区切ると前後の文脈が失われて誤認識が増えるため、間(ま)ができたときだけ区切る
+const VAD_PAUSE_MS = 900;                // 話し声のあと、この時間静かなら区切る
+const VAD_MIN_SPEECH_THRESHOLD = 0.02;   // 話し声とみなす最小の音量
+const TX_COMMIT_SOFT_MAX_MS = 30_000;    // 話し続けていても、この時間を過ぎたら次の小さな間で区切る
+const TX_COMMIT_HARD_MAX_MS = 45_000;    // それでも区切れなければこの時間で必ず区切る
+const TX_FALLBACK_PAUSE_MS = 3_000;      // 音量が取れない端末では文字の途切れで区切る
+const LS_TX_DELAY = "rt.txDelay";
 const LS_PASSPHRASE = "rt.passphrase";
 const LS_FONT = "rt.fontScale";
 const LS_BOOST = "rt.micBoost";
@@ -99,6 +104,10 @@ let txModel = "";            // 文字起こしモードで実際に使われた
 let lastCommitAt = 0;
 let lastTxDeltaAt = 0;
 let txDeltasSinceCommit = 0;
+let vadNoise = 0.01;         // 周囲の雑音レベル(自動で追従)
+let vadLastLoudAt = 0;
+let vadSpeechSinceCommit = false;
+let vadLevelSeen = false;    // 音量が取れているか
 const txItems = new Map();   // item_id → {entry, p}
 let micRecoveries = 0;       // マイク再取得を試みた回数
 let quietCheckSince = 0;     // 「音が小さい」判定の起点(英語が届いたら 0)
@@ -124,6 +133,9 @@ passInput.addEventListener("change", () => savePassphrase(passInput.value));
 // iOS に保存データを消さないよう依頼(対応ブラウザのみ)
 navigator.storage?.persist?.().catch(() => {});
 applyFontScale(Number(lsGet(LS_FONT)) || 1);
+const txDelaySel = $("txDelay");
+txDelaySel.value = ["low", "medium", "high"].includes(lsGet(LS_TX_DELAY)) ? lsGet(LS_TX_DELAY) : "medium";
+txDelaySel.addEventListener("change", () => lsSet(LS_TX_DELAY, txDelaySel.value));
 const boostSel = $("micBoost");
 boostSel.value = BOOST_GAIN[lsGet(LS_BOOST)] ? lsGet(LS_BOOST) : "normal";
 boostSel.addEventListener("change", () => lsSet(LS_BOOST, boostSel.value));
@@ -223,13 +235,13 @@ async function start() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(isTx()
-        ? { passphrase, mode: "transcribe", keywords: glossaryKeywords }
+        ? { passphrase, mode: "transcribe", keywords: glossaryKeywords, delay: $("txDelay").value }
         : { passphrase }),
     });
     const data = await res.json().catch(() => ({}));
     if (isTx() && data.value) {
       txModel = data.model || "";
-      diag(`文字起こしモデル: ${txModel}${data.fallback ? `(最初の設定は不可: ${data.firstError || "?"})` : ""}`);
+      diag(`文字起こしモデル: ${txModel}${data.delay ? ` / delay=${data.delay}` : ""}${data.fallback ? `(最初の設定は不可: ${data.firstError || "?"})` : ""}`);
     }
     if (!res.ok || !data.value) {
       if (data.error === "invalid_passphrase") throw new Error("合言葉が違います");
@@ -449,6 +461,9 @@ function markSessionStart() {
   txItems.clear();
   lastCommitAt = Date.now();
   txDeltasSinceCommit = 0;
+  vadSpeechSinceCommit = false;
+  vadLastLoudAt = 0;
+  vadLevelSeen = false;
 }
 
 // ===== 日本語の文字起こしモード =====
@@ -496,14 +511,39 @@ function txComplete(itemId, transcript) {
 }
 
 // ターン検出を使わないので、区切り(commit)はアプリが送る
+function vadUpdate(level) {
+  if (!isTx() || state !== "live") return;
+  vadLevelSeen = true;
+  const threshold = Math.max(VAD_MIN_SPEECH_THRESHOLD, vadNoise * 3);
+  if (level >= threshold) {
+    vadLastLoudAt = Date.now();
+    vadSpeechSinceCommit = true;
+  } else {
+    vadNoise = vadNoise * 0.9 + level * 0.1; // 静かなときの音量から雑音レベルを学習
+  }
+}
+
 function txMaybeCommit(now) {
   if (!isTx() || state !== "live" || dc?.readyState !== "open") return;
-  const maxMs = txModel === "gpt-transcribe" ? TX_COMMIT_MAX_FALLBACK_MS : TX_COMMIT_MAX_MS;
-  const paused = txDeltasSinceCommit > 0 && now - lastTxDeltaAt >= TX_COMMIT_PAUSE_MS;
-  if (!paused && now - lastCommitAt < maxMs) return;
+  const sinceCommit = now - lastCommitAt;
+  let reason = "";
+  if (vadLevelSeen) {
+    if (!vadSpeechSinceCommit) return; // 話し声がなければ区切らない
+    const quietFor = now - vadLastLoudAt;
+    if (quietFor >= VAD_PAUSE_MS) reason = "pause";
+    else if (sinceCommit >= TX_COMMIT_SOFT_MAX_MS && quietFor >= 300) reason = "long";
+    else if (sinceCommit >= TX_COMMIT_HARD_MAX_MS) reason = "max";
+  } else if (txDeltasSinceCommit > 0 && now - lastTxDeltaAt >= TX_FALLBACK_PAUSE_MS) {
+    reason = "delta-pause";
+  } else if (sinceCommit >= TX_COMMIT_HARD_MAX_MS) {
+    reason = "max";
+  }
+  if (!reason) return;
   try { dc.send(JSON.stringify({ type: "input_audio_buffer.commit" })); } catch { return; }
+  if (reason !== "pause") diag(`区切り(${reason}): ${Math.round(sinceCommit / 1000)}秒`);
   lastCommitAt = now;
   txDeltasSinceCommit = 0;
+  vadSpeechSinceCommit = false;
 }
 
 function switchMode(mode) {
@@ -600,12 +640,13 @@ function startStats(peer) {
       setMeter(level);
       checkSilentMic(peer, level);
       checkQuietAudio(level);
+      vadUpdate(level);
     }
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
       diag(`送信: ${bytesSent ?? "?"} bytes / ${packetsSent ?? "?"} packets / 音量 ${level === null ? "取得不可" : level.toFixed(3)}${isTx() ? "" : ` / 受信 英${enCount}・日${jaCount}`}`);
     }
-  }, STATS_INTERVAL_MS);
+  }, isTx() ? 200 : STATS_INTERVAL_MS); // 文字起こしは話し終わりの判定に使うので細かく測る
 }
 // 英語がまだ1つも届かず、音も小さいままなら、近づける・音量を上げるよう案内する(1回だけ)
 function checkQuietAudio(level) {

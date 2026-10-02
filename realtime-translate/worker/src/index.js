@@ -12,6 +12,9 @@ const INPUT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 const DEFAULT_TRANSCRIBE_MODEL = "gpt-live-transcribe";
 const FALLBACK_TRANSCRIBE_MODEL = "gpt-transcribe";
+// 速さと精度のバランス。遅い設定ほど前後の音を多く聞いてから文字にするので誤りが減る
+const TRANSCRIBE_DELAYS = ["minimal", "low", "medium", "high", "xhigh"];
+const DEFAULT_TRANSCRIBE_DELAY = "medium";
 const TRANSCRIBE_PROMPT = "日本語の会話・打ち合わせ。農業、農薬、ドローン散布に関する話題が多い。";
 // 要約メモ(/summary)
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -68,6 +71,7 @@ const TRANSCRIBE_SUMMARY_INSTRUCTIONS = `あなたは農業・農薬分野に詳
 
 ルール:
 - 自動文字起こしなので誤変換や聞き間違いがある。文脈から明らかな誤りは直して読む
+- 【話者付き書き起こし】は録音全体から作り直したもので、リアルタイムの文字起こしより正確なことが多い。食い違うときはそちらを優先する
 - 用語集が与えられた場合はその表記に従う
 - 話されていないことを推測で足さない。聞き取れていない部分は無理に埋めない
 - 全体で600字程度まで
@@ -165,8 +169,10 @@ export default {
 async function transcribeSession(body, env, cors) {
   const keywords = (Array.isArray(body.keywords) ? body.keywords : [])
     .filter((k) => typeof k === "string" && k.trim())
-    .map((k) => k.trim().slice(0, 50))
+    .map((k) => k.replace(/[<>\r\n]/g, " ").trim().slice(0, 50))
+    .filter(Boolean)
     .slice(0, 100);
+  const delay = TRANSCRIBE_DELAYS.includes(body.delay) ? body.delay : DEFAULT_TRANSCRIBE_DELAY;
   const noise = env.NOISE_REDUCTION ? { type: env.NOISE_REDUCTION } : null;
   const attempts = [
     {
@@ -176,7 +182,7 @@ async function transcribeSession(body, env, cors) {
         languages: ["ja"],
         prompt: TRANSCRIBE_PROMPT,
         ...(keywords.length ? { keywords } : {}),
-        delay: "low",
+        delay,
       },
     },
     {
@@ -202,7 +208,7 @@ async function transcribeSession(body, env, cors) {
     });
     const data = await upstream.json().catch(() => ({}));
     if (upstream.ok && data.value) {
-      return json({ value: data.value, expires_at: data.expires_at, model: a.model, fallback: a !== attempts[0], firstError: last?.detail?.message }, 200, cors);
+      return json({ value: data.value, expires_at: data.expires_at, model: a.model, delay: a === attempts[0] ? delay : null, fallback: a !== attempts[0], firstError: last?.detail?.message }, 200, cors);
     }
     last = { status: upstream.status, detail: data?.error ?? data };
     if (isSpendLimit(upstream.status, last.detail)) {
