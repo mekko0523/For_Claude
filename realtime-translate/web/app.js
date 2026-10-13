@@ -93,11 +93,19 @@ let lastStatsLogAt = 0;
 let micCheckSince = 0;       // 無音マイク判定の起点
 let micMaxLevel = 0;         // 判定期間中の最大音量
 let boostCtx = null;         // 集音ブースト用 AudioContext
-let rawMicTrack = null;      // ブースト前の生のマイク
 let enCount = 0, jaCount = 0;
 let lastEnAt = 0, lastJaAt = 0;
-let enStallHandled = false;  // 英語だけ止まったときの対処を済ませたか
-const EN_STALL_MS = 15_000;  // 日本語訳は届くのに英語がこの時間来なければ対処する
+// 自動再接続: 話し声が続いているのに日本語訳が届かない(サーバー側で詰まった)ときや、接続が切れたときにつなぎ直す
+const JA_STALL_MS = 20_000;          // この間日本語訳が来ず、
+const JA_STALL_SPEECH_MS = 8_000;    // その間に合計これだけ話し声があれば詰まったとみなす
+const SPEECH_LEVEL = 0.08;           // 話し声とみなす送信音量
+const MAX_RECONNECTS = 8;            // 1回の開始あたりの上限
+let reconnecting = false;
+let reconnectCount = 0;
+let lastConnectAt = 0;
+let speechMsSinceJa = 0;             // 最後の日本語訳以降に話し声があった時間
+let lastEnStallLogAt = 0;
+let jaAtStallReconnect = -1;         // 前回「詰まり」で再接続したときの日本語訳の数(増えていなければ再接続しても無駄)
 let glossaryRules = [];      // [{from: RegExp|string, to}]
 let glossaryKeywords = [];   // 文字起こしモードでモデルに渡すキーワード
 let txModel = "";            // 文字起こしモードで実際に使われたモデル
@@ -224,7 +232,10 @@ async function start() {
   eventCount = 0;
   enCount = 0; jaCount = 0;
   lastEnAt = 0; lastJaAt = 0;
-  enStallHandled = false;
+  reconnectCount = 0;
+  jaAtStallReconnect = -1;
+  speechMsSinceJa = 0;
+  lastEnStallLogAt = 0;
   lastEventType = "";
   diagEl.hidden = false;
   diag(`開始 ${navigator.userAgent}`);
@@ -238,79 +249,94 @@ async function start() {
   acquireWakeLock();
 
   try {
-    // 1) client secret 取得
-    const res = await fetch(`${workerUrl}/session`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(isTx()
-        ? { passphrase, mode: "transcribe", keywords: glossaryKeywords, delay: $("txDelay").value }
-        : { passphrase }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (isTx() && data.value) {
-      txModel = data.model || "";
-      diag(`文字起こしモデル: ${txModel}${data.delay ? ` / delay=${data.delay}` : ""}${data.fallback ? `(最初の設定は不可: ${data.firstError || "?"})` : ""}`);
-    }
-    if (!res.ok || !data.value) {
-      if (data.error === "invalid_passphrase") throw new Error("合言葉が違います");
-      if (data.error === "spend_limit_exceeded" || isSpendLimit(data.status, data.detail)) {
-        throw new Error(SPEND_LIMIT_MSG);
-      }
-      if (data.error === "forbidden_origin") throw new Error("このページのアドレスは Worker で許可されていません");
-      const detail = data.detail?.message ? `: ${data.detail.message}` : "";
-      throw new Error(`client secret の取得に失敗 (${res.status} ${data.error || ""})${detail}`);
-    }
-    savePassphrase(passphrase); // 通った合言葉は確実に保存
-    if (!alive()) return;
-
-    // 2) マイク
+    // 1) マイク
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("このブラウザはマイクに対応していません(Safari で開いてください)");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
     if (!alive()) { stream.getTracks().forEach((t) => t.stop()); return; }
     micStream = stream;
     const track = stream.getAudioTracks()[0];
     watchMicTrack(track);
-
-    // 3) WebRTC
-    pc = new RTCPeerConnection();
-    const thisPc = pc;
-    // 翻訳音声は届くが再生しない(要素に接続しないので鳴らない)
-    thisPc.ontrack = ({ streams }) => {
-      if (!remoteAudio) return;
-      remoteAudio.srcObject = streams[0];
-      remoteAudio.play?.().catch(() => {});
-    };
-    thisPc.onconnectionstatechange = () => {
-      if (!alive()) return;
-      const s = thisPc.connectionState;
-      diag(`WebRTC: ${s}`);
-      if (s === "failed" || s === "disconnected") stop("error", "接続が切断されました");
-    };
     const sendTrack = (await buildBoostedTrack(stream)) || track;
     if (!alive()) return;
-    thisPc.addTrack(sendTrack, new MediaStream([sendTrack]));
-    const recordTrack = sendTrack;
-    rawMicTrack = track;
 
-    dc = thisPc.createDataChannel("oai-events");
-    dc.onopen = () => {
-      if (!alive()) return;
-      liveSince = Date.now();
-      lastInputAt = liveSince; // 開始時点から無音カウント
-      setState("live");
-      markSessionStart();
-      diag("データチャネル接続");
-      quietCheckSince = Date.now();
-      startStats(thisPc);
-      startRecorder(recordTrack);
-    };
-    dc.onmessage = (e) => { if (alive()) handleEvent(e.data); };
-    dc.onclose = () => { diag("データチャネル切断"); if (alive() && state !== "idle") stop("error", "サーバーとの接続が閉じられました"); };
-
-    const offer = await thisPc.createOffer();
-    await thisPc.setLocalDescription(offer);
+    // 2) client secret 取得 → WebRTC 接続
+    const conn = await openPeer(sendTrack, passphrase, workerUrl);
+    if (!alive()) { closePeer(conn); return; }
+    savePassphrase(passphrase); // 通った合言葉は確実に保存
+    pc = conn.peer;
+    dc = conn.channel;
+    liveSince = Date.now();
+    lastConnectAt = liveSince;
+    lastInputAt = liveSince; // 開始時点から無音カウント
+    setState("live");
+    markSessionStart();
+    diag("データチャネル接続");
+    quietCheckSince = Date.now();
+    startStats(pc);
+    startRecorder(sendTrack);
+  } catch (err) {
     if (!alive()) return;
+    const msg = err?.name === "NotAllowedError"
+      ? "マイクの使用が許可されていません(設定 > Safari > マイク)"
+      : err?.message || String(err);
+    stop("error", msg);
+  }
+}
 
+// client secret を取り、WebRTC でつなぎ、データチャネルが開くまで待つ(最初の接続と再接続で共用)
+async function openPeer(sendTrack, passphrase, workerUrl) {
+  const gen = generation;
+  const res = await fetch(`${workerUrl}/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(isTx()
+      ? { passphrase, mode: "transcribe", keywords: glossaryKeywords, delay: $("txDelay").value }
+      : { passphrase }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (isTx() && data.value) {
+    txModel = data.model || "";
+    diag(`文字起こしモデル: ${txModel}${data.delay ? ` / delay=${data.delay}` : ""}${data.fallback ? `(最初の設定は不可: ${data.firstError || "?"})` : ""}`);
+  }
+  if (!res.ok || !data.value) {
+    if (data.error === "invalid_passphrase") throw new Error("合言葉が違います");
+    if (data.error === "spend_limit_exceeded" || isSpendLimit(data.status, data.detail)) throw new Error(SPEND_LIMIT_MSG);
+    if (data.error === "forbidden_origin") throw new Error("このページのアドレスは Worker で許可されていません");
+    const detail = data.detail?.message ? `: ${data.detail.message}` : "";
+    throw new Error(`client secret の取得に失敗 (${res.status} ${data.error || ""})${detail}`);
+  }
+
+  const peer = new RTCPeerConnection();
+  // 翻訳音声は届くが再生しない(ミュートの要素で受けるだけ)
+  peer.ontrack = ({ streams }) => {
+    if (!remoteAudio) return;
+    remoteAudio.srcObject = streams[0];
+    remoteAudio.play?.().catch(() => {});
+  };
+  peer.addTrack(sendTrack, new MediaStream([sendTrack]));
+  const channel = peer.createDataChannel("oai-events");
+  const conn = { peer, channel };
+  try {
+    const opened = new Promise((resolve, reject) => {
+      channel.onopen = resolve;
+      setTimeout(() => reject(new Error("接続がタイムアウトしました")), CONNECT_TIMEOUT_MS);
+    });
+    // 古い接続からのイベントは無視する(再接続で入れ替わるため)
+    channel.onmessage = (e) => { if (gen === generation && channel === dc) handleEvent(e.data); };
+    channel.onclose = () => {
+      if (gen !== generation || channel !== dc || state !== "live") return;
+      diag("データチャネル切断");
+      reconnect("サーバーとの接続が閉じられた");
+    };
+    peer.onconnectionstatechange = () => {
+      if (gen !== generation || peer !== pc) return;
+      const st = peer.connectionState;
+      diag(`WebRTC: ${st}`);
+      if (st === "failed" || st === "disconnected") reconnect(`接続が切れた(${st})`);
+    };
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
     const sdpRes = await fetch(isTx() ? TX_CALLS_URL : CALLS_URL, {
       method: "POST",
       body: offer.sdp,
@@ -323,14 +349,55 @@ async function start() {
       if (isSpendLimit(sdpRes.status, err)) throw new Error(SPEND_LIMIT_MSG);
       throw new Error(`WebRTC 接続に失敗 (${sdpRes.status}) ${err?.message || answer.slice(0, 200)}`);
     }
-    if (!alive()) return;
-    await thisPc.setRemoteDescription({ type: "answer", sdp: answer });
-  } catch (err) {
-    if (!alive()) return;
-    const msg = err?.name === "NotAllowedError"
-      ? "マイクの使用が許可されていません(設定 > Safari > マイク)"
-      : err?.message || String(err);
-    stop("error", msg);
+    await peer.setRemoteDescription({ type: "answer", sdp: answer });
+    await opened;
+    return conn;
+  } catch (e) {
+    closePeer(conn);
+    throw e;
+  }
+}
+
+function closePeer(conn) {
+  try { conn?.channel?.close(); } catch {}
+  try { conn?.peer?.close(); } catch {}
+}
+
+// 翻訳中に字幕が止まった・接続が切れたとき、マイクと録音はそのままで翻訳サービスにつなぎ直す
+async function reconnect(reason) {
+  if (reconnecting || state !== "live") return;
+  if (reconnectCount >= MAX_RECONNECTS) {
+    stop("error", `接続が不安定なため停止しました(${reason})`);
+    return;
+  }
+  reconnecting = true;
+  reconnectCount++;
+  const gen = generation;
+  diag(`再接続(${reconnectCount}回目): ${reason}`);
+  showNotice("字幕が止まったため、つなぎ直しています…");
+  try {
+    const sendTrack = pc?.getSenders().find((sd) => sd.track?.kind === "audio")?.track
+      || micStream?.getAudioTracks()[0];
+    const conn = await openPeer(sendTrack, passInput.value.trim(), getWorkerUrl());
+    if (gen !== generation) { closePeer(conn); return; }
+    const old = { peer: pc, channel: dc };
+    pc = conn.peer;
+    dc = conn.channel;
+    closePeer(old);
+    startStats(pc);
+    markSessionStart(); // 新しい段落から続ける
+    lastConnectAt = Date.now();
+    lastJaAt = lastConnectAt;
+    lastEnAt = lastConnectAt;
+    speechMsSinceJa = 0;
+    diag("再接続完了");
+    showNotice("つなぎ直しました");
+    setTimeout(() => { if (noticeEl.textContent === "つなぎ直しました") showNotice(""); }, 4_000);
+  } catch (e) {
+    diag(`再接続に失敗: ${e?.message || e}`);
+    if (gen === generation) stop("error", `つなぎ直せませんでした: ${e?.message || e}`);
+  } finally {
+    reconnecting = false;
   }
 }
 
@@ -399,6 +466,7 @@ function handleEvent(raw) {
       noteInput();
       jaCount++;
       lastJaAt = Date.now();
+      speechMsSinceJa = 0;
       appendDelta("ja", ev.delta);
       break;
     case "conversation.item.input_audio_transcription.delta":
@@ -445,7 +513,6 @@ function appendDelta(lang, delta) {
   if (!delta) return;
   const pane = panes[lang];
   const now = Date.now();
-  const nearBottom = pane.el.scrollHeight - pane.el.scrollTop - pane.el.clientHeight < 60;
 
   if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS) {
     pane.p = document.createElement("p");
@@ -460,7 +527,36 @@ function appendDelta(lang, delta) {
   dirty = true;
 
   // ユーザーが読み返しているとき以外は自動スクロール
-  if (nearBottom) pane.el.scrollTop = pane.el.scrollHeight;
+  keepAtBottom(lang);
+}
+
+// 自動スクロール: 一番下を見ているときだけ追いかける。読み返しのために上へ動かしたら「↓ 最新」を出す
+function isAtBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
+function keepAtBottom(lang) {
+  const pane = panes[lang];
+  if (pane.follow !== false) {
+    pane.el.scrollTop = pane.el.scrollHeight;
+  } else {
+    pane.jump.hidden = false;
+  }
+}
+for (const pane of Object.values(panes)) {
+  pane.follow = true;
+  pane.jump = document.createElement("button");
+  pane.jump.type = "button";
+  pane.jump.className = "jump-latest";
+  pane.jump.textContent = "↓ 最新";
+  pane.jump.hidden = true;
+  pane.el.parentElement.appendChild(pane.jump);
+  pane.jump.addEventListener("click", () => {
+    pane.follow = true;
+    pane.jump.hidden = true;
+    pane.el.scrollTop = pane.el.scrollHeight;
+  });
+  pane.el.addEventListener("scroll", () => {
+    pane.follow = isAtBottom(pane.el);
+    if (pane.follow) pane.jump.hidden = true;
+  }, { passive: true });
 }
 
 function markSessionStart() {
@@ -497,10 +593,9 @@ function txParagraph(itemId) {
 }
 function txShow(it) {
   const el = jaText;
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   it.p.textContent = fixTerms(it.entry.text);
   dirty = true;
-  if (nearBottom) el.scrollTop = el.scrollHeight;
+  keepAtBottom("ja");
 }
 function txDelta(itemId, delta) {
   if (!delta) return;
@@ -610,7 +705,7 @@ function tick() {
     }
   }
   txMaybeCommit(now);
-  checkEnStall(now);
+  checkTranslateStall(now);
   if (dirty && now - lastSaveAt >= AUTOSAVE_MS) saveSession();
   render();
 }
@@ -651,6 +746,7 @@ function startStats(peer) {
       checkSilentMic(peer, level);
       checkQuietAudio(level);
       vadUpdate(level);
+      if (level >= SPEECH_LEVEL) speechMsSinceJa += isTx() ? 200 : STATS_INTERVAL_MS;
     }
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
@@ -703,33 +799,26 @@ async function buildBoostedTrack(stream) {
     return null;
   }
 }
-// 翻訳モードで、日本語訳は届いているのに英語の文字起こしだけが止まったときの対処(1回だけ)。
-// ブースト(増幅+コンプレッサー)した音だと英語側の区切り検出がうまく働かないことがあるため、生のマイクに切り替える
-function checkEnStall(now) {
-  if (isTx() || state !== "live" || enStallHandled || !liveSince) return;
-  const jaFlowing = lastJaAt && now - lastJaAt < 5_000;
-  const enSilentFor = now - (lastEnAt || liveSince);
-  if (!jaFlowing || enSilentFor < EN_STALL_MS) return;
-  enStallHandled = true;
-  if (boostCtx && rawMicTrack?.readyState === "live" && pc) {
-    diag(`英語だけ${Math.round(enSilentFor / 1000)}秒届かない(英${enCount}・日${jaCount}) → ブーストを外して生のマイクに切り替え`);
-    switchToRawMic();
-  } else {
-    diag(`英語だけ${Math.round(enSilentFor / 1000)}秒届かない(英${enCount}・日${jaCount})。ブーストは未使用`);
-    showNotice("英語の文字起こしが届いていません(日本語訳は続いています)。停止して ⚙︎ の診断ログを送ってください");
+// 翻訳モードの見張り: 話し声が続いているのに日本語訳が届かなくなったら、サーバー側で詰まったとみなして再接続する。
+// 英語(原文)は翻訳サービスが話の切れ目でまとめて返す仕様なので、止まっていても再接続はせず記録だけ残す
+function checkTranslateStall(now) {
+  if (isTx() || state !== "live" || reconnecting || !lastConnectAt) return;
+  const jaSilentFor = now - Math.max(lastJaAt, lastConnectAt);
+  if (jaSilentFor >= JA_STALL_MS && speechMsSinceJa >= JA_STALL_SPEECH_MS) {
+    speechMsSinceJa = 0;
+    if (jaCount === jaAtStallReconnect) {
+      // 前回つなぎ直してからも訳が1つも出ていない = 音楽や英語以外の音など。何度つなぎ直しても変わらないので見送る
+      diag(`日本語訳が${Math.round(jaSilentFor / 1000)}秒届かないが、前回の再接続後も訳が出ていないため見送り`);
+      return;
+    }
+    jaAtStallReconnect = jaCount;
+    reconnect(`話し声があるのに日本語訳が${Math.round(jaSilentFor / 1000)}秒届かない(英${enCount}・日${jaCount})`);
+    return;
   }
-}
-
-async function switchToRawMic() {
-  try {
-    const sender = pc?.getSenders().find((sd) => sd.track?.kind === "audio");
-    await sender?.replaceTrack(rawMicTrack);
-    stopRecorder();
-    startRecorder(rawMicTrack);
-    closeBoost();
-    showNotice("英語の文字起こしが止まったため、集音ブーストを外しました(⚙︎ で「オフ」にすると次回からこの設定になります)");
-  } catch (e) {
-    diag(`生のマイクへの切り替えに失敗: ${e?.message || e}`);
+  const enSilentFor = now - Math.max(lastEnAt, lastConnectAt);
+  if (enSilentFor >= 30_000 && now - lastJaAt < 5_000 && now - lastEnStallLogAt >= 30_000) {
+    lastEnStallLogAt = now;
+    diag(`英語が${Math.round(enSilentFor / 1000)}秒届かない(話の切れ目待ち)。日本語訳は継続中`);
   }
 }
 

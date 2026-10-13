@@ -257,3 +257,10 @@ body.mode-transcribe .ja .text { font-size: calc(var(--ja-size) * 0.85); font-we
 .term-row { gap: 4px; }
 .term-row input { padding: 8px 6px; font-size: 15px; }
 .term-row .del { padding: 6px 9px; font-size: 16px; line-height: 1; }
+.pane { position: relative; }
+.jump-latest {
+  position: absolute; right: 10px; bottom: 10px;
+  padding: 6px 12px; border-radius: 16px; border: none;
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25); cursor: pointer;
+}
