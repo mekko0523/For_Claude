@@ -314,7 +314,7 @@ async function start() {
     if (!alive()) return;
 
     // 2) 翻訳サービスに接続(エンジンごとに方式が違う)
-    runEngine = engine;
+    runEngine = isBidi() ? "soniox" : engine; // 双方向は Soniox だけが対応
     diag(`翻訳エンジン: ${runEngine === "soniox" ? "Soniox" : "OpenAI"}`);
     if (runEngine === "soniox") {
       await openSoniox(sendTrack, passphrase, workerUrl);
@@ -610,7 +610,7 @@ function isSpendLimit(status, err) {
   return /spend_limit|insufficient_quota|billing|quota/i.test(text);
 }
 
-function appendDelta(lang, delta) {
+function appendDelta(lang, delta, translated = false) {
   if (!delta) return;
   const pane = panes[lang];
   const now = Date.now();
@@ -618,20 +618,23 @@ function appendDelta(lang, delta) {
   const cur = pane.entry?.text || "";
   const sentenceEnded = /[。！？!?]\s*$/.test(cur) || /[.?!]["')\]]?\s*$/.test(cur) && /^\s/.test(delta);
   const tooLong = cur.length >= PARAGRAPH_HARD_CHARS || (cur.length >= PARAGRAPH_SOFT_CHARS && sentenceEnded);
-  if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS || tooLong || pane.forceBreak) {
+  // 双方向では、発言と訳が切り替わったら段落を分ける(訳の段落は色を変える)
+  const kindChanged = !!pane.entry && !!pane.entry.tr !== translated;
+  if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS || tooLong || pane.forceBreak || kindChanged) {
     pane.forceBreak = false;
     pane.provP?.remove();
     pane.p = document.createElement("p");
     pane.el.appendChild(pane.p);
     trimDom(pane.el);
-    pane.entry = { lang, t: now, text: "" };
+    pane.entry = { lang, t: now, text: "", ...(translated ? { tr: true } : {}) };
+    if (translated) pane.p.classList.add("tr");
     session.entries.push(pane.entry);
     delta = delta.replace(/^\s+/, "");
   }
   pane.lastAt = now;
   pane.entry.text += delta;
   pane.p.textContent = fixTerms(pane.entry.text, lang);
-  if (pane.prov?.textContent) pane.p.appendChild(pane.prov); // 確定前の文字は確定文の後ろに表示し続ける
+  if (pane.prov?.textContent && !isBidi()) pane.p.appendChild(pane.prov); // 確定前の文字は確定文の後ろに表示し続ける
   dirty = true;
 
   // ユーザーが読み返しているとき以外は自動スクロール
@@ -689,6 +692,8 @@ function markSessionStart() {
 
 // ===== 日本語の文字起こしモード =====
 function isTx(sess = session) { return sess?.mode === "transcribe"; }
+// 日⇄英 双方向(Soniox のみ): 話された言語を見分けて、もう一方の言語に訳す
+function isBidi(sess = session) { return sess?.mode === "bidi"; }
 
 function noteInput() {
   lastInputAt = Date.now();
@@ -772,12 +777,12 @@ function switchMode(mode) {
   if (session.entries.length) {
     saveSession();
     session = createSession();
-    showNotice(mode === "transcribe"
-      ? "日本語の文字起こしモードにしました(新しいセッション)。前のセッションは「履歴」にあります"
+    showNotice(mode === "bidi"
+      ? "日⇄英 双方向モードにしました(新しいセッション)。前のセッションは「履歴」にあります"
       : "英→日 翻訳モードにしました(新しいセッション)。前のセッションは「履歴」にあります");
   } else {
     session.mode = mode;
-    showNotice("");
+    showNotice(mode === "bidi" ? "日⇄英 双方向モード(Soniox):日本語と英語のどちらで話しても、もう一方の言語に訳します" : "");
   }
   renderSession();
 }
@@ -790,8 +795,9 @@ function applyModeUI() {
     b.disabled = state !== "idle";
   }
   const clean = session?.showClean && session.clean ? '<span class="badge">清書版</span>' : "";
-  $("jaLabel").innerHTML = (tx ? "文字起こし(日本語)" : "日本語") + clean;
-  $("enLabel").innerHTML = "English" + clean;
+  const bidi = isBidi();
+  $("jaLabel").innerHTML = (tx ? "文字起こし(日本語)" : bidi ? "日本語(発言+和訳)" : "日本語") + clean;
+  $("enLabel").innerHTML = (bidi ? "English(発言+英訳)" : "English") + clean;
   costEl.hidden = tx;
   $("costSep").hidden = tx;
 }
@@ -1066,10 +1072,13 @@ async function openSoniox(track, passphrase, workerUrl) {
         audio_format: "pcm_s16le",
         sample_rate: SONIOX_SAMPLE_RATE,
         num_channels: 1,
-        language_hints: ["en"],
+        language_hints: isBidi() ? ["en", "ja"] : ["en"],
+        ...(isBidi() ? { enable_language_identification: true } : {}),
         enable_endpoint_detection: true,
         max_endpoint_delay_ms: (SX_SPEED[sxSpeedSel.value] || SX_SPEED.fast).endpoint,
-        translation: { type: "one_way", target_language: "ja" },
+        translation: isBidi()
+          ? { type: "two_way", language_a: "en", language_b: "ja" }
+          : { type: "one_way", target_language: "ja" },
         context: sonioxContext(),
       };
       ws.send(JSON.stringify(config));
@@ -1119,7 +1128,10 @@ function handleSoniox(raw) {
   if (eventCount === 1) diag(`Soniox 受信開始 ${JSON.stringify(msg).slice(0, 200)}`);
   const prov = { en: "", ja: "" };
   for (const t of msg.tokens || []) {
-    const lang = t.translation_status === "translation" ? "ja" : "en";
+    // 片方向: 訳文は日本語欄、原文は英語欄。双方向: 言語で振り分け(英語の発言・英訳 → 英語欄、日本語の発言・和訳 → 日本語欄)
+    const lang = isBidi()
+      ? (t.language ? (t.language.startsWith("ja") ? "ja" : "en") : (/[\u3040-\u30ff\u3400-\u9fff]/.test(t.text) ? "ja" : "en"))
+      : (t.translation_status === "translation" ? "ja" : "en");
     if (t.text === "<end>" || t.text === "<fin>") {
       // 話の区切り(<end>)= 段落の区切り。アプリが送った確定(<fin>)では段落を分けない
       if (t.is_final && t.text === "<end>") panes[lang].forceBreak = true;
@@ -1127,7 +1139,7 @@ function handleSoniox(raw) {
     }
     noteInput();
     if (t.is_final) {
-      appendDelta(lang, t.text);
+      appendDelta(lang, t.text, isBidi() && t.translation_status === "translation");
       if (lang === "en") { enCount++; lastEnAt = Date.now(); }
       else { jaCount++; lastJaAt = Date.now(); speechMsSinceJa = 0; }
     } else {
@@ -1177,7 +1189,8 @@ function setProvisional(lang, text) {
     return;
   }
   pane.prov.textContent = fixTerms(text, lang);
-  if (!pane.p || pane.forceBreak) {
+  // 双方向では次の発言が訳の段落にくっつかないよう、確定前の文字は別の行に出す
+  if (!pane.p || pane.forceBreak || isBidi()) {
     pane.el.appendChild(pane.provP);
     pane.provP.appendChild(pane.prov);
   } else {
@@ -1210,13 +1223,16 @@ function compileGlossary() {
       ? new RegExp(`\\b${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi")
       : from;
     // 「英語 → 日本語」は訳し方の指定(英語の欄では置き換えない。Soniox には訳語として渡す)
-    const translationOnly = /^[\x20-\x7e]+$/.test(from) && /[^\x20-\x7e]/.test(to);
-    glossaryRules.push({ from: pattern, to, translationOnly, source: from });
+    const fromAscii = /^[\x20-\x7e]+$/.test(from);
+    const toAscii = /^[\x20-\x7e]+$/.test(to);
+    // 「英語 → 日本語」「日本語 → 英語」は訳し方の指定(元の言語の欄では置き換えない。Soniox には訳語として渡す)
+    const translationOnly = fromAscii !== toAscii;
+    glossaryRules.push({ from: pattern, to, translationOnly, fromLang: fromAscii ? "en" : "ja", source: from });
   }
 }
 function fixTerms(text, lang) {
   for (const r of glossaryRules) {
-    if (lang === "en" && r.translationOnly) continue;
+    if (r.translationOnly && lang === r.fromLang) continue;
     text = typeof r.from === "string" ? text.split(r.from).join(r.to) : text.replace(r.from, r.to);
   }
   return text;
@@ -1309,8 +1325,9 @@ function render() {
   $("historyBtn").disabled = state !== "idle";
   $("glossaryBtn").disabled = state !== "idle";
   for (const b of document.querySelectorAll(".engine-switch button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.engine === engine));
-    b.disabled = state !== "idle";
+    const eff = isBidi() ? "soniox" : engine;
+    b.setAttribute("aria-pressed", String(b.dataset.engine === eff));
+    b.disabled = state !== "idle" || (isBidi() && b.dataset.engine === "openai");
   }
   applyModeUI();
 }
@@ -1356,7 +1373,7 @@ function createSession() {
   const now = Date.now();
   const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   lsSet(LS_CURRENT, id);
-  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [], mode: "translate" };
+  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [], mode: lsGet(LS_MODE) === "bidi" ? "bidi" : "translate" };
 }
 
 function loadSession(id) {
@@ -1416,6 +1433,7 @@ function renderSession() {
     for (const e of session.entries) {
       const p = document.createElement("p");
       p.textContent = fixTerms(e.text, e.lang);
+      if (e.tr) p.classList.add("tr");
       (e.lang === "en" ? enText : jaText).appendChild(p);
     }
   }
@@ -1479,7 +1497,7 @@ function openHistory() {
     info.className = "info";
     const title = document.createElement("div");
     title.className = "title";
-    title.textContent = `${m.mode === "transcribe" ? "🎙 " : "🌐 "}${m.hasSummary ? "📝 " : ""}${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
+    title.textContent = `${m.mode === "transcribe" ? "🎙 " : m.mode === "bidi" ? "🔁 " : "🌐 "}${m.hasSummary ? "📝 " : ""}${fmtDateTime(m.createdAt)}(${m.durationMs < 60_000 ? "1分未満" : `${Math.round(m.durationMs / 60_000)}分`})${m.id === session.id ? " ・表示中" : ""}`;
     const preview = document.createElement("div");
     preview.className = "preview";
     preview.textContent = m.preview || "(英語なし)";
@@ -1527,17 +1545,17 @@ function sessionToText(sess) {
     ].join("\n");
   }
   return [
-    `ハヤメモ|英→日 翻訳 ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
+    `ハヤメモ|${isBidi(sess) ? "日⇄英 双方向" : "英→日 翻訳"} ${fmtDateTime(sess.createdAt)}(翻訳時間 ${fmtTime(sess.durationMs)})`,
     "",
     ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
     ...(sess.clean?.en ? [
       "■ 清書:英語(録音から高精度に文字起こし)", splitParagraphs(fixTerms(sess.clean.en, "en")).join("\n\n"), "",
       "■ 清書:日本語訳", splitParagraphs(fixTerms(sess.clean.ja || "")).join("\n\n") || "(なし)", "",
     ] : []),
-    "■ 英語原文(リアルタイム)",
+    isBidi(sess) ? "■ English(英語の発言+日本語発言の英訳)" : "■ 英語原文(リアルタイム)",
     join("en") || "(なし)",
     "",
-    "■ 日本語訳",
+    isBidi(sess) ? "■ 日本語(日本語の発言+英語発言の和訳)" : "■ 日本語訳",
     join("ja") || "(なし)",
     "",
     ...(sess.speakerTranscript ? ["■ 話者別書き起こし(英語・話者は音声から自動識別)", sess.speakerTranscript, ""] : []),
@@ -1803,12 +1821,14 @@ function renderCleanUI(sess) {
   const has = !!sess.clean;
   const recs = shareRecordings.length;
   $("cleanBtn").textContent = cleaning ? "清書中…" : has ? "清書し直す" : "✨ 清書する";
-  $("cleanBtn").disabled = cleaning || !recs;
+  $("cleanBtn").disabled = cleaning || !recs || isBidi(sess);
   $("cleanViewRow").hidden = !has;
   $("viewCleanBtn").classList.toggle("primary", has && !!sess.showClean);
   $("viewLiveBtn").classList.toggle("primary", has && !sess.showClean);
   if (cleaning) return;
-  $("cleanInfo").textContent = !recs
+  $("cleanInfo").textContent = isBidi(sess)
+    ? "日⇄英 双方向のセッションでは清書は使えません(要約メモと保存は使えます)"
+    : !recs
     ? "録音がないため清書できません(⚙︎「音声を録音する」をオンにして翻訳・文字起こしすると使えます)"
     : has
       ? `清書済み(${fmtDateTime(sess.clean.at)})。要約メモと保存ファイルは清書版を使います`

@@ -269,11 +269,13 @@ async function summarize(body, env, cors) {
   if (en.length + ja.length + speakers.length > SUMMARY_MAX_CHARS) return json({ error: "transcript_too_long" }, 413, cors);
 
   const transcribe = body.mode === "transcribe";
+  const bidi = body.mode === "bidi";
   const input = [
+    bidi ? "【注意】これは日本語と英語が混ざった会話の双方向同時通訳。英語欄=英語の発言+日本語発言の英訳、日本語欄=日本語の発言+英語発言の和訳。どちらの言語で話されたかは文脈で判断し、日本語でまとめる" : "",
     glossary.trim() ? `【用語集(誤り → 正しい)】\n${glossary}` : "",
     speakers.trim() ? `【話者付き書き起こし(話者は音声から自動識別)】\n${speakers}` : "",
-    transcribe ? `【日本語の文字起こし(自動)】\n${ja || "(なし)"}` : `【英語原文】\n${en || "(なし)"}`,
-    transcribe ? "" : `【日本語訳(機械翻訳)】\n${ja || "(なし)"}`,
+    transcribe ? `【日本語の文字起こし(自動)】\n${ja || "(なし)"}` : `【${bidi ? "英語欄" : "英語原文"}】\n${en || "(なし)"}`,
+    transcribe ? "" : `【${bidi ? "日本語欄" : "日本語訳(機械翻訳)"}】\n${ja || "(なし)"}`,
   ].filter(Boolean).join("\n\n");
 
   const upstream = await fetch(OPENAI_RESPONSES_URL, {

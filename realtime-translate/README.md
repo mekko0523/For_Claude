@@ -193,3 +193,11 @@ const MAX_SESSION_MS     = 90 * 60_000;
 - 料金は約 $0.12/時間(OpenAI は約 $2/時間)。画面の料金表示はエンジンごとの単価で計算します。
 - セットアップ: GitHub Secret に `SONIOX_API_KEY` を登録し、Actions のデプロイを実行すると Worker に登録されます
   (未登録でも ChatGPT は使えます)。
+
+## 日⇄英 双方向(Soniox)
+
+- 画面上部の「🌐 英→日 / 🔁 日⇄英 双方向」で切り替えます(切り替えると新しいセッション)。
+- 双方向は Soniox の `translation: { type: "two_way", language_a: "en", language_b: "ja" }` と言語識別を使い、
+  English 欄に「英語の発言+日本語発言の英訳」、日本語欄に「日本語の発言+英語発言の和訳」を出します(訳の段落は青色)。
+- 双方向は Soniox 専用(ChatGPT の gpt-realtime-translate は訳す先の言語が1つのため)。清書は使えません。
+- 用語集の「日本語 → 英語」も訳し方の指定として Soniox に渡します。
