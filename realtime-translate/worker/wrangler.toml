@@ -18,8 +18,11 @@ DIARIZE_MODEL = "gpt-4o-transcribe-diarize"
 TRANSCRIBE_MODEL = "gpt-live-transcribe"
 # 清書(/clean)に使う録音ファイル用の文字起こしモデル
 CLEAN_MODEL = "gpt-transcribe"
+# Soniox のリアルタイムモデル(SONIOX_API_KEY は GitHub Secret から登録)
+SONIOX_MODEL = "stt-rt-v5"
 
 # Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
 #   OPENAI_API_KEY : OpenAI の API キー
 #   APP_PASSPHRASE : フロントで入力する合言葉
+#   SONIOX_API_KEY : (任意)Soniox の API キー
 # ローカル開発では .dev.vars に書く(.gitignore 済み)。.dev.vars.example を参照。

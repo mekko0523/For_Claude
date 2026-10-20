@@ -181,3 +181,15 @@ const MAX_SESSION_MS     = 90 * 60_000;
 
 - 「言い換え(誤り → 正しい)」と「キーワード」を一覧で追加・削除できます(テキストでまとめて編集も可)。
 - 言い換えは表示・清書・要約・保存ファイルに適用。キーワード(と言い換えの正しい側)は日本語の文字起こしと清書でモデルに渡します。
+
+## 翻訳エンジンの切り替え(ChatGPT / Soniox)
+
+- 画面上部のトグルで「ChatGPT(OpenAI gpt-realtime-translate)」と「Soniox」を選べます(停止中のみ)。
+- Soniox: Worker の `/session`(`engine: "soniox"`)が `POST https://api.soniox.com/v1/auth/temporary-api-key`
+  で1回限り・60秒の一時キーを発行し、ブラウザが `wss://stt-rt.soniox.com/transcribe-websocket` に直接接続します
+  (キーは WebSocket の protocols で渡す)。音声は AudioWorklet で 16kHz の pcm_s16le にして 0.1 秒ごとに送信。
+  設定は `stt-rt-v5`・`language_hints: ["en"]`・話の区切り検出・`translation: one_way → ja`・用語集から作る
+  `context.terms` / `translation_terms`(「英語 → 日本語」の行)。確定前の文字は薄く表示します。
+- 料金は約 $0.12/時間(OpenAI は約 $2/時間)。画面の料金表示はエンジンごとの単価で計算します。
+- セットアップ: GitHub Secret に `SONIOX_API_KEY` を登録し、Actions のデプロイを実行すると Worker に登録されます
+  (未登録でも ChatGPT は使えます)。

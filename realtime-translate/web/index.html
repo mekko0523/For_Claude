@@ -27,6 +27,11 @@
   </header>
 
 
+  <div class="engine-switch" role="group" aria-label="翻訳エンジン">
+    <button type="button" data-engine="openai" aria-pressed="true">ChatGPT</button>
+    <button type="button" data-engine="soniox" aria-pressed="false">Soniox</button>
+  </div>
+
   <div class="diag" id="diag" hidden>
     <span class="mic-label">🎤</span>
     <span class="mic-name" id="micName"></span>
@@ -141,13 +146,13 @@
       <p class="hint">登録した言葉は、字幕の表示、清書、要約メモ、保存ファイルのすべてに使われます。</p>
       <section class="share-section">
         <h3>言い換え(誤り → 正しい)</h3>
-        <p class="hint">よく間違える言葉を正しい表記に自動で直します。英語は大文字・小文字を区別しません。</p>
+        <p class="hint">よく間違える言葉を正しい表記に自動で直します。英語は大文字・小文字を区別しません。「英語 → 日本語」と書くと訳し方の指定になります(Soniox では翻訳そのものに反映)。</p>
         <div class="term-list" id="ruleList"></div>
         <button type="button" class="small-btn" id="addRuleBtn">＋ 言い換えを追加</button>
       </section>
       <section class="share-section">
         <h3>キーワード</h3>
-        <p class="hint">聞き取ってほしい言葉(製品名・成分名・人名・地名など)。清書のときにモデルに伝えます。言い換えの「正しい」側も自動で含まれます。</p>
+        <p class="hint">聞き取ってほしい言葉(製品名・成分名・人名・地名など)。Soniox と清書でモデルに伝えます。言い換えの「正しい」側も自動で含まれます。</p>
         <div class="term-list" id="keywordList"></div>
         <button type="button" class="small-btn" id="addKeywordBtn">＋ キーワードを追加</button>
       </section>

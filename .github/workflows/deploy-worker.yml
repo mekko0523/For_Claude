@@ -77,6 +77,27 @@ jobs:
             OPENAI_API_KEY
             APP_PASSPHRASE
 
+      # Soniox(任意): GitHub Secret に SONIOX_API_KEY があるときだけ Worker に登録する
+      - name: Check optional Soniox secret
+        id: soniox
+        env:
+          SONIOX_API_KEY: ${{ secrets.SONIOX_API_KEY }}
+        run: echo "has=$([ -n "$SONIOX_API_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Soniox secret
+        if: steps.soniox.outputs.has == 'true'
+        uses: cloudflare/wrangler-action@v4
+        env:
+          SONIOX_API_KEY: ${{ secrets.SONIOX_API_KEY }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: realtime-translate/worker
+          wranglerVersion: "4"
+          command: secret list
+          secrets: |
+            SONIOX_API_KEY
+
       - name: Resolve Worker URL
         id: url
         env:

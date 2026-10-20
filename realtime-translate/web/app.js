@@ -5,7 +5,12 @@ const SILENCE_TIMEOUT_MS = 3 * 60_000;   // 話し声の文字起こしがこの
 const COUNTDOWN_SHOW_MS = 30_000;        // 残りこの時間になったらカウントダウン表示
 const CONNECT_TIMEOUT_MS = 30_000;       // 接続がこの時間で完了しなければエラー
 const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強制停止)
-const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金
+const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金(OpenAI)
+// 翻訳エンジン: OpenAI(gpt-realtime-translate)/ Soniox(stt-rt + 翻訳)
+const LS_ENGINE = "rt.engine";
+const ENGINE_PRICE_PER_MIN = { openai: 0.034, soniox: 0.002 };
+const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
+const SONIOX_SAMPLE_RATE = 16_000;
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
 // 話が途切れず続くと1つの段落が際限なく伸び、届くたびに全文を描き直して重くなるため、文の終わりで段落を分ける
 const PARAGRAPH_SOFT_CHARS = 80;         // この長さを超えて文が終わったら次から新しい段落
@@ -115,6 +120,9 @@ let lastConnectAt = 0;
 let speechMsSinceJa = 0;             // 最後の日本語訳以降に話し声があった時間
 let lastLoudAt = 0;                  // 最後に話し声があった時刻(切り替えのタイミング判定用)
 let drainingChannel = null;          // 切り替え直後、まだ訳を受け取っている古い接続
+let engine = lsGet(LS_ENGINE) === "soniox" ? "soniox" : "openai";
+let runEngine = engine;              // 実行中のエンジン(開始時に確定)
+const sx = { ws: null, ctx: null, node: null, track: null, bytes: 0 }; // Soniox の接続と音声処理
 let lastEnStallLogAt = 0;
 let jaAtStallReconnect = -1;         // 前回「詰まり」で再接続したときの日本語訳の数(増えていなければ再接続しても無駄)
 let glossaryRules = [];      // [{from: RegExp|string, to}]
@@ -191,6 +199,17 @@ $("summaryText").addEventListener("input", () => {
 });
 $("historyBtn").addEventListener("click", openHistory);
 $("glossaryBtn").addEventListener("click", openGlossary);
+for (const b of document.querySelectorAll(".engine-switch button")) {
+  b.addEventListener("click", () => {
+    if (state !== "idle") return;
+    engine = b.dataset.engine;
+    lsSet(LS_ENGINE, engine);
+    render();
+    showNotice(engine === "soniox"
+      ? "翻訳エンジンを Soniox にしました(英語が単語ごとにすぐ出ます。用語集の「英語 → 日本語」は訳し方の指定になります)"
+      : "翻訳エンジンを ChatGPT(OpenAI)にしました");
+  });
+}
 $("addRuleBtn").addEventListener("click", () => { addTermRow("rule"); });
 $("addKeywordBtn").addEventListener("click", () => { addTermRow("keyword"); });
 $("cleanBtn").addEventListener("click", () => cleanSession(shareTarget));
@@ -276,12 +295,19 @@ async function start() {
     const sendTrack = (await buildBoostedTrack(stream)) || track;
     if (!alive()) return;
 
-    // 2) client secret 取得 → WebRTC 接続
-    const conn = await openPeer(sendTrack, passphrase, workerUrl);
-    if (!alive()) { closePeer(conn); return; }
+    // 2) 翻訳サービスに接続(エンジンごとに方式が違う)
+    runEngine = engine;
+    diag(`翻訳エンジン: ${runEngine === "soniox" ? "Soniox" : "OpenAI"}`);
+    if (runEngine === "soniox") {
+      await openSoniox(sendTrack, passphrase, workerUrl);
+      if (!alive()) { closeSoniox(); return; }
+    } else {
+      const conn = await openPeer(sendTrack, passphrase, workerUrl);
+      if (!alive()) { closePeer(conn); return; }
+      pc = conn.peer;
+      dc = conn.channel;
+    }
     savePassphrase(passphrase); // 通った合言葉は確実に保存
-    pc = conn.peer;
-    dc = conn.channel;
     liveSince = Date.now();
     lastConnectAt = liveSince;
     lastInputAt = liveSince; // 開始時点から無音カウント
@@ -289,7 +315,8 @@ async function start() {
     markSessionStart();
     diag("データチャネル接続");
     quietCheckSince = Date.now();
-    startStats(pc);
+    lastStatsLogAt = Date.now();
+    if (pc) startStats(pc);
     startRecorder(sendTrack);
   } catch (err) {
     if (!alive()) return;
@@ -395,6 +422,20 @@ async function reconnect(reason, { rotate = false } = {}) {
   diag(rotate ? `定期切り替え: ${reason}` : `再接続(${reconnectCount}回目): ${reason}`);
   if (!rotate) showNotice("字幕が止まったため、つなぎ直しています…");
   try {
+    if (runEngine === "soniox") {
+      closeSoniox({ keepAudio: true });
+      await openSoniox(sx.track, passInput.value.trim(), getWorkerUrl());
+      if (gen !== generation) return;
+      markSessionStart();
+      lastConnectAt = Date.now();
+      lastJaAt = lastConnectAt;
+      lastEnAt = lastConnectAt;
+      speechMsSinceJa = 0;
+      diag("再接続完了");
+      showNotice("つなぎ直しました");
+      setTimeout(() => { if (noticeEl.textContent === "つなぎ直しました") showNotice(""); }, 4_000);
+      return;
+    }
     const sendTrack = pc?.getSenders().find((sd) => sd.track?.kind === "audio")?.track
       || micStream?.getAudioTracks()[0];
     const conn = await openPeer(sendTrack, passInput.value.trim(), getWorkerUrl());
@@ -437,13 +478,20 @@ async function reconnect(reason, { rotate = false } = {}) {
 // ===== 停止 =====
 function stop(reason, message) {
   generation++; // 進行中の非同期処理を無効化
-  if (liveSince) session.durationMs += Date.now() - liveSince;
+  if (liveSince) {
+    const ms = Date.now() - liveSince;
+    session.costUsd = sessionCost(session) + (ms / 60_000) * ENGINE_PRICE_PER_MIN[runEngine];
+    session.durationMs += ms;
+  }
   liveSince = 0;
   saveSession();
 
   stopRecorder(); // マイクを止める前に録音を確定させる
   try { drainingChannel?.close(); } catch {}
   drainingChannel = null;
+  closeSoniox();
+  setProvisional("en", "");
+  setProvisional("ja", "");
   try { dc?.close(); } catch {}
   try { pc?.close(); } catch {}
   micStream?.getTracks().forEach((t) => t.stop());
@@ -552,7 +600,9 @@ function appendDelta(lang, delta) {
   const cur = pane.entry?.text || "";
   const sentenceEnded = /[。！？!?]\s*$/.test(cur) || /[.?!]["')\]]?\s*$/.test(cur) && /^\s/.test(delta);
   const tooLong = cur.length >= PARAGRAPH_HARD_CHARS || (cur.length >= PARAGRAPH_SOFT_CHARS && sentenceEnded);
-  if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS || tooLong) {
+  if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS || tooLong || pane.forceBreak) {
+    pane.forceBreak = false;
+    pane.provP?.remove();
     pane.p = document.createElement("p");
     pane.el.appendChild(pane.p);
     trimDom(pane.el);
@@ -562,7 +612,8 @@ function appendDelta(lang, delta) {
   }
   pane.lastAt = now;
   pane.entry.text += delta;
-  pane.p.textContent = fixTerms(pane.entry.text);
+  pane.p.textContent = fixTerms(pane.entry.text, lang);
+  if (pane.prov?.textContent) pane.p.appendChild(pane.prov); // 確定前の文字は確定文の後ろに表示し続ける
   dirty = true;
 
   // ユーザーが読み返しているとき以外は自動スクロール
@@ -789,22 +840,25 @@ function startStats(peer) {
         }
       });
     } catch { return; }
-    if (level !== null) {
-      setMeter(level);
-      checkSilentMic(peer, level);
-      checkQuietAudio(level);
-      vadUpdate(level);
-      if (level >= SPEECH_LEVEL) {
-        speechMsSinceJa += isTx() ? 200 : STATS_INTERVAL_MS;
-        lastLoudAt = Date.now();
-      }
-    }
+    if (level !== null) onLevel(level, isTx() ? 200 : STATS_INTERVAL_MS);
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
       diag(`送信: ${bytesSent ?? "?"} bytes / ${packetsSent ?? "?"} packets / 音量 ${level === null ? "取得不可" : level.toFixed(3)}${isTx() ? "" : ` / 受信 英${enCount}・日${jaCount}`}`);
     }
   }, isTx() ? 200 : STATS_INTERVAL_MS); // 文字起こしは話し終わりの判定に使うので細かく測る
 }
+// 音量が取れるたびの共通処理(OpenAI は WebRTC 統計から、Soniox は送る音声から計算)
+function onLevel(level, intervalMs) {
+  setMeter(level);
+  checkSilentMic(pc, level);
+  checkQuietAudio(level);
+  vadUpdate(level);
+  if (level >= SPEECH_LEVEL) {
+    speechMsSinceJa += intervalMs;
+    lastLoudAt = Date.now();
+  }
+}
+
 // 英語がまだ1つも届かず、音も小さいままなら、近づける・音量を上げるよう案内する(1回だけ)
 function checkQuietAudio(level) {
   if (state !== "live" || inputSeen || !quietCheckSince) return;
@@ -864,7 +918,7 @@ async function buildBoostedTrack(stream) {
 function checkTranslateStall(now) {
   if (isTx() || state !== "live" || reconnecting || !lastConnectAt) return;
   const age = now - lastConnectAt;
-  if (age >= ROTATE_FORCE_MS || (age >= ROTATE_MS && now - lastLoudAt >= ROTATE_QUIET_MS)) {
+  if (runEngine === "openai" && (age >= ROTATE_FORCE_MS || (age >= ROTATE_MS && now - lastLoudAt >= ROTATE_QUIET_MS))) {
     reconnect(`${Math.round(age / 60_000)}分経過${age >= ROTATE_FORCE_MS ? "(切れ目なし)" : "・話の切れ目"}`, { rotate: true });
     return;
   }
@@ -892,6 +946,204 @@ function closeBoost() {
   boostCtx = null;
 }
 
+// ===== Soniox エンジン =====
+// 送る音声: マイク(ブースト後)を AudioWorklet で 16kHz の 16bit PCM にして 0.1 秒ごとに WebSocket で送る
+const PCM_WORKLET_SRC = `
+class PcmSender extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.ratio = o.processorOptions.ratio; this.pos = 0; this.sum = 0; this.n = 0;
+    this.out = new Int16Array(1600); this.len = 0; this.sq = 0; this.cnt = 0;
+  }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      const v = ch[i];
+      this.sq += v * v; this.cnt++;
+      this.sum += v; this.n++; this.pos += 1;
+      if (this.pos >= this.ratio) {
+        this.pos -= this.ratio;
+        const s = Math.max(-1, Math.min(1, this.sum / this.n));
+        this.sum = 0; this.n = 0;
+        this.out[this.len++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        if (this.len === this.out.length) {
+          const buf = this.out.slice(0).buffer;
+          this.port.postMessage({ pcm: buf, rms: Math.sqrt(this.sq / this.cnt) }, [buf]);
+          this.len = 0; this.sq = 0; this.cnt = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-sender", PcmSender);
+`;
+
+async function setupSonioxAudio(track) {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  const url = URL.createObjectURL(new Blob([PCM_WORKLET_SRC], { type: "application/javascript" }));
+  try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+  const src = ctx.createMediaStreamSource(new MediaStream([track]));
+  const node = new AudioWorkletNode(ctx, "pcm-sender", { processorOptions: { ratio: ctx.sampleRate / SONIOX_SAMPLE_RATE } });
+  const mute = ctx.createGain();
+  mute.gain.value = 0; // 処理を動かすためにつなぐだけ(音は出さない)
+  src.connect(node).connect(mute).connect(ctx.destination);
+  node.port.onmessage = ({ data }) => {
+    if (sx.ws?.readyState === WebSocket.OPEN) {
+      sx.ws.send(data.pcm);
+      sx.bytes += data.pcm.byteLength;
+    }
+    if (state !== "live") return;
+    onLevel(data.rms, 100);
+    if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
+      lastStatsLogAt = Date.now();
+      diag(`送信: ${sx.bytes} bytes / 音量 ${data.rms.toFixed(3)} / 受信 英${enCount}・日${jaCount}`);
+    }
+  };
+  await ctx.resume?.().catch(() => {});
+  Object.assign(sx, { ctx, node, track });
+  diag(`Soniox 音声: ${ctx.sampleRate}Hz → ${SONIOX_SAMPLE_RATE}Hz (${ctx.state})`);
+}
+
+function sonioxContext() {
+  const ascii = (w) => /^[\x20-\x7e]+$/.test(w);
+  const terms = [...new Set(glossaryKeywords.filter(ascii))].slice(0, 200);
+  const translationTerms = glossaryRules.filter((r) => r.translationOnly).map((r) => ({ source: r.source, target: r.to })).slice(0, 200);
+  return {
+    general: [
+      { key: "domain", value: "Agriculture, crop protection, pesticides, drone spraying" },
+      { key: "setting", value: "Live English conversation or presentation, translated into Japanese" },
+    ],
+    ...(terms.length ? { terms } : {}),
+    ...(translationTerms.length ? { translation_terms: translationTerms } : {}),
+  };
+}
+
+async function openSoniox(track, passphrase, workerUrl) {
+  const gen = generation;
+  const res = await fetch(`${workerUrl}/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passphrase, engine: "soniox" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.value) {
+    if (data.error === "invalid_passphrase") throw new Error("合言葉が違います");
+    if (data.error === "soniox_not_configured") throw new Error("Soniox のキーが未設定です(GitHub Secret に SONIOX_API_KEY を登録して、Actions のデプロイを実行してください)");
+    throw new Error(`Soniox の鍵の取得に失敗 (${res.status} ${data.error || ""}) ${data.detail?.message || ""}`.trim());
+  }
+  if (!sx.node) await setupSonioxAudio(track);
+  if (gen !== generation) return;
+  const ws = new WebSocket(SONIOX_WS_URL, ["soniox-api-key", data.value]);
+  ws.binaryType = "arraybuffer";
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Soniox への接続がタイムアウトしました")), CONNECT_TIMEOUT_MS);
+    ws.onopen = () => {
+      clearTimeout(timer);
+      const config = {
+        model: data.model || "stt-rt-v5",
+        audio_format: "pcm_s16le",
+        sample_rate: SONIOX_SAMPLE_RATE,
+        num_channels: 1,
+        language_hints: ["en"],
+        enable_endpoint_detection: true,
+        translation: { type: "one_way", target_language: "ja" },
+        context: sonioxContext(),
+      };
+      ws.send(JSON.stringify(config));
+      diag(`Soniox 接続: ${config.model} / 用語 ${config.context.terms?.length || 0}・訳語 ${config.context.translation_terms?.length || 0}`);
+      resolve();
+    };
+    ws.onerror = () => { clearTimeout(timer); reject(new Error("Soniox に接続できませんでした")); };
+  });
+  ws.onmessage = (e) => { if (gen === generation && ws === sx.ws) handleSoniox(e.data); };
+  ws.onclose = (e) => {
+    if (gen !== generation || ws !== sx.ws || state !== "live") return;
+    diag(`Soniox 切断 code=${e.code} ${e.reason || ""}`);
+    reconnect("Soniox との接続が閉じられた");
+  };
+  ws.onerror = null;
+  sx.ws = ws;
+}
+
+function closeSoniox({ keepAudio = false } = {}) {
+  const ws = sx.ws;
+  sx.ws = null;
+  if (ws) {
+    try { if (ws.readyState === WebSocket.OPEN) ws.send(""); } catch {} // 空のフレーム = 音声の終わり
+    setTimeout(() => { try { ws.close(); } catch {} }, 1_000);
+  }
+  if (!keepAudio) {
+    try { sx.node?.disconnect(); } catch {}
+    sx.ctx?.close().catch(() => {});
+    Object.assign(sx, { ctx: null, node: null, track: null, bytes: 0 });
+  }
+}
+
+// Soniox の応答: tokens の is_final が確定、それ以外は暫定(あとで変わる)。translation_status で原文/訳文を区別
+function handleSoniox(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  eventCount++;
+  if (msg.error_code || msg.error_message) {
+    diag(`Soniox エラー: ${msg.error_code} ${msg.error_message || ""}`);
+    stop("error", `Soniox エラー: ${msg.error_message || msg.error_code}`);
+    return;
+  }
+  if (msg.finished) { diag("Soniox: 終了"); return; }
+  if (eventCount === 1) diag(`Soniox 受信開始 ${JSON.stringify(msg).slice(0, 200)}`);
+  const prov = { en: "", ja: "" };
+  for (const t of msg.tokens || []) {
+    const lang = t.translation_status === "translation" ? "ja" : "en";
+    if (t.text === "<end>" || t.text === "<fin>") {
+      if (t.is_final) panes[lang].forceBreak = true; // 話の区切り = 段落の区切り
+      continue;
+    }
+    noteInput();
+    if (t.is_final) {
+      appendDelta(lang, t.text);
+      if (lang === "en") { enCount++; lastEnAt = Date.now(); }
+      else { jaCount++; lastJaAt = Date.now(); speechMsSinceJa = 0; }
+    } else {
+      prov[lang] += t.text;
+    }
+  }
+  setProvisional("en", prov.en);
+  setProvisional("ja", prov.ja);
+}
+
+// 確定前の文字(薄く表示)。段落がなければ仮の段落に出す
+function setProvisional(lang, text) {
+  const pane = panes[lang];
+  if (!pane.prov) {
+    pane.prov = document.createElement("span");
+    pane.prov.className = "prov";
+    pane.provP = document.createElement("p");
+  }
+  if (!text) {
+    pane.prov.textContent = "";
+    pane.prov.remove();
+    pane.provP.remove();
+    return;
+  }
+  pane.prov.textContent = fixTerms(text, lang);
+  if (!pane.p || pane.forceBreak) {
+    pane.el.appendChild(pane.provP);
+    pane.provP.appendChild(pane.prov);
+  } else {
+    pane.provP.remove();
+    pane.p.appendChild(pane.prov);
+  }
+  keepAtBottom(lang);
+}
+
+// これまでの料金(エンジン別の単価で記録。古いセッションは OpenAI の単価で概算)
+function sessionCost(sess) {
+  return sess?.costUsd ?? ((sess?.durationMs || 0) / 60_000) * PRICE_PER_MIN_USD;
+}
+
 // ===== 用語集(表示と保存テキストの置き換え) =====
 function compileGlossary() {
   glossaryRules = [];
@@ -909,11 +1161,14 @@ function compileGlossary() {
     const pattern = /^[\x20-\x7e]+$/.test(from)
       ? new RegExp(`\\b${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi")
       : from;
-    glossaryRules.push({ from: pattern, to });
+    // 「英語 → 日本語」は訳し方の指定(英語の欄では置き換えない。Soniox には訳語として渡す)
+    const translationOnly = /^[\x20-\x7e]+$/.test(from) && /[^\x20-\x7e]/.test(to);
+    glossaryRules.push({ from: pattern, to, translationOnly, source: from });
   }
 }
-function fixTerms(text) {
+function fixTerms(text, lang) {
   for (const r of glossaryRules) {
+    if (lang === "en" && r.translationOnly) continue;
     text = typeof r.from === "string" ? text.split(r.from).join(r.to) : text.replace(r.from, r.to);
   }
   return text;
@@ -942,7 +1197,7 @@ function checkSilentMic(peer, level) {
   if (micMaxLevel >= SILENT_LEVEL) { micCheckSince = 0; return; } // 音が入っている
   if (Date.now() - micCheckSince < SILENT_MIC_MS) return;
   micCheckSince = 0;
-  if (micRecoveries === 0) {
+  if (micRecoveries === 0 && peer) {
     micRecoveries++;
     diag("マイクの音量がゼロのまま → マイクを取り直します");
     recoverMic(peer);
@@ -997,13 +1252,18 @@ function render() {
   // 経過時間と料金は「表示中のセッション」の合計
   const totalMs = (session?.durationMs || 0) + (liveSince ? Date.now() - liveSince : 0);
   elapsedEl.textContent = fmtTime(totalMs);
-  costEl.textContent = `$${(totalMs / 60_000 * PRICE_PER_MIN_USD).toFixed(3)}`;
+  const liveMs = liveSince ? Date.now() - liveSince : 0;
+  costEl.textContent = `$${(sessionCost(session) + (liveMs / 60_000) * ENGINE_PRICE_PER_MIN[runEngine]).toFixed(3)}`;
   costEl.title = "このセッションの概算料金";
   toggleBtn.textContent = state === "idle" ? (session?.entries.length ? "再開" : "開始") : "停止";
   toggleBtn.classList.toggle("stop", state !== "idle");
   $("newBtn").disabled = state !== "idle";
   $("historyBtn").disabled = state !== "idle";
   $("glossaryBtn").disabled = state !== "idle";
+  for (const b of document.querySelectorAll(".engine-switch button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.engine === engine));
+    b.disabled = state !== "idle";
+  }
   applyModeUI();
 }
 
@@ -1098,7 +1358,7 @@ function renderSession() {
   jaText.textContent = "";
   if (session.showClean && session.clean) {
     for (const [el, text] of [[enText, session.clean.en], [jaText, session.clean.ja]]) {
-      for (const para of splitParagraphs(fixTerms(text || ""))) {
+      for (const para of splitParagraphs(fixTerms(text || "", el === enText ? "en" : "ja"))) {
         const p = document.createElement("p");
         p.textContent = para;
         el.appendChild(p);
@@ -1107,7 +1367,7 @@ function renderSession() {
   } else {
     for (const e of session.entries) {
       const p = document.createElement("p");
-      p.textContent = fixTerms(e.text);
+      p.textContent = fixTerms(e.text, e.lang);
       (e.lang === "en" ? enText : jaText).appendChild(p);
     }
   }
@@ -1205,7 +1465,7 @@ function mkBtn(label, onClick, cls = "") {
 function sessionToText(sess) {
   const entries = [...sess.entries].sort((a, b) => a.t - b.t);
   const time = (t) => new Date(t).toLocaleTimeString("ja-JP", { hour12: false });
-  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text).trim()).filter(Boolean).join("\n");
+  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text, lang).trim()).filter(Boolean).join("\n");
   if (isTx(sess)) {
     return [
       `ハヤメモ|日本語 文字起こし ${fmtDateTime(sess.createdAt)}(録音時間 ${fmtTime(sess.durationMs)})`,
@@ -1223,7 +1483,7 @@ function sessionToText(sess) {
     "",
     ...(sess.summary?.trim() ? ["【要約メモ】", sess.summary.trim(), ""] : []),
     ...(sess.clean?.en ? [
-      "■ 清書:英語(録音から高精度に文字起こし)", splitParagraphs(fixTerms(sess.clean.en)).join("\n\n"), "",
+      "■ 清書:英語(録音から高精度に文字起こし)", splitParagraphs(fixTerms(sess.clean.en, "en")).join("\n\n"), "",
       "■ 清書:日本語訳", splitParagraphs(fixTerms(sess.clean.ja || "")).join("\n\n") || "(なし)", "",
     ] : []),
     "■ 英語原文(リアルタイム)",
@@ -1234,7 +1494,7 @@ function sessionToText(sess) {
     "",
     ...(sess.speakerTranscript ? ["■ 話者別書き起こし(英語・話者は音声から自動識別)", sess.speakerTranscript, ""] : []),
     "■ 対訳(時刻順)",
-    ...entries.map((e) => `[${time(e.t)}] ${e.lang === "en" ? "EN" : "JA"}: ${fixTerms(e.text).trim()}`),
+    ...entries.map((e) => `[${time(e.t)}] ${e.lang === "en" ? "EN" : "JA"}: ${fixTerms(e.text, e.lang).trim()}`),
     "",
   ].join("\n");
 }
@@ -1314,7 +1574,7 @@ async function generateSummary() {
   if (!workerUrl || !passphrase) { alert("合言葉(⚙︎ 設定)を入力してください"); return; }
 
   const entries = [...sess.entries].sort((a, b) => a.t - b.t);
-  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text).trim()).filter(Boolean).join("\n");
+  const join = (lang) => entries.filter((e) => e.lang === lang).map((e) => fixTerms(e.text, lang).trim()).filter(Boolean).join("\n");
   const glossary = glossaryEl.value.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).join("\n");
 
   summarizing = true;
@@ -1336,7 +1596,7 @@ async function generateSummary() {
       // 清書があれば、リアルタイムより正確なそちらを使う
       body: JSON.stringify({
         passphrase, mode: sess.mode || "translate", glossary, speakers,
-        en: isTx(sess) ? "" : (sess.clean?.en ? fixTerms(sess.clean.en) : join("en")),
+        en: isTx(sess) ? "" : (sess.clean?.en ? fixTerms(sess.clean.en, "en") : join("en")),
         ja: sess.clean?.ja ? fixTerms(sess.clean.ja) : join("ja"),
       }),
     });
@@ -1558,7 +1818,7 @@ async function cleanSession(sess) {
       const res = await fetch(`${workerUrl}/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ passphrase, en: fixTerms(source), glossary: glossaryRulesText() }),
+        body: JSON.stringify({ passphrase, en: fixTerms(source, "en"), glossary: glossaryRulesText() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, "翻訳"));

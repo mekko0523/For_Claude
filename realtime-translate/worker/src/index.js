@@ -16,6 +16,9 @@ const FALLBACK_TRANSCRIBE_MODEL = "gpt-transcribe";
 const TRANSCRIBE_DELAYS = ["minimal", "low", "medium", "high", "xhigh"];
 const DEFAULT_TRANSCRIBE_DELAY = "medium";
 const TRANSCRIBE_PROMPT = "日本語の会話・打ち合わせ。農業、農薬、ドローン散布に関する話題が多い。";
+// Soniox(/session に engine: "soniox"): 一時キーを発行し、ブラウザが Soniox の WebSocket に直接つなぐ
+const SONIOX_TEMP_KEY_URL = "https://api.soniox.com/v1/auth/temporary-api-key";
+const DEFAULT_SONIOX_MODEL = "stt-rt-v5";
 // 要約メモ(/summary)
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_SUMMARY_MODEL = "gpt-6.1-sol";
@@ -141,6 +144,7 @@ export default {
     if (url.pathname === "/summary") return summarize(body, env, cors);
     if (url.pathname === "/translate") return translateText(body, env, cors);
     if (body.mode === "transcribe") return transcribeSession(body, env, cors);
+    if (body.engine === "soniox") return sonioxSession(env, cors);
 
     const upstream = await fetch(OPENAI_CLIENT_SECRETS_URL, {
       method: "POST",
@@ -178,6 +182,26 @@ export default {
     return json({ value: data.value, expires_at: data.expires_at }, 200, cors);
   },
 };
+
+// Soniox 用の一時キー(1回だけ・60秒以内に接続開始に使う)。長期キーは Worker の外に出さない
+async function sonioxSession(env, cors) {
+  if (!env.SONIOX_API_KEY) return json({ error: "soniox_not_configured" }, 500, cors);
+  const upstream = await fetch(SONIOX_TEMP_KEY_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.SONIOX_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      usage_type: "transcribe_websocket",
+      expires_in_seconds: 60,
+      single_use: true,
+      client_reference_id: (await sha256Hex(`rt-translate:${env.APP_PASSPHRASE}`)).slice(0, 32),
+    }),
+  });
+  const data = await upstream.json().catch(() => ({}));
+  if (!upstream.ok || !data.api_key) {
+    return json({ error: "soniox_error", status: upstream.status, detail: data?.error_message ? { message: data.error_message } : data }, 502, cors);
+  }
+  return json({ engine: "soniox", value: data.api_key, expires_at: data.expires_at, model: env.SONIOX_MODEL || DEFAULT_SONIOX_MODEL }, 200, cors);
+}
 
 // 日本語の文字起こしセッション用の client secret。
 // gpt-live-transcribe(キーワード・低遅延対応)で作り、受け付けられなければ gpt-transcribe の最小構成で作り直す
