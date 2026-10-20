@@ -26,10 +26,6 @@
     <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙︎</button>
   </header>
 
-  <div class="mode-switch" role="group" aria-label="モード">
-    <button type="button" data-mode="translate" aria-pressed="true">🌐 英→日 翻訳</button>
-    <button type="button" data-mode="transcribe" aria-pressed="false">🎙 日本語 文字起こし</button>
-  </div>
 
   <div class="diag" id="diag" hidden>
     <span class="mic-label">🎤</span>
@@ -81,13 +77,7 @@
           <option value="strong">強(×6・雑音も大きくなります)</option>
         </select>
       </label>
-      <label>日本語 文字起こしの優先
-        <select id="txDelay">
-          <option value="low">速さ優先(すぐ表示・誤りやや多い)</option>
-          <option value="medium">バランス(おすすめ)</option>
-          <option value="high">精度優先(表示は数秒遅れる)</option>
-        </select>
-      </label>
+      <select id="txDelay" hidden><option value="medium">medium</option></select>
       <label class="check">
         <input type="checkbox" id="recordAudio">
         <span>話者分けのために音声を録音する(端末内に14日間保存。要約時だけ送信)</span>
@@ -148,7 +138,7 @@
   <dialog id="glossaryDialog">
     <form method="dialog" class="settings-form">
       <h2>用語集</h2>
-      <p class="hint">登録した言葉は、字幕・文字起こしの表示、清書、要約メモ、保存ファイルのすべてに使われます。</p>
+      <p class="hint">登録した言葉は、字幕の表示、清書、要約メモ、保存ファイルのすべてに使われます。</p>
       <section class="share-section">
         <h3>言い換え(誤り → 正しい)</h3>
         <p class="hint">よく間違える言葉を正しい表記に自動で直します。英語は大文字・小文字を区別しません。</p>
@@ -157,7 +147,7 @@
       </section>
       <section class="share-section">
         <h3>キーワード</h3>
-        <p class="hint">聞き取ってほしい言葉(製品名・成分名・人名・地名など)。日本語の文字起こしと清書でモデルに伝えます。言い換えの「正しい」側も自動で含まれます。</p>
+        <p class="hint">聞き取ってほしい言葉(製品名・成分名・人名・地名など)。清書のときにモデルに伝えます。言い換えの「正しい」側も自動で含まれます。</p>
         <div class="term-list" id="keywordList"></div>
         <button type="button" class="small-btn" id="addKeywordBtn">＋ キーワードを追加</button>
       </section>

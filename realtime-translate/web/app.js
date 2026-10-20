@@ -7,6 +7,15 @@ const CONNECT_TIMEOUT_MS = 30_000;       // 接続がこの時間で完了しな
 const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強制停止)
 const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
+// 話が途切れず続くと1つの段落が際限なく伸び、届くたびに全文を描き直して重くなるため、文の終わりで段落を分ける
+const PARAGRAPH_SOFT_CHARS = 80;         // この長さを超えて文が終わったら次から新しい段落
+const PARAGRAPH_HARD_CHARS = 300;        // 文が終わらなくてもこの長さで必ず分ける
+const MAX_DOM_PARAGRAPHS = 150;          // 画面に残す段落数(古いものは保存データにだけ残す)
+// 長時間の使用でサーバー側の処理が重くならないよう、一定時間ごとに話の切れ目で新しい接続に切り替える
+const ROTATE_MS = 5 * 60_000;
+const ROTATE_FORCE_MS = 7 * 60_000;      // 切れ目が見つからなくてもこの時間で切り替える
+const ROTATE_QUIET_MS = 700;             // この時間静かなら「切れ目」とみなす
+const DRAIN_MS = 6_000;                  // 切り替え後も古い接続の訳をこの時間受け取る
 const TICK_MS = 250;
 // マイクは OS 標準の設定で取得する。iOS Safari では echoCancellation:false などを指定すると
 // 無音しか送られないことがあるため、公式サンプルと同じ { audio: true } にする。
@@ -104,6 +113,8 @@ let reconnecting = false;
 let reconnectCount = 0;
 let lastConnectAt = 0;
 let speechMsSinceJa = 0;             // 最後の日本語訳以降に話し声があった時間
+let lastLoudAt = 0;                  // 最後に話し声があった時刻(切り替えのタイミング判定用)
+let drainingChannel = null;          // 切り替え直後、まだ訳を受け取っている古い接続
 let lastEnStallLogAt = 0;
 let jaAtStallReconnect = -1;         // 前回「詰まり」で再接続したときの日本語訳の数(増えていなければ再接続しても無駄)
 let glossaryRules = [];      // [{from: RegExp|string, to}]
@@ -219,6 +230,12 @@ async function start() {
   }
 
   if (session.showClean) { session.showClean = false; renderSession(); } // 続きはリアルタイム版に追記する
+  if (isTx()) {
+    // 文字起こしモードは廃止。過去の文字起こしセッションを表示中なら、新しい翻訳セッションで始める
+    saveSession();
+    session = createSession();
+    renderSession();
+  }
   const gen = ++generation;
   const alive = () => gen === generation;
   setState("connecting");
@@ -322,7 +339,9 @@ async function openPeer(sendTrack, passphrase, workerUrl) {
       setTimeout(() => reject(new Error("接続がタイムアウトしました")), CONNECT_TIMEOUT_MS);
     });
     // 古い接続からのイベントは無視する(再接続で入れ替わるため)
-    channel.onmessage = (e) => { if (gen === generation && channel === dc) handleEvent(e.data); };
+    channel.onmessage = (e) => {
+      if (gen === generation && (channel === dc || channel === drainingChannel)) handleEvent(e.data);
+    };
     channel.onclose = () => {
       if (gen !== generation || channel !== dc || state !== "live") return;
       diag("データチャネル切断");
@@ -364,17 +383,17 @@ function closePeer(conn) {
 }
 
 // 翻訳中に字幕が止まった・接続が切れたとき、マイクと録音はそのままで翻訳サービスにつなぎ直す
-async function reconnect(reason) {
+async function reconnect(reason, { rotate = false } = {}) {
   if (reconnecting || state !== "live") return;
-  if (reconnectCount >= MAX_RECONNECTS) {
+  if (!rotate && reconnectCount >= MAX_RECONNECTS) {
     stop("error", `接続が不安定なため停止しました(${reason})`);
     return;
   }
   reconnecting = true;
-  reconnectCount++;
+  if (!rotate) reconnectCount++;
   const gen = generation;
-  diag(`再接続(${reconnectCount}回目): ${reason}`);
-  showNotice("字幕が止まったため、つなぎ直しています…");
+  diag(rotate ? `定期切り替え: ${reason}` : `再接続(${reconnectCount}回目): ${reason}`);
+  if (!rotate) showNotice("字幕が止まったため、つなぎ直しています…");
   try {
     const sendTrack = pc?.getSenders().find((sd) => sd.track?.kind === "audio")?.track
       || micStream?.getAudioTracks()[0];
@@ -383,16 +402,30 @@ async function reconnect(reason) {
     const old = { peer: pc, channel: dc };
     pc = conn.peer;
     dc = conn.channel;
-    closePeer(old);
+    if (rotate) {
+      // 古い接続には音を送らず、話し途中の訳だけ少しの間受け取ってから閉じる
+      old.peer?.getSenders().forEach((sd) => sd.replaceTrack(null).catch(() => {}));
+      drainingChannel = old.channel;
+      setTimeout(() => {
+        if (drainingChannel === old.channel) drainingChannel = null;
+        closePeer(old);
+      }, DRAIN_MS);
+    } else {
+      closePeer(old);
+    }
     startStats(pc);
     markSessionStart(); // 新しい段落から続ける
     lastConnectAt = Date.now();
     lastJaAt = lastConnectAt;
     lastEnAt = lastConnectAt;
     speechMsSinceJa = 0;
-    diag("再接続完了");
-    showNotice("つなぎ直しました");
-    setTimeout(() => { if (noticeEl.textContent === "つなぎ直しました") showNotice(""); }, 4_000);
+    if (rotate) {
+      diag("定期切り替え完了");
+    } else {
+      diag("再接続完了");
+      showNotice("つなぎ直しました");
+      setTimeout(() => { if (noticeEl.textContent === "つなぎ直しました") showNotice(""); }, 4_000);
+    }
   } catch (e) {
     diag(`再接続に失敗: ${e?.message || e}`);
     if (gen === generation) stop("error", `つなぎ直せませんでした: ${e?.message || e}`);
@@ -409,6 +442,8 @@ function stop(reason, message) {
   saveSession();
 
   stopRecorder(); // マイクを止める前に録音を確定させる
+  try { drainingChannel?.close(); } catch {}
+  drainingChannel = null;
   try { dc?.close(); } catch {}
   try { pc?.close(); } catch {}
   micStream?.getTracks().forEach((t) => t.stop());
@@ -514,9 +549,13 @@ function appendDelta(lang, delta) {
   const pane = panes[lang];
   const now = Date.now();
 
-  if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS) {
+  const cur = pane.entry?.text || "";
+  const sentenceEnded = /[。！？!?]\s*$/.test(cur) || /[.?!]["')\]]?\s*$/.test(cur) && /^\s/.test(delta);
+  const tooLong = cur.length >= PARAGRAPH_HARD_CHARS || (cur.length >= PARAGRAPH_SOFT_CHARS && sentenceEnded);
+  if (!pane.p || now - pane.lastAt > PARAGRAPH_GAP_MS || tooLong) {
     pane.p = document.createElement("p");
     pane.el.appendChild(pane.p);
+    trimDom(pane.el);
     pane.entry = { lang, t: now, text: "" };
     session.entries.push(pane.entry);
     delta = delta.replace(/^\s+/, "");
@@ -528,6 +567,15 @@ function appendDelta(lang, delta) {
 
   // ユーザーが読み返しているとき以外は自動スクロール
   keepAtBottom(lang);
+}
+
+// 画面に残す段落を一定数に抑える(長時間でも描画が重くならないように)。保存データは全部残る
+function trimDom(el) {
+  const extra = el.childElementCount - MAX_DOM_PARAGRAPHS;
+  if (extra <= 0) return;
+  const atBottom = isAtBottom(el);
+  for (let i = 0; i < extra; i++) el.firstElementChild?.remove();
+  if (atBottom) el.scrollTop = el.scrollHeight;
 }
 
 // 自動スクロール: 一番下を見ているときだけ追いかける。読み返しのために上へ動かしたら「↓ 最新」を出す
@@ -746,7 +794,10 @@ function startStats(peer) {
       checkSilentMic(peer, level);
       checkQuietAudio(level);
       vadUpdate(level);
-      if (level >= SPEECH_LEVEL) speechMsSinceJa += isTx() ? 200 : STATS_INTERVAL_MS;
+      if (level >= SPEECH_LEVEL) {
+        speechMsSinceJa += isTx() ? 200 : STATS_INTERVAL_MS;
+        lastLoudAt = Date.now();
+      }
     }
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
@@ -784,7 +835,16 @@ async function buildBoostedTrack(stream) {
     comp.attack.value = 0.003;
     comp.release.value = 0.25;
     const dest = ctx.createMediaStreamDestination();
-    src.connect(amp).connect(comp).connect(dest);
+    // 音割れ防止のリミッター(大きすぎる音は一定以上にしない。割れた音は聞き取りの精度を大きく下げる)
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -4;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.1;
+    const trim = ctx.createGain();
+    trim.gain.value = 0.85;
+    src.connect(amp).connect(comp).connect(limiter).connect(trim).connect(dest);
     await ctx.resume?.().catch(() => {});
     if (ctx.state !== "running") {
       diag(`集音ブースト: AudioContext が ${ctx.state} のため使いません`);
@@ -803,6 +863,11 @@ async function buildBoostedTrack(stream) {
 // 英語(原文)は翻訳サービスが話の切れ目でまとめて返す仕様なので、止まっていても再接続はせず記録だけ残す
 function checkTranslateStall(now) {
   if (isTx() || state !== "live" || reconnecting || !lastConnectAt) return;
+  const age = now - lastConnectAt;
+  if (age >= ROTATE_FORCE_MS || (age >= ROTATE_MS && now - lastLoudAt >= ROTATE_QUIET_MS)) {
+    reconnect(`${Math.round(age / 60_000)}分経過${age >= ROTATE_FORCE_MS ? "(切れ目なし)" : "・話の切れ目"}`, { rotate: true });
+    return;
+  }
   const jaSilentFor = now - Math.max(lastJaAt, lastConnectAt);
   if (jaSilentFor >= JA_STALL_MS && speechMsSinceJa >= JA_STALL_SPEECH_MS) {
     speechMsSinceJa = 0;
@@ -983,7 +1048,7 @@ function createSession() {
   const now = Date.now();
   const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   lsSet(LS_CURRENT, id);
-  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [], mode: lsGet(LS_MODE) === "transcribe" ? "transcribe" : "translate" };
+  return { id, createdAt: now, updatedAt: now, durationMs: 0, entries: [], mode: "translate" };
 }
 
 function loadSession(id) {
