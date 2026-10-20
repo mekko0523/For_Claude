@@ -11,6 +11,18 @@ const LS_ENGINE = "rt.engine";
 const ENGINE_PRICE_PER_MIN = { openai: 0.034, soniox: 0.002 };
 const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
 const SONIOX_SAMPLE_RATE = 16_000;
+// Soniox は英語が「確定」してから日本語に訳す。確定を早めると日本語も早く出る(料金は接続時間で決まるので変わらない)。
+//   endpoint: 話し終わりから確定するまでの最大待ち時間(Soniox の max_endpoint_delay_ms。既定 2000)
+//   pause:    この時間「間」があれば、アプリから確定(finalize)を送る(0 = 送らない)
+//   force:    話し続けていても、この間隔で小さな途切れに確定を送る(0 = 送らない)
+const LS_SX_SPEED = "rt.sxSpeed";
+const SX_SPEED = {
+  normal: { endpoint: 2000, pause: 0, force: 0 },
+  fast: { endpoint: 1000, pause: 400, force: 0 },
+  fastest: { endpoint: 500, pause: 250, force: 6000 },
+};
+const SX_FINALIZE_MIN_MS = 2500;         // 確定を送る最短間隔(送りすぎると切断されることがある)
+const SX_VAD_MIN_LEVEL = 0.03;           // 話し声とみなす最小の音量
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
 // 話が途切れず続くと1つの段落が際限なく伸び、届くたびに全文を描き直して重くなるため、文の終わりで段落を分ける
 const PARAGRAPH_SOFT_CHARS = 80;         // この長さを超えて文が終わったら次から新しい段落
@@ -122,7 +134,10 @@ let lastLoudAt = 0;                  // 最後に話し声があった時刻(切
 let drainingChannel = null;          // 切り替え直後、まだ訳を受け取っている古い接続
 let engine = lsGet(LS_ENGINE) === "soniox" ? "soniox" : "openai";
 let runEngine = engine;              // 実行中のエンジン(開始時に確定)
-const sx = { ws: null, ctx: null, node: null, track: null, bytes: 0 }; // Soniox の接続と音声処理
+const sx = {
+  ws: null, ctx: null, node: null, track: null, bytes: 0, // Soniox の接続と音声処理
+  noise: 0.01, lastLoud: 0, lastFin: 0, speechSinceFin: false, finCount: 0, pendingMs: 0,
+};
 let lastEnStallLogAt = 0;
 let jaAtStallReconnect = -1;         // 前回「詰まり」で再接続したときの日本語訳の数(増えていなければ再接続しても無駄)
 let glossaryRules = [];      // [{from: RegExp|string, to}]
@@ -163,6 +178,9 @@ applyFontScale(Number(lsGet(LS_FONT)) || 1);
 const txDelaySel = $("txDelay");
 txDelaySel.value = ["low", "medium", "high"].includes(lsGet(LS_TX_DELAY)) ? lsGet(LS_TX_DELAY) : "medium";
 txDelaySel.addEventListener("change", () => lsSet(LS_TX_DELAY, txDelaySel.value));
+const sxSpeedSel = $("sxSpeed");
+sxSpeedSel.value = SX_SPEED[lsGet(LS_SX_SPEED)] ? lsGet(LS_SX_SPEED) : "fast";
+sxSpeedSel.addEventListener("change", () => lsSet(LS_SX_SPEED, sxSpeedSel.value));
 const boostSel = $("micBoost");
 boostSel.value = BOOST_GAIN[lsGet(LS_BOOST)] ? lsGet(LS_BOOST) : "normal";
 boostSel.addEventListener("change", () => lsSet(LS_BOOST, boostSel.value));
@@ -997,9 +1015,10 @@ async function setupSonioxAudio(track) {
     }
     if (state !== "live") return;
     onLevel(data.rms, 100);
+    sonioxVad(data.rms);
     if (Date.now() - lastStatsLogAt >= STATS_LOG_MS) {
       lastStatsLogAt = Date.now();
-      diag(`送信: ${sx.bytes} bytes / 音量 ${data.rms.toFixed(3)} / 受信 英${enCount}・日${jaCount}`);
+      diag(`送信: ${sx.bytes} bytes / 音量 ${data.rms.toFixed(3)} / 受信 英${enCount}・日${jaCount} / 未確定 ${sx.pendingMs}ms / 確定送信 ${sx.finCount}回`);
     }
   };
   await ctx.resume?.().catch(() => {});
@@ -1049,6 +1068,7 @@ async function openSoniox(track, passphrase, workerUrl) {
         num_channels: 1,
         language_hints: ["en"],
         enable_endpoint_detection: true,
+        max_endpoint_delay_ms: (SX_SPEED[sxSpeedSel.value] || SX_SPEED.fast).endpoint,
         translation: { type: "one_way", target_language: "ja" },
         context: sonioxContext(),
       };
@@ -1078,7 +1098,7 @@ function closeSoniox({ keepAudio = false } = {}) {
   if (!keepAudio) {
     try { sx.node?.disconnect(); } catch {}
     sx.ctx?.close().catch(() => {});
-    Object.assign(sx, { ctx: null, node: null, track: null, bytes: 0 });
+    Object.assign(sx, { ctx: null, node: null, track: null, bytes: 0, finCount: 0, speechSinceFin: false, lastFin: 0, pendingMs: 0 });
   }
 }
 
@@ -1093,12 +1113,16 @@ function handleSoniox(raw) {
     return;
   }
   if (msg.finished) { diag("Soniox: 終了"); return; }
+  if (typeof msg.total_audio_proc_ms === "number" && typeof msg.final_audio_proc_ms === "number") {
+    sx.pendingMs = msg.total_audio_proc_ms - msg.final_audio_proc_ms; // まだ確定していない音声の長さ
+  }
   if (eventCount === 1) diag(`Soniox 受信開始 ${JSON.stringify(msg).slice(0, 200)}`);
   const prov = { en: "", ja: "" };
   for (const t of msg.tokens || []) {
     const lang = t.translation_status === "translation" ? "ja" : "en";
     if (t.text === "<end>" || t.text === "<fin>") {
-      if (t.is_final) panes[lang].forceBreak = true; // 話の区切り = 段落の区切り
+      // 話の区切り(<end>)= 段落の区切り。アプリが送った確定(<fin>)では段落を分けない
+      if (t.is_final && t.text === "<end>") panes[lang].forceBreak = true;
       continue;
     }
     noteInput();
@@ -1112,6 +1136,30 @@ function handleSoniox(raw) {
   }
   setProvisional("en", prov.en);
   setProvisional("ja", prov.ja);
+}
+
+// 話の「間」で Soniox に確定を送り、日本語訳を早く出させる(設定の速さに応じて)
+function sonioxVad(rms) {
+  if (state !== "live" || sx.ws?.readyState !== WebSocket.OPEN) return;
+  const preset = SX_SPEED[sxSpeedSel.value] || SX_SPEED.fast;
+  if (!preset.pause && !preset.force) return;
+  const now = Date.now();
+  const threshold = Math.max(SX_VAD_MIN_LEVEL, sx.noise * 3);
+  if (rms >= threshold) {
+    sx.lastLoud = now;
+    sx.speechSinceFin = true;
+    return;
+  }
+  sx.noise = sx.noise * 0.95 + rms * 0.05; // 静かなときの音量から周りの雑音レベルを学習
+  if (!sx.speechSinceFin || now - sx.lastFin < SX_FINALIZE_MIN_MS) return;
+  const quietFor = now - sx.lastLoud;
+  const pauseHit = preset.pause && quietFor >= preset.pause;
+  const forceHit = preset.force && now - sx.lastFin >= preset.force && quietFor >= 100;
+  if (!pauseHit && !forceHit) return;
+  try { sx.ws.send(JSON.stringify({ type: "finalize" })); } catch { return; }
+  sx.lastFin = now;
+  sx.speechSinceFin = false;
+  sx.finCount++;
 }
 
 // 確定前の文字(薄く表示)。段落がなければ仮の段落に出す
