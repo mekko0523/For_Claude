@@ -86,7 +86,11 @@ system.run(() => getObjective());
 world.afterEvents.entityHitEntity.subscribe((ev) => {
   const ball = ev.hitEntity;
   const player = ev.damagingEntity;
-  if (!ball || ball.typeId !== BALL) return;
+  if (!ball || ball.typeId !== BALL || ball.hasTag("soccer_scored")) return;
+  if (player?.typeId === JP_PLAYER) {
+    npcKick(ball, player);
+    return;
+  }
   if (!player || player.typeId !== "minecraft:player") return;
 
   const view = player.getViewDirection();
@@ -269,6 +273,7 @@ system.runInterval(() => {
       ...dim.getEntities({ type: "soccer:goal_blue" }),
     ];
     const players = dim.getPlayers();
+    for (const keeper of dim.getEntities({ type: JP_KEEPER })) keeperTick(keeper, balls);
     for (const ball of balls) {
       if (ball.hasTag("soccer_scored")) continue;
       dribble(ball, players);
@@ -279,7 +284,8 @@ system.runInterval(() => {
 
 // ===== コマンド =====
 // /scriptevent soccer:reset  … スコアを0に戻してボールをセンターへ
-// /scriptevent soccer:clear  … ボールとゴールの目印を消す（ブロックは残る）
+// /scriptevent soccer:clear  … ボール・選手・ゴールの目印を消す（ブロックは残る）
+// /scriptevent soccer:japan  … 日本代表（GK＋10人）をまとめて呼ぶ
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === "soccer:reset") {
     resetScores();
@@ -294,10 +300,207 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   } else if (ev.id === "soccer:clear") {
     for (const id of DIMENSIONS) {
       const dim = world.getDimension(id);
-      for (const type of [BALL, ...Object.keys(GOALS)]) {
+      for (const type of [BALL, JP_PLAYER, JP_KEEPER, ...Object.keys(GOALS)]) {
         for (const e of dim.getEntities({ type })) e.remove();
       }
     }
-    world.sendMessage("§eボールとゴールの目印を消しました。");
+    world.sendMessage("§eボール・選手・ゴールの目印を消しました。");
+  } else if (ev.id === "soccer:japan") {
+    callJapan(ev.sourceEntity);
   }
 });
+
+// ===== 第2段階: 日本代表の選手 =====
+const JP_PLAYER = "soccer:jp_player";
+const JP_KEEPER = "soccer:jp_keeper";
+// 背番号はW杯2026（北中米大会）の日本代表メンバーのもの
+// 並び順はテクスチャ jp_player_0〜9 と対応
+const JAPAN = [
+  { num: 4, name: "板倉滉" },
+  { num: 22, name: "冨安健洋" },
+  { num: 21, name: "伊藤洋輝" },
+  { num: 2, name: "菅原由勢" },
+  { num: 7, name: "田中碧" },
+  { num: 15, name: "鎌田大地" },
+  { num: 8, name: "久保建英" },
+  { num: 10, name: "堂安律" },
+  { num: 14, name: "伊東純也" },
+  { num: 18, name: "上田綺世" },
+];
+const JAPAN_KEEPER = { num: 1, name: "鈴木彩艶" };
+// 日本代表は青チーム: 青ゴールを守り、赤ゴールを狙う
+const JP_ATTACK_GOAL = "soccer:goal_red";
+const JP_DEFEND_GOAL = "soccer:goal_blue";
+
+const NPC_SHOOT_RANGE = 14; // 相手ゴールまでこの距離以内ならシュート
+const NPC_SHOT_POWER = 1.1;
+const NPC_DRIBBLE_POWER = 0.45;
+const NPC_PASS_CHANCE = 0.25;
+const KEEPER_REACH = 1.6; // キーパーがボールに触れる距離
+const KEEPER_RUSH_RANGE = 7; // ゴールからこの距離にボールが来たら飛び出す
+
+function playerIndex(entity) {
+  for (const tag of entity.getTags()) {
+    if (tag.startsWith("soccer_pid")) return Number(tag.slice(10));
+  }
+  return undefined;
+}
+
+function horizontalDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+// ゴールの入口の中央（地面の高さ）
+function goalMouth(goal) {
+  const { base } = goalFrame(goal);
+  return { x: base.x + 0.5, y: base.y, z: base.z + 0.5 };
+}
+
+function kickToward(ball, from, to, power, lift) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const len = Math.hypot(dx, dz) || 1;
+  ball.clearVelocity();
+  ball.applyImpulse({ x: (dx / len) * power, y: lift, z: (dz / len) * power });
+}
+
+world.afterEvents.entitySpawn.subscribe((ev) => {
+  const npc = ev.entity;
+  if (!isValid(npc)) return;
+
+  if (npc.typeId === JP_KEEPER) {
+    if (npc.hasTag("soccer_keeper")) return;
+    for (const old of npc.dimension.getEntities({ type: JP_KEEPER })) {
+      if (old.id !== npc.id) old.remove();
+    }
+    npc.addTag("soccer_keeper");
+    npc.nameTag = `§e${JAPAN_KEEPER.num} ${JAPAN_KEEPER.name}`;
+    return;
+  }
+
+  if (npc.typeId !== JP_PLAYER || playerIndex(npc) !== undefined) return;
+  const used = new Set(npc.dimension.getEntities({ type: JP_PLAYER }).map(playerIndex));
+  const index = JAPAN.findIndex((_, i) => !used.has(i));
+  if (index < 0) {
+    npc.remove();
+    const [p] = npc.dimension.getPlayers({ location: npc.location, closest: 1 });
+    p?.sendMessage("§e日本代表のフィールドプレイヤーは全員出場しています！");
+    return;
+  }
+  const info = JAPAN[index];
+  npc.addTag(`soccer_pid${index}`);
+  npc.triggerEvent(`soccer:v${index}`);
+  npc.nameTag = `§b${info.num} ${info.name}`;
+});
+
+// フィールドプレイヤーがボールに追いついたとき
+function npcKick(ball, npc) {
+  const target = npc.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+  if (!target || !goalFrame(target)) {
+    // 相手ゴールがないときは向いている方向へ蹴る
+    const view = npc.getViewDirection();
+    const to = { x: ball.location.x + view.x, z: ball.location.z + view.z };
+    kickToward(ball, npc.location, to, NPC_DRIBBLE_POWER, 0.1);
+    return;
+  }
+
+  const { base, f, r } = goalFrame(target);
+  const mouth = goalMouth(target);
+  const distance = horizontalDistance(ball.location, mouth);
+
+  if (distance <= NPC_SHOOT_RANGE) {
+    // シュート: ゴールの中のどこかを狙う
+    const aim = (Math.random() * 2 - 1) * 1.8;
+    const to = { x: base.x + 0.5 + f.x + r.x * aim, z: base.z + 0.5 + f.z + r.z * aim };
+    kickToward(ball, ball.location, to, NPC_SHOT_POWER, 0.2 + Math.random() * 0.2);
+    return;
+  }
+
+  // パス: 自分よりゴールに近い味方がいたら、ときどきパスを出す
+  if (Math.random() < NPC_PASS_CHANCE) {
+    const mates = npc.dimension
+      .getEntities({ type: JP_PLAYER, location: npc.location, maxDistance: 16 })
+      .filter((m) => m.id !== npc.id && horizontalDistance(m.location, mouth) < distance - 4);
+    if (mates.length > 0) {
+      const mate = mates[Math.floor(Math.random() * mates.length)];
+      const d = horizontalDistance(ball.location, mate.location);
+      kickToward(ball, ball.location, mate.location, Math.min(0.9, 0.25 + d * 0.05), 0.15);
+      return;
+    }
+  }
+
+  // ドリブル: ゴールの方向へ軽く蹴り出す
+  kickToward(ball, ball.location, mouth, NPC_DRIBBLE_POWER, 0.08);
+}
+
+// キーパー: ゴール前でボールとゴールの間に立ち、近づいたら飛び出してクリア
+const keeperCooldown = new Map();
+
+function keeperTick(keeper, balls) {
+  const goal = keeper.dimension.getEntities({ type: JP_DEFEND_GOAL })[0];
+  if (!goal || !goalFrame(goal) || balls.length === 0) return;
+  const { base, f, r } = goalFrame(goal);
+  const mouth = goalMouth(goal);
+
+  let ball = balls[0];
+  for (const b of balls) {
+    if (horizontalDistance(b.location, mouth) < horizontalDistance(ball.location, mouth)) ball = b;
+  }
+  const kp = keeper.location;
+  const bp = ball.location;
+
+  // ボールに届いたらクリア（相手ゴール方向＝自分のゴールから離れる方向へ大きく蹴る）
+  const now = system.currentTick;
+  if (
+    !ball.hasTag("soccer_scored") &&
+    horizontalDistance(kp, bp) < KEEPER_REACH &&
+    Math.abs(kp.y - bp.y) < 2 &&
+    (keeperCooldown.get(keeper.id) ?? 0) <= now
+  ) {
+    keeperCooldown.set(keeper.id, now + 20);
+    const enemy = keeper.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+    const to = enemy ? enemy.location : { x: mouth.x - f.x * 20, z: mouth.z - f.z * 20 };
+    kickToward(ball, bp, to, 1.3, 0.6);
+    return;
+  }
+
+  // 立つ位置を決める
+  let spot;
+  if (horizontalDistance(bp, mouth) < KEEPER_RUSH_RANGE) {
+    spot = { x: bp.x, z: bp.z }; // 飛び出す
+  } else {
+    const side = (bp.x - mouth.x) * r.x + (bp.z - mouth.z) * r.z;
+    const s = Math.max(-2, Math.min(2, side * 0.3));
+    spot = { x: mouth.x - f.x * 1.5 + r.x * s, z: mouth.z - f.z * 1.5 + r.z * s };
+  }
+
+  const dx = spot.x - kp.x;
+  const dz = spot.z - kp.z;
+  const dist = Math.hypot(dx, dz);
+  const step = Math.min(dist, horizontalDistance(bp, mouth) < KEEPER_RUSH_RANGE ? 0.4 : 0.25);
+  const next =
+    dist > 0.05 ? { x: kp.x + (dx / dist) * step, y: kp.y, z: kp.z + (dz / dist) * step } : kp;
+  keeper.teleport(next, { facingLocation: { x: bp.x, y: bp.y + 0.5, z: bp.z } });
+}
+
+// /scriptevent soccer:japan で全員を呼ぶ
+function callJapan(source) {
+  const player = source?.typeId === "minecraft:player" ? source : world.getAllPlayers()[0];
+  if (!player) return;
+  const dim = player.dimension;
+  const loc = player.location;
+  const used = new Set(dim.getEntities({ type: JP_PLAYER }).map(playerIndex));
+  let n = 0;
+  JAPAN.forEach((_, i) => {
+    if (used.has(i)) return;
+    const angle = (n++ / JAPAN.length) * Math.PI * 2;
+    dim.spawnEntity(JP_PLAYER, { x: loc.x + Math.cos(angle) * 4, y: loc.y, z: loc.z + Math.sin(angle) * 4 });
+  });
+
+  const goal = dim.getEntities({ type: JP_DEFEND_GOAL })[0];
+  if (dim.getEntities({ type: JP_KEEPER }).length === 0) {
+    const at = goal && goalFrame(goal) ? goalMouth(goal) : { x: loc.x + 2, y: loc.y, z: loc.z };
+    dim.spawnEntity(JP_KEEPER, { x: at.x, y: at.y + 0.1, z: at.z });
+  }
+  world.sendMessage("§b日本代表が集合しました！");
+}

@@ -1,0 +1,212 @@
+{
+  "format_version": "1.16.0",
+  "minecraft:entity": {
+    "description": {
+      "identifier": "soccer:jp_player",
+      "is_spawnable": true,
+      "is_summonable": true,
+      "is_experimental": false
+    },
+    "component_groups": {
+      "soccer:v0": {
+        "minecraft:variant": {
+          "value": 0
+        }
+      },
+      "soccer:v1": {
+        "minecraft:variant": {
+          "value": 1
+        }
+      },
+      "soccer:v2": {
+        "minecraft:variant": {
+          "value": 2
+        }
+      },
+      "soccer:v3": {
+        "minecraft:variant": {
+          "value": 3
+        }
+      },
+      "soccer:v4": {
+        "minecraft:variant": {
+          "value": 4
+        }
+      },
+      "soccer:v5": {
+        "minecraft:variant": {
+          "value": 5
+        }
+      },
+      "soccer:v6": {
+        "minecraft:variant": {
+          "value": 6
+        }
+      },
+      "soccer:v7": {
+        "minecraft:variant": {
+          "value": 7
+        }
+      },
+      "soccer:v8": {
+        "minecraft:variant": {
+          "value": 8
+        }
+      },
+      "soccer:v9": {
+        "minecraft:variant": {
+          "value": 9
+        }
+      }
+    },
+    "components": {
+      "minecraft:type_family": {
+        "family": [
+          "soccer_player",
+          "soccer_team_blue",
+          "mob"
+        ]
+      },
+      "minecraft:collision_box": {
+        "width": 0.6,
+        "height": 1.8
+      },
+      "minecraft:health": {
+        "value": 20,
+        "max": 20
+      },
+      "minecraft:damage_sensor": {
+        "triggers": [
+          {
+            "cause": "all",
+            "deals_damage": false
+          }
+        ]
+      },
+      "minecraft:knockback_resistance": {
+        "value": 1.0
+      },
+      "minecraft:physics": {},
+      "minecraft:pushable": {
+        "is_pushable": true,
+        "is_pushable_by_piston": true
+      },
+      "minecraft:nameable": {
+        "always_show": true,
+        "allow_name_tag_renaming": false
+      },
+      "minecraft:movement": {
+        "value": 0.28
+      },
+      "minecraft:movement.basic": {},
+      "minecraft:jump.static": {},
+      "minecraft:navigation.walk": {
+        "avoid_water": true,
+        "can_path_over_water": false
+      },
+      "minecraft:behavior.look_at_player": {
+        "priority": 8,
+        "look_distance": 8
+      },
+      "minecraft:behavior.random_look_around": {
+        "priority": 9
+      },
+      "minecraft:attack": {
+        "damage": 1
+      },
+      "minecraft:behavior.melee_attack": {
+        "priority": 2,
+        "speed_multiplier": 1.25,
+        "track_target": true
+      },
+      "minecraft:behavior.nearest_attackable_target": {
+        "priority": 1,
+        "must_see": false,
+        "reselect_targets": true,
+        "within_radius": 48,
+        "entity_types": [
+          {
+            "filters": {
+              "test": "is_family",
+              "subject": "other",
+              "value": "soccer_ball"
+            },
+            "max_dist": 48
+          }
+        ]
+      }
+    },
+    "events": {
+      "soccer:v0": {
+        "add": {
+          "component_groups": [
+            "soccer:v0"
+          ]
+        }
+      },
+      "soccer:v1": {
+        "add": {
+          "component_groups": [
+            "soccer:v1"
+          ]
+        }
+      },
+      "soccer:v2": {
+        "add": {
+          "component_groups": [
+            "soccer:v2"
+          ]
+        }
+      },
+      "soccer:v3": {
+        "add": {
+          "component_groups": [
+            "soccer:v3"
+          ]
+        }
+      },
+      "soccer:v4": {
+        "add": {
+          "component_groups": [
+            "soccer:v4"
+          ]
+        }
+      },
+      "soccer:v5": {
+        "add": {
+          "component_groups": [
+            "soccer:v5"
+          ]
+        }
+      },
+      "soccer:v6": {
+        "add": {
+          "component_groups": [
+            "soccer:v6"
+          ]
+        }
+      },
+      "soccer:v7": {
+        "add": {
+          "component_groups": [
+            "soccer:v7"
+          ]
+        }
+      },
+      "soccer:v8": {
+        "add": {
+          "component_groups": [
+            "soccer:v8"
+          ]
+        }
+      },
+      "soccer:v9": {
+        "add": {
+          "component_groups": [
+            "soccer:v9"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "geometry": {
+        "default": "geometry.soccer_player"
+      },
+      "animations": {
+        "walk": "animation.soccer_player.walk",
+        "look": "animation.soccer_player.look"
+      },
+      "scripts": {
+        "animate": [
+          "walk",
+          "look"
+        ]
+      },
+      "identifier": "soccer:jp_player",
+      "textures": {
+        "p0": "textures/entity/jp_player_0",
+        "p1": "textures/entity/jp_player_1",
+        "p2": "textures/entity/jp_player_2",
+        "p3": "textures/entity/jp_player_3",
+        "p4": "textures/entity/jp_player_4",
+        "p5": "textures/entity/jp_player_5",
+        "p6": "textures/entity/jp_player_6",
+        "p7": "textures/entity/jp_player_7",
+        "p8": "textures/entity/jp_player_8",
+        "p9": "textures/entity/jp_player_9"
+      },
+      "render_controllers": [
+        "controller.render.soccer_player"
+      ],
+      "spawn_egg": {
+        "base_color": "#1E3FAF",
+        "overlay_color": "#FFFFFF"
+      }
+    }
+  }
+}
