@@ -18,17 +18,14 @@
           "look"
         ]
       },
-      "identifier": "soccer:jp_keeper",
+      "identifier": "soccer:keeper",
       "textures": {
-        "default": "textures/entity/jp_keeper"
+        "v0": "textures/entity/keeper_japan",
+        "v1": "textures/entity/keeper_spain"
       },
       "render_controllers": [
-        "controller.render.default"
-      ],
-      "spawn_egg": {
-        "base_color": "#E8D020",
-        "overlay_color": "#1E3FAF"
-      }
+        "controller.render.soccer_keeper"
+      ]
     }
   }
 }

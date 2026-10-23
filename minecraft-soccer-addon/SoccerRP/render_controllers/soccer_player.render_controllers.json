@@ -5,16 +5,45 @@
       "arrays": {
         "textures": {
           "Array.skins": [
-            "Texture.p0",
-            "Texture.p1",
-            "Texture.p2",
-            "Texture.p3",
-            "Texture.p4",
-            "Texture.p5",
-            "Texture.p6",
-            "Texture.p7",
-            "Texture.p8",
-            "Texture.p9"
+            "Texture.v0",
+            "Texture.v1",
+            "Texture.v2",
+            "Texture.v3",
+            "Texture.v4",
+            "Texture.v5",
+            "Texture.v6",
+            "Texture.v7",
+            "Texture.v8",
+            "Texture.v9",
+            "Texture.v10",
+            "Texture.v11",
+            "Texture.v12",
+            "Texture.v13",
+            "Texture.v14",
+            "Texture.v15",
+            "Texture.v16",
+            "Texture.v17",
+            "Texture.v18",
+            "Texture.v19"
+          ]
+        }
+      },
+      "geometry": "Geometry.default",
+      "materials": [
+        {
+          "*": "Material.default"
+        }
+      ],
+      "textures": [
+        "Array.skins[query.variant]"
+      ]
+    },
+    "controller.render.soccer_keeper": {
+      "arrays": {
+        "textures": {
+          "Array.skins": [
+            "Texture.v0",
+            "Texture.v1"
           ]
         }
       },

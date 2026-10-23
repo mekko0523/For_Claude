@@ -1,0 +1,49 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "geometry": {
+        "default": "geometry.soccer_player"
+      },
+      "animations": {
+        "walk": "animation.soccer_player.walk",
+        "look": "animation.soccer_player.look"
+      },
+      "scripts": {
+        "animate": [
+          "walk",
+          "look"
+        ]
+      },
+      "identifier": "soccer:player",
+      "textures": {
+        "v0": "textures/entity/player_japan_0",
+        "v1": "textures/entity/player_japan_1",
+        "v2": "textures/entity/player_japan_2",
+        "v3": "textures/entity/player_japan_3",
+        "v4": "textures/entity/player_japan_4",
+        "v5": "textures/entity/player_japan_5",
+        "v6": "textures/entity/player_japan_6",
+        "v7": "textures/entity/player_japan_7",
+        "v8": "textures/entity/player_japan_8",
+        "v9": "textures/entity/player_japan_9",
+        "v10": "textures/entity/player_spain_0",
+        "v11": "textures/entity/player_spain_1",
+        "v12": "textures/entity/player_spain_2",
+        "v13": "textures/entity/player_spain_3",
+        "v14": "textures/entity/player_spain_4",
+        "v15": "textures/entity/player_spain_5",
+        "v16": "textures/entity/player_spain_6",
+        "v17": "textures/entity/player_spain_7",
+        "v18": "textures/entity/player_spain_8",
+        "v19": "textures/entity/player_spain_9"
+      },
+      "render_controllers": [
+        "controller.render.soccer_player"
+      ]
+    }
+  }
+}

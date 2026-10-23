@@ -2,8 +2,8 @@
   "format_version": "1.16.0",
   "minecraft:entity": {
     "description": {
-      "identifier": "soccer:jp_player",
-      "is_spawnable": true,
+      "identifier": "soccer:player",
+      "is_spawnable": false,
       "is_summonable": true,
       "is_experimental": false
     },
@@ -58,7 +58,60 @@
           "value": 9
         }
       },
+      "soccer:v10": {
+        "minecraft:variant": {
+          "value": 10
+        }
+      },
+      "soccer:v11": {
+        "minecraft:variant": {
+          "value": 11
+        }
+      },
+      "soccer:v12": {
+        "minecraft:variant": {
+          "value": 12
+        }
+      },
+      "soccer:v13": {
+        "minecraft:variant": {
+          "value": 13
+        }
+      },
+      "soccer:v14": {
+        "minecraft:variant": {
+          "value": 14
+        }
+      },
+      "soccer:v15": {
+        "minecraft:variant": {
+          "value": 15
+        }
+      },
+      "soccer:v16": {
+        "minecraft:variant": {
+          "value": 16
+        }
+      },
+      "soccer:v17": {
+        "minecraft:variant": {
+          "value": 17
+        }
+      },
+      "soccer:v18": {
+        "minecraft:variant": {
+          "value": 18
+        }
+      },
+      "soccer:v19": {
+        "minecraft:variant": {
+          "value": 19
+        }
+      },
       "soccer:chase": {
+        "minecraft:attack": {
+          "damage": 1
+        },
         "minecraft:behavior.melee_attack": {
           "priority": 2,
           "speed_multiplier": 1.25,
@@ -69,6 +122,7 @@
           "must_see": false,
           "reselect_targets": true,
           "within_radius": 40,
+          "scan_interval": 10,
           "entity_types": [
             {
               "filters": {
@@ -78,8 +132,7 @@
               },
               "max_dist": 40
             }
-          ],
-          "scan_interval": 10
+          ]
         }
       }
     },
@@ -87,7 +140,6 @@
       "minecraft:type_family": {
         "family": [
           "soccer_player",
-          "soccer_team_blue",
           "mob"
         ]
       },
@@ -134,9 +186,6 @@
       },
       "minecraft:behavior.random_look_around": {
         "priority": 9
-      },
-      "minecraft:attack": {
-        "damage": 1
       }
     },
     "events": {
@@ -207,6 +256,76 @@
         "add": {
           "component_groups": [
             "soccer:v9"
+          ]
+        }
+      },
+      "soccer:v10": {
+        "add": {
+          "component_groups": [
+            "soccer:v10"
+          ]
+        }
+      },
+      "soccer:v11": {
+        "add": {
+          "component_groups": [
+            "soccer:v11"
+          ]
+        }
+      },
+      "soccer:v12": {
+        "add": {
+          "component_groups": [
+            "soccer:v12"
+          ]
+        }
+      },
+      "soccer:v13": {
+        "add": {
+          "component_groups": [
+            "soccer:v13"
+          ]
+        }
+      },
+      "soccer:v14": {
+        "add": {
+          "component_groups": [
+            "soccer:v14"
+          ]
+        }
+      },
+      "soccer:v15": {
+        "add": {
+          "component_groups": [
+            "soccer:v15"
+          ]
+        }
+      },
+      "soccer:v16": {
+        "add": {
+          "component_groups": [
+            "soccer:v16"
+          ]
+        }
+      },
+      "soccer:v17": {
+        "add": {
+          "component_groups": [
+            "soccer:v17"
+          ]
+        }
+      },
+      "soccer:v18": {
+        "add": {
+          "component_groups": [
+            "soccer:v18"
+          ]
+        }
+      },
+      "soccer:v19": {
+        "add": {
+          "component_groups": [
+            "soccer:v19"
           ]
         }
       },

@@ -1,11 +1,10 @@
 entity.soccer:ball.name=サッカーボール
 entity.soccer:goal_red.name=赤ゴール
 entity.soccer:goal_blue.name=青ゴール
+entity.soccer:player.name=選手
+entity.soccer:keeper.name=ゴールキーパー
 item.spawn_egg.entity.soccer:ball.name=サッカーボール
 item.spawn_egg.entity.soccer:goal_red.name=赤ゴールを設置
 item.spawn_egg.entity.soccer:goal_blue.name=青ゴールを設置
-entity.soccer:jp_player.name=日本代表
-entity.soccer:jp_keeper.name=日本代表GK
-item.spawn_egg.entity.soccer:jp_player.name=日本代表 選手
-item.spawn_egg.entity.soccer:jp_keeper.name=日本代表 GK
 item.soccer:boots.name=サッカーシューズ（使う＝シュート）
+item.soccer:whistle.name=ホイッスル（使う＝試合メニュー）

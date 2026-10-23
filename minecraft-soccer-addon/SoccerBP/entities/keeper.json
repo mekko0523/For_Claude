@@ -2,16 +2,27 @@
   "format_version": "1.16.0",
   "minecraft:entity": {
     "description": {
-      "identifier": "soccer:jp_keeper",
-      "is_spawnable": true,
+      "identifier": "soccer:keeper",
+      "is_spawnable": false,
       "is_summonable": true,
       "is_experimental": false
+    },
+    "component_groups": {
+      "soccer:v0": {
+        "minecraft:variant": {
+          "value": 0
+        }
+      },
+      "soccer:v1": {
+        "minecraft:variant": {
+          "value": 1
+        }
+      }
     },
     "components": {
       "minecraft:type_family": {
         "family": [
           "soccer_player",
-          "soccer_team_blue",
           "mob"
         ]
       },
@@ -58,6 +69,22 @@
       },
       "minecraft:behavior.random_look_around": {
         "priority": 9
+      }
+    },
+    "events": {
+      "soccer:v0": {
+        "add": {
+          "component_groups": [
+            "soccer:v0"
+          ]
+        }
+      },
+      "soccer:v1": {
+        "add": {
+          "component_groups": [
+            "soccer:v1"
+          ]
+        }
       }
     }
   }

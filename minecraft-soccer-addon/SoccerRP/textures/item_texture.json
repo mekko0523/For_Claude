@@ -2,6 +2,11 @@
   "resource_pack_name": "soccer",
   "texture_name": "atlas.items",
   "texture_data": {
-    "soccer_boots": { "textures": "textures/items/soccer_boots" }
+    "soccer_boots": {
+      "textures": "textures/items/soccer_boots"
+    },
+    "soccer_whistle": {
+      "textures": "textures/items/soccer_whistle"
+    }
   }
 }
