@@ -8,3 +8,4 @@ entity.soccer:jp_player.name=日本代表
 entity.soccer:jp_keeper.name=日本代表GK
 item.spawn_egg.entity.soccer:jp_player.name=日本代表 選手
 item.spawn_egg.entity.soccer:jp_keeper.name=日本代表 GK
+item.soccer:boots.name=サッカーシューズ（使う＝シュート）

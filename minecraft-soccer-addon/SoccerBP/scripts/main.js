@@ -1,4 +1,4 @@
-import { world, system, DisplaySlotId } from "@minecraft/server";
+import { world, system, DisplaySlotId, ItemStack } from "@minecraft/server";
 
 // ===== 調整用の数値 =====
 const SHOT_POWER = 1.2; // 普通に叩いたとき（シュート）の強さ
@@ -286,6 +286,7 @@ system.runInterval(() => {
 // /scriptevent soccer:reset  … スコアを0に戻してボールをセンターへ
 // /scriptevent soccer:clear  … ボール・選手・ゴールの目印を消す（ブロックは残る）
 // /scriptevent soccer:japan  … 日本代表（GK＋10人）をまとめて呼ぶ
+// /scriptevent soccer:boots  … サッカーシューズ（シュート用）をもらう
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === "soccer:reset") {
     resetScores();
@@ -307,6 +308,8 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     world.sendMessage("§eボール・選手・ゴールの目印を消しました。");
   } else if (ev.id === "soccer:japan") {
     callJapan(ev.sourceEntity);
+  } else if (ev.id === "soccer:boots") {
+    if (ev.sourceEntity?.typeId === "minecraft:player") giveBoots(ev.sourceEntity);
   }
 });
 
@@ -418,9 +421,10 @@ function npcKick(ball, npc) {
 
   // パス: 自分よりゴールに近い味方がいたら、ときどきパスを出す
   if (Math.random() < NPC_PASS_CHANCE) {
-    const mates = npc.dimension
-      .getEntities({ type: JP_PLAYER, location: npc.location, maxDistance: 16 })
-      .filter((m) => m.id !== npc.id && horizontalDistance(m.location, mouth) < distance - 4);
+    const mates = [
+      ...npc.dimension.getEntities({ type: JP_PLAYER, location: npc.location, maxDistance: 16 }),
+      ...npc.dimension.getPlayers({ location: npc.location, maxDistance: 16 }), // 操作しているプレイヤーにもパスを出す
+    ].filter((m) => m.id !== npc.id && horizontalDistance(m.location, mouth) < distance - 4);
     if (mates.length > 0) {
       const mate = mates[Math.floor(Math.random() * mates.length)];
       const d = horizontalDistance(ball.location, mate.location);
@@ -504,3 +508,211 @@ function callJapan(source) {
   }
   world.sendMessage("§b日本代表が集合しました！");
 }
+
+// ===== 第2.5段階: コントローラー操作（FC風） =====
+// マイクラの操作を次のサッカーの動きに割り当てる（ボタンの割り当てはマイクラの設定で変える）
+//   ジャンプ         → パス（近くの味方へ自動で狙う）
+//   使う（シューズ） → シュート（相手ゴールの方を向いていれば自動で狙う）
+//   スニーク         → ロブパス／クロス（浮き球）
+//   アイテムを捨てる → スルーパス（味方の前のスペースへ）
+//   スプリント       → ダッシュ（マイクラの通常のダッシュ）
+const BOOTS = "soccer:boots";
+const KICK_RANGE = 2.2; // この距離以内にボールがあるとボタンで蹴れる
+const PASS_CONE = 0.7; // パス相手を探す向きの幅（cos、0.7 ≒ 左右45度）
+const SHOT_CONE = 0.5; // ゴールを自動で狙う向きの幅（cos、0.5 ≒ 左右60度）
+const BUTTON_COOLDOWN = 6; // tick
+
+const lastJump = new Map();
+const lastSneak = new Map();
+const lastOnGround = new Map();
+const nextKickTick = new Map();
+
+// 左スティックで動いている方向（止まっているときは向いている方向）
+function stickDirection(player) {
+  const v = player.getVelocity();
+  const speed = Math.hypot(v.x, v.z);
+  if (speed > 0.04) return { x: v.x / speed, z: v.z / speed };
+  const view = player.getViewDirection();
+  const len = Math.hypot(view.x, view.z) || 1;
+  return { x: view.x / len, z: view.z / len };
+}
+
+function nearestBall(player) {
+  let best;
+  let bestDist = KICK_RANGE;
+  for (const ball of player.dimension.getEntities({ type: BALL, location: player.location, maxDistance: KICK_RANGE + 1 })) {
+    if (ball.hasTag("soccer_scored")) continue;
+    const d = horizontalDistance(ball.location, player.location);
+    if (d <= bestDist && Math.abs(ball.location.y - player.location.y) < 1.5) {
+      best = ball;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+// 向いている方向にいる味方を探す（角度が近いほど、近いほど優先）
+function findMate(player, ball, dir) {
+  let best;
+  let bestScore = -Infinity;
+  const mates = [
+    ...player.dimension.getEntities({ type: JP_PLAYER, location: ball.location, maxDistance: 32 }),
+    ...player.dimension.getPlayers({ location: ball.location, maxDistance: 32 }).filter((p) => p.id !== player.id),
+  ];
+  for (const mate of mates) {
+    const dx = mate.location.x - ball.location.x;
+    const dz = mate.location.z - ball.location.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 2) continue;
+    const cos = (dx * dir.x + dz * dir.z) / d;
+    if (cos < PASS_CONE) continue;
+    const score = cos * 2 - d / 32;
+    if (score > bestScore) {
+      best = mate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function canKick(player) {
+  const now = system.currentTick;
+  if ((nextKickTick.get(player.id) ?? 0) > now) return false;
+  nextKickTick.set(player.id, now + BUTTON_COOLDOWN);
+  return true;
+}
+
+function kickInDirection(ball, dir, power, lift) {
+  ball.clearVelocity();
+  ball.applyImpulse({ x: dir.x * power, y: lift, z: dir.z * power });
+}
+
+function doPass(player) {
+  const ball = nearestBall(player);
+  if (!ball || !canKick(player)) return;
+  const dir = stickDirection(player);
+  const mate = findMate(player, ball, dir);
+  if (mate) {
+    const d = horizontalDistance(ball.location, mate.location);
+    kickToward(ball, ball.location, mate.location, Math.min(1.0, 0.25 + d * 0.045), 0.1);
+  } else {
+    kickInDirection(ball, dir, 0.6, 0.1);
+  }
+}
+
+function doLob(player) {
+  const ball = nearestBall(player);
+  if (!ball || !canKick(player)) return;
+  const dir = stickDirection(player);
+  const mate = findMate(player, ball, dir);
+  if (mate) {
+    const d = horizontalDistance(ball.location, mate.location);
+    kickToward(ball, ball.location, mate.location, Math.min(1.0, 0.2 + d * 0.03), 0.55);
+  } else {
+    kickInDirection(ball, dir, 0.6, 0.55);
+  }
+}
+
+function doThroughPass(player) {
+  const ball = nearestBall(player);
+  if (!ball || !canKick(player)) return;
+  const dir = stickDirection(player);
+  const mate = findMate(player, ball, dir);
+  if (!mate) {
+    kickInDirection(ball, dir, 0.8, 0.08);
+    return;
+  }
+  // 味方の少し前（相手ゴール側、なければパスの方向）へ出す
+  const goal = player.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+  let ahead = dir;
+  if (goal && goalFrame(goal)) {
+    const mouth = goalMouth(goal);
+    const gx = mouth.x - mate.location.x;
+    const gz = mouth.z - mate.location.z;
+    const len = Math.hypot(gx, gz) || 1;
+    ahead = { x: gx / len, z: gz / len };
+  }
+  const spot = { x: mate.location.x + ahead.x * 4, z: mate.location.z + ahead.z * 4 };
+  const d = horizontalDistance(ball.location, spot);
+  kickToward(ball, ball.location, spot, Math.min(1.1, 0.3 + d * 0.045), 0.08);
+}
+
+function doShot(player) {
+  const ball = nearestBall(player);
+  if (!ball || !canKick(player)) return;
+  const dir = stickDirection(player);
+  const goal = player.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+  if (goal && goalFrame(goal)) {
+    const { base, f, r } = goalFrame(goal);
+    const mouth = goalMouth(goal);
+    const gx = mouth.x - ball.location.x;
+    const gz = mouth.z - ball.location.z;
+    const gd = Math.hypot(gx, gz) || 1;
+    if ((gx * dir.x + gz * dir.z) / gd > SHOT_CONE) {
+      // ゴールの方を向いていたら、スティックの向きに近いほうのサイドを狙う
+      const side = Math.max(-1.8, Math.min(1.8, (dir.x * r.x + dir.z * r.z) * 6));
+      const to = { x: base.x + 0.5 + f.x + r.x * side, z: base.z + 0.5 + f.z + r.z * side };
+      kickToward(ball, ball.location, to, 1.25, Math.min(0.45, 0.2 + gd * 0.01));
+      return;
+    }
+  }
+  kickInDirection(ball, dir, 1.2, 0.3);
+}
+
+// シュート: シューズを持って「使う」
+world.afterEvents.itemUse.subscribe((ev) => {
+  if (ev.itemStack?.typeId !== BOOTS) return;
+  doShot(ev.source);
+});
+
+// スルーパス: シューズを「捨てる」→ すぐ手元に戻す
+world.afterEvents.entitySpawn.subscribe((ev) => {
+  const item = ev.entity;
+  if (!isValid(item) || item.typeId !== "minecraft:item") return;
+  const stack = item.getComponent("minecraft:item")?.itemStack;
+  if (stack?.typeId !== BOOTS) return;
+  const [player] = item.dimension.getPlayers({ location: item.location, closest: 1, maxDistance: 4 });
+  item.remove();
+  if (!player) return;
+  giveBoots(player, true);
+  doThroughPass(player);
+});
+
+function hasBoots(player) {
+  const inv = player.getComponent("minecraft:inventory")?.container;
+  if (!inv) return true;
+  for (let i = 0; i < inv.size; i++) {
+    if (inv.getItem(i)?.typeId === BOOTS) return true;
+  }
+  return false;
+}
+
+function giveBoots(player, toSelectedSlot = false) {
+  const inv = player.getComponent("minecraft:inventory")?.container;
+  if (!inv) return;
+  const slot = player.selectedSlotIndex ?? player.selectedSlot;
+  if (toSelectedSlot && slot !== undefined && !inv.getItem(slot)) {
+    inv.setItem(slot, new ItemStack(BOOTS, 1));
+  } else if (!hasBoots(player)) {
+    inv.addItem(new ItemStack(BOOTS, 1));
+  }
+}
+
+world.afterEvents.playerSpawn.subscribe((ev) => {
+  if (ev.initialSpawn) system.runTimeout(() => giveBoots(ev.player), 20);
+});
+
+// パス（ジャンプ）とロブ（スニーク）は、ボタンを押した瞬間を見つける
+system.runInterval(() => {
+  for (const player of world.getAllPlayers()) {
+    // isJumping が使えない版では「地面から上向きに飛び出した瞬間」で判定する
+    const jumping =
+      player.isJumping ?? (lastOnGround.get(player.id) && !player.isOnGround && player.getVelocity().y > 0.2);
+    lastOnGround.set(player.id, player.isOnGround);
+    const sneaking = player.isSneaking;
+    if (jumping && !lastJump.get(player.id)) doPass(player);
+    if (sneaking && !lastSneak.get(player.id)) doLob(player);
+    lastJump.set(player.id, jumping);
+    lastSneak.set(player.id, sneaking);
+  }
+}, 1);
