@@ -1,0 +1,9 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "soccer:goal_blue",
+      "spawn_egg": { "base_color": "#2040D0", "overlay_color": "#FFFFFF" }
+    }
+  }
+}

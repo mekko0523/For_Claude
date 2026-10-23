@@ -1,0 +1,6 @@
+entity.soccer:ball.name=Soccer Ball
+entity.soccer:goal_red.name=Red Goal
+entity.soccer:goal_blue.name=Blue Goal
+item.spawn_egg.entity.soccer:ball.name=Soccer Ball
+item.spawn_egg.entity.soccer:goal_red.name=Place Red Goal
+item.spawn_egg.entity.soccer:goal_blue.name=Place Blue Goal

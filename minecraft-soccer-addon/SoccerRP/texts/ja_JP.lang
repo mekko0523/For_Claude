@@ -1,0 +1,6 @@
+entity.soccer:ball.name=サッカーボール
+entity.soccer:goal_red.name=赤ゴール
+entity.soccer:goal_blue.name=青ゴール
+item.spawn_egg.entity.soccer:ball.name=サッカーボール
+item.spawn_egg.entity.soccer:goal_red.name=赤ゴールを設置
+item.spawn_egg.entity.soccer:goal_blue.name=青ゴールを設置

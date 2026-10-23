@@ -1,0 +1,29 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "サッカー アドオン（リソース）",
+    "description": "サッカーボールの見た目",
+    "uuid": "918de813-a9f1-4570-96fa-6c087f541686",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "8f01e85b-4f65-4a1f-b0ce-9f4a4c100e13",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
+}
