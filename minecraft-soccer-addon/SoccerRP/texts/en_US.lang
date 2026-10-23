@@ -9,5 +9,3 @@ entity.soccer:jp_keeper.name=Japan Goalkeeper
 item.spawn_egg.entity.soccer:jp_player.name=Japan Player
 item.spawn_egg.entity.soccer:jp_keeper.name=Japan Goalkeeper
 item.soccer:boots.name=Soccer Boots (Use = Shoot)
-entity.soccer:stadium.name=Stadium
-item.spawn_egg.entity.soccer:stadium.name=Build Stadium

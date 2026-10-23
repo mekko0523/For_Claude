@@ -218,8 +218,11 @@ function onGoal(ball, goal) {
   }
 
   const center = centerFor(goal.dimension, goal);
-  startRetreat(goal.dimension, RESET_DELAY + 20); // キックオフまで全員自陣へ戻る
-  system.runTimeout(() => placeBall(ball, center), RESET_DELAY);
+  startRetreat(goal.dimension, RESET_DELAY + 20); // キックオフまで日本代表は青コート（自陣）へ戻る
+  system.runTimeout(() => {
+    placeBall(ball, center);
+    kickoffPositions(goal.dimension, center);
+  }, RESET_DELAY);
 }
 
 function checkGoal(ball, goals) {
@@ -316,6 +319,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       if (!goal || !goalFrame(goal)) continue;
       const center = centerFor(dim, goal);
       for (const ball of dim.getEntities({ type: BALL })) placeBall(ball, center);
+      kickoffPositions(dim, center);
     }
     world.sendMessage("§eスコアをリセットしました。キックオフ！");
   } else if (ev.id === "soccer:clear") {
@@ -439,7 +443,6 @@ function npcKick(ball, npc) {
     const aim = (Math.random() * 2 - 1) * 1.8;
     const to = { x: base.x + 0.5 + f.x + r.x * aim, z: base.z + 0.5 + f.z + r.z * aim };
     kickToward(ball, ball.location, to, NPC_SHOT_POWER, 0.2 + Math.random() * 0.2);
-    startRetreat(npc.dimension, RETREAT_TICKS); // シュートしたら全員、青コート（自陣）へ戻る
     return;
   }
 
@@ -741,8 +744,7 @@ system.runInterval(() => {
   }
 }, 1);
 
-// ===== 戻り（リトリート）: シュートやゴールの後、全員が青コート（自陣）へ戻る =====
-const RETREAT_TICKS = 100; // 戻っている時間（5秒）
+// ===== 戻り（リトリート）: ゴールが決まったら、キックオフまでそれぞれ自陣へ戻る =====
 const RETREAT_STEP = 0.35; // 2tickごとに進む距離
 // 戻る位置（4-4-2）: [青ゴールからの距離の割合, 横の位置] 並びは JAPAN と同じ
 const FORMATION = [
@@ -817,7 +819,6 @@ function retreatTick(dim, balls) {
 }
 
 // ===== スタジアム =====
-const STADIUM = "soccer:stadium";
 const HALF_LENGTH = 25; // センターからゴールラインまで
 const HALF_WIDTH = 16; // センターからタッチラインまで
 const FILL_LIMIT = 32768; // fill コマンド1回で置けるブロック数の上限
@@ -950,6 +951,10 @@ function finishStadium(dim, at, dir, players) {
   for (const keeper of dim.getEntities({ type: JP_KEEPER })) keeper.teleport(center(-HALF_LENGTH + 2, 0));
 
   const start = center(-6, 0);
+  // ワールドの出現地点（リスポーン地点）をピッチの上にする
+  try {
+    world.setDefaultSpawnLocation({ x: Math.floor(start.x), y: Math.floor(start.y), z: Math.floor(start.z) });
+  } catch {}
   for (const p of players) {
     if (!isValid(p)) continue;
     p.teleport(start, { facingLocation: { x: kickoff.x, y: kickoff.y + 1, z: kickoff.z } });
@@ -957,13 +962,45 @@ function finishStadium(dim, at, dir, players) {
   }
 }
 
-// スポーンエッグ「スタジアムを建てる」
-world.afterEvents.entitySpawn.subscribe((ev) => {
-  const marker = ev.entity;
-  if (!isValid(marker) || marker.typeId !== STADIUM) return;
-  const loc = marker.location;
-  const dim = marker.dimension;
-  marker.remove();
-  const [player] = dim.getPlayers({ location: loc, closest: 1 });
-  buildStadium(dim, loc, player ? yawToDir(player.getRotation().y) : 0);
+// キックオフ: プレイヤーは青コート（自陣）側のセンターサークルの外へ
+function kickoffPositions(dim, center) {
+  const blue = findGoal(dim, JP_DEFEND_GOAL);
+  if (!blue || !goalFrame(blue)) return;
+  const B = goalMouth(blue);
+  const len = horizontalDistance(B, center) || 1;
+  const u = { x: (center.x - B.x) / len, z: (center.z - B.z) / len }; // 青ゴール → センター
+  const v = { x: -u.z, z: u.x };
+  dim.getPlayers({ location: center, maxDistance: 80 }).forEach((p, i) => {
+    const side = (i % 2 === 0 ? 1 : -1) * Math.ceil(i / 2) * 3;
+    const spot = { x: center.x - u.x * 6 + v.x * side, y: center.y, z: center.z - u.z * 6 + v.z * side };
+    p.teleport(spot, { facingLocation: { x: center.x, y: center.y + 1, z: center.z } });
+  });
+}
+
+// ===== 新しいワールドでは、最初からサッカースタジアムに出現する =====
+const STADIUM_BUILT = "soccer:stadium_built";
+const NEW_WORLD_TICKS = 20 * 60 * 5; // 5分以内に入ったワールドを「新しいワールド」とみなす
+
+function worldAge() {
+  try {
+    return world.getAbsoluteTime();
+  } catch {
+    return 0;
+  }
+}
+
+world.afterEvents.playerSpawn.subscribe((ev) => {
+  if (!ev.initialSpawn || world.getDynamicProperty(STADIUM_BUILT)) return;
+  world.setDynamicProperty(STADIUM_BUILT, true);
+  // 遊んでいる途中のワールドに後からアドオンを入れたときは、建物を壊さないように自動では建てない
+  if (worldAge() > NEW_WORLD_TICKS) {
+    ev.player.sendMessage("§eスタジアムを建てるときは §f/scriptevent soccer:stadium §eと入力してください");
+    return;
+  }
+  // まわりの地形が読み込まれるのを少し待ってから建てる
+  system.runTimeout(() => {
+    const p = ev.player;
+    if (!isValid(p)) return;
+    buildStadium(p.dimension, p.location, yawToDir(p.getRotation().y));
+  }, 60);
 });
