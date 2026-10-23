@@ -149,23 +149,27 @@ function buildGoal(goal, frameBlock) {
   for (let i = -3; i <= 3; i++) for (let y = 0; y <= 3; y++) setBlock(dim, at(i, 2, y), NET);
 }
 
+// ゴールの向きを決めて組み立てる（同じ色の古いゴールの目印は消す）
+function placeGoal(goal, dir) {
+  for (const old of goal.dimension.getEntities({ type: goal.typeId })) {
+    if (old.id !== goal.id) old.remove();
+  }
+  for (let i = 0; i < 4; i++) goal.removeTag(`soccer_dir${i}`);
+  goal.addTag(`soccer_dir${dir}`);
+  buildGoal(goal, GOALS[goal.typeId].frame);
+  goalCache.clear();
+}
+
 world.afterEvents.entitySpawn.subscribe((ev) => {
   const goal = ev.entity;
   if (!isValid(goal)) return;
   const info = GOALS[goal.typeId];
   if (!info) return;
-  if (goalDir(goal) !== undefined) return; // ワールド読み込み時の再出現は無視
-
-  // 同じ色の古いゴール（目印）は1つだけにする
-  for (const old of goal.dimension.getEntities({ type: goal.typeId })) {
-    if (old.id !== goal.id) old.remove();
-  }
+  if (goalDir(goal) !== undefined) return; // ワールド読み込み時やスタジアムで置いたゴールは無視
 
   // 一番近いプレイヤーの向いている方向へゴールを作る（入口がプレイヤー側を向く）
   const [player] = goal.dimension.getPlayers({ location: goal.location, closest: 1 });
-  const dir = player ? yawToDir(player.getRotation().y) : 0;
-  goal.addTag(`soccer_dir${dir}`);
-  buildGoal(goal, info.frame);
+  placeGoal(goal, player ? yawToDir(player.getRotation().y) : 0);
   if (player) player.sendMessage(`${info.name}§rを設置しました！`);
 });
 
@@ -214,6 +218,7 @@ function onGoal(ball, goal) {
   }
 
   const center = centerFor(goal.dimension, goal);
+  startRetreat(goal.dimension, RESET_DELAY + 20); // キックオフまで全員自陣へ戻る
   system.runTimeout(() => placeBall(ball, center), RESET_DELAY);
 }
 
@@ -258,22 +263,36 @@ function dribble(ball, players) {
   }
 }
 
+// ゴールの目印は動かないので、1秒ごとにだけ探し直す（軽量化）
+const goalCache = new Map();
+
+function getGoals(dim) {
+  const cached = goalCache.get(dim.id);
+  if (cached && cached.until > system.currentTick && cached.list.every(isValid)) return cached.list;
+  const list = [...dim.getEntities({ type: "soccer:goal_red" }), ...dim.getEntities({ type: "soccer:goal_blue" })];
+  goalCache.set(dim.id, { list, until: system.currentTick + 20 });
+  return list;
+}
+
+function findGoal(dim, type) {
+  return getGoals(dim).find((g) => g.typeId === type);
+}
+
+// プレイヤーがいるディメンションだけを調べる（軽量化）
+function activeDimensions() {
+  const dims = new Map();
+  for (const p of world.getAllPlayers()) dims.set(p.dimension.id, p.dimension);
+  return [...dims.values()];
+}
+
 system.runInterval(() => {
-  for (const id of DIMENSIONS) {
-    let dim;
-    try {
-      dim = world.getDimension(id);
-    } catch {
-      continue;
-    }
+  for (const dim of activeDimensions()) {
     const balls = dim.getEntities({ type: BALL });
     if (balls.length === 0) continue;
-    const goals = [
-      ...dim.getEntities({ type: "soccer:goal_red" }),
-      ...dim.getEntities({ type: "soccer:goal_blue" }),
-    ];
+    const goals = getGoals(dim);
     const players = dim.getPlayers();
     for (const keeper of dim.getEntities({ type: JP_KEEPER })) keeperTick(keeper, balls);
+    retreatTick(dim, balls);
     for (const ball of balls) {
       if (ball.hasTag("soccer_scored")) continue;
       dribble(ball, players);
@@ -287,6 +306,7 @@ system.runInterval(() => {
 // /scriptevent soccer:clear  … ボール・選手・ゴールの目印を消す（ブロックは残る）
 // /scriptevent soccer:japan  … 日本代表（GK＋10人）をまとめて呼ぶ
 // /scriptevent soccer:boots  … サッカーシューズ（シュート用）をもらう
+// /scriptevent soccer:stadium … 目の前にスタジアムを建てる
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === "soccer:reset") {
     resetScores();
@@ -308,6 +328,9 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     world.sendMessage("§eボール・選手・ゴールの目印を消しました。");
   } else if (ev.id === "soccer:japan") {
     callJapan(ev.sourceEntity);
+  } else if (ev.id === "soccer:stadium") {
+    const p = ev.sourceEntity?.typeId === "minecraft:player" ? ev.sourceEntity : world.getAllPlayers()[0];
+    if (p) buildStadium(p.dimension, p.location, yawToDir(p.getRotation().y));
   } else if (ev.id === "soccer:boots") {
     if (ev.sourceEntity?.typeId === "minecraft:player") giveBoots(ev.sourceEntity);
   }
@@ -398,7 +421,7 @@ world.afterEvents.entitySpawn.subscribe((ev) => {
 
 // フィールドプレイヤーがボールに追いついたとき
 function npcKick(ball, npc) {
-  const target = npc.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+  const target = findGoal(npc.dimension, JP_ATTACK_GOAL);
   if (!target || !goalFrame(target)) {
     // 相手ゴールがないときは向いている方向へ蹴る
     const view = npc.getViewDirection();
@@ -416,6 +439,7 @@ function npcKick(ball, npc) {
     const aim = (Math.random() * 2 - 1) * 1.8;
     const to = { x: base.x + 0.5 + f.x + r.x * aim, z: base.z + 0.5 + f.z + r.z * aim };
     kickToward(ball, ball.location, to, NPC_SHOT_POWER, 0.2 + Math.random() * 0.2);
+    startRetreat(npc.dimension, RETREAT_TICKS); // シュートしたら全員、青コート（自陣）へ戻る
     return;
   }
 
@@ -441,7 +465,7 @@ function npcKick(ball, npc) {
 const keeperCooldown = new Map();
 
 function keeperTick(keeper, balls) {
-  const goal = keeper.dimension.getEntities({ type: JP_DEFEND_GOAL })[0];
+  const goal = findGoal(keeper.dimension, JP_DEFEND_GOAL);
   if (!goal || !goalFrame(goal) || balls.length === 0) return;
   const { base, f, r } = goalFrame(goal);
   const mouth = goalMouth(goal);
@@ -462,7 +486,7 @@ function keeperTick(keeper, balls) {
     (keeperCooldown.get(keeper.id) ?? 0) <= now
   ) {
     keeperCooldown.set(keeper.id, now + 20);
-    const enemy = keeper.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+    const enemy = findGoal(keeper.dimension, JP_ATTACK_GOAL);
     const to = enemy ? enemy.location : { x: mouth.x - f.x * 20, z: mouth.z - f.z * 20 };
     kickToward(ball, bp, to, 1.3, 0.6);
     return;
@@ -623,7 +647,7 @@ function doThroughPass(player) {
     return;
   }
   // 味方の少し前（相手ゴール側、なければパスの方向）へ出す
-  const goal = player.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+  const goal = findGoal(player.dimension, JP_ATTACK_GOAL);
   let ahead = dir;
   if (goal && goalFrame(goal)) {
     const mouth = goalMouth(goal);
@@ -641,7 +665,7 @@ function doShot(player) {
   const ball = nearestBall(player);
   if (!ball || !canKick(player)) return;
   const dir = stickDirection(player);
-  const goal = player.dimension.getEntities({ type: JP_ATTACK_GOAL })[0];
+  const goal = findGoal(player.dimension, JP_ATTACK_GOAL);
   if (goal && goalFrame(goal)) {
     const { base, f, r } = goalFrame(goal);
     const mouth = goalMouth(goal);
@@ -716,3 +740,230 @@ system.runInterval(() => {
     lastSneak.set(player.id, sneaking);
   }
 }, 1);
+
+// ===== 戻り（リトリート）: シュートやゴールの後、全員が青コート（自陣）へ戻る =====
+const RETREAT_TICKS = 100; // 戻っている時間（5秒）
+const RETREAT_STEP = 0.35; // 2tickごとに進む距離
+// 戻る位置（4-4-2）: [青ゴールからの距離の割合, 横の位置] 並びは JAPAN と同じ
+const FORMATION = [
+  [0.15, -4], [0.15, 4], [0.2, -11], [0.2, 11],
+  [0.3, -5], [0.3, 5], [0.38, -11], [0.38, 11],
+  [0.45, -4], [0.45, 4],
+];
+const retreatUntil = new Map();
+
+function setChasing(npc, on) {
+  const tag = on ? "soccer_chase_on" : "soccer_chase_off";
+  if (npc.hasTag(tag)) return;
+  npc.removeTag(on ? "soccer_chase_off" : "soccer_chase_on");
+  npc.addTag(tag);
+  npc.triggerEvent(on ? "soccer:chase_on" : "soccer:chase_off");
+}
+
+function startRetreat(dim, ticks) {
+  const until = Math.max(retreatUntil.get(dim.id) ?? 0, system.currentTick + ticks);
+  retreatUntil.set(dim.id, until);
+  for (const npc of dim.getEntities({ type: JP_PLAYER })) setChasing(npc, false);
+}
+
+function isPassable(dim, pos) {
+  try {
+    const block = dim.getBlock(pos);
+    if (!block) return false;
+    return block.isAir ?? block.typeId === "minecraft:air";
+  } catch {
+    return false;
+  }
+}
+
+function retreatTick(dim, balls) {
+  const until = retreatUntil.get(dim.id);
+  if (until === undefined) return;
+  const npcs = dim.getEntities({ type: JP_PLAYER });
+  if (system.currentTick >= until) {
+    retreatUntil.delete(dim.id);
+    for (const npc of npcs) setChasing(npc, true);
+    return;
+  }
+
+  const blue = findGoal(dim, JP_DEFEND_GOAL);
+  const red = findGoal(dim, JP_ATTACK_GOAL);
+  if (!blue || !red || !goalFrame(blue) || !goalFrame(red)) return;
+  const B = goalMouth(blue);
+  const R = goalMouth(red);
+  const length = horizontalDistance(B, R) || 1;
+  const u = { x: (R.x - B.x) / length, z: (R.z - B.z) / length };
+  const v = { x: -u.z, z: u.x };
+  const ball = balls[0];
+
+  for (const npc of npcs) {
+    const slot = FORMATION[playerIndex(npc) ?? 0];
+    const spot = {
+      x: B.x + u.x * length * slot[0] + v.x * slot[1],
+      z: B.z + u.z * length * slot[0] + v.z * slot[1],
+    };
+    const p = npc.location;
+    const dx = spot.x - p.x;
+    const dz = spot.z - p.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.3) continue;
+    const step = Math.min(dist, RETREAT_STEP);
+    const next = { x: p.x + (dx / dist) * step, y: p.y, z: p.z + (dz / dist) * step };
+    // 壁や段差に埋まらないように、足元と頭の位置が空いているときだけ進む
+    if (!isPassable(dim, next) || !isPassable(dim, { x: next.x, y: next.y + 1, z: next.z })) continue;
+    const look = ball ? ball.location : { x: R.x, y: p.y, z: R.z };
+    npc.teleport(next, { facingLocation: { x: look.x, y: p.y + 1.5, z: look.z } });
+  }
+}
+
+// ===== スタジアム =====
+const STADIUM = "soccer:stadium";
+const HALF_LENGTH = 25; // センターからゴールラインまで
+const HALF_WIDTH = 16; // センターからタッチラインまで
+const FILL_LIMIT = 32768; // fill コマンド1回で置けるブロック数の上限
+const COMMANDS_PER_TICK = 4; // 1tickに実行するコマンド数（一度に置きすぎて固まらないように）
+
+function runCommand(dim, cmd) {
+  try {
+    if (typeof dim.runCommand === "function") dim.runCommand(cmd);
+    else dim.runCommandAsync(cmd);
+  } catch {
+    // 読み込まれていない場所などは無視
+  }
+}
+
+function buildStadium(dim, loc, dir) {
+  const f = DIRS[dir];
+  const r = { x: -f.z, z: f.x };
+  const cx = Math.floor(loc.x);
+  const cz = Math.floor(loc.z);
+  const y0 = Math.floor(loc.y) - 1; // 芝生の高さ（足元のブロック）
+  const at = (u, v, h) => ({ x: cx + f.x * u + r.x * v, y: y0 + h, z: cz + f.z * u + r.z * v });
+  const cmds = [];
+
+  // 範囲を (u, v, h) で指定して fill。大きすぎるときは u 方向に分割する
+  const fill = (u1, v1, h1, u2, v2, h2, block) => {
+    const [ua, ub] = [Math.min(u1, u2), Math.max(u1, u2)];
+    const perU = (Math.abs(v2 - v1) + 1) * (Math.abs(h2 - h1) + 1);
+    const slice = Math.max(1, Math.floor(FILL_LIMIT / perU));
+    for (let s = ua; s <= ub; s += slice) {
+      const e = Math.min(ub, s + slice - 1);
+      const a = at(s, v1, h1);
+      const b = at(e, v2, h2);
+      cmds.push(`fill ${a.x} ${a.y} ${a.z} ${b.x} ${b.y} ${b.z} ${block}`);
+    }
+  };
+  const set = (u, v, h, block) => {
+    const a = at(u, v, h);
+    cmds.push(`setblock ${a.x} ${a.y} ${a.z} ${block}`);
+  };
+
+  const HL = HALF_LENGTH;
+  const HW = HALF_WIDTH;
+  const LU = HL + 10;
+  const LV = HW + 12;
+
+  // 土台: 上を空けて、土と芝生を敷く
+  fill(-LU, -LV, 1, LU, LV, 16, "air");
+  fill(-LU, -LV, -2, LU, LV, -1, "dirt");
+  fill(-LU, -LV, 0, LU, LV, 0, "grass_block");
+
+  // ライン（白）
+  const line = "white_concrete";
+  fill(-HL, -HW, 0, HL, -HW, 0, line); // タッチライン
+  fill(-HL, HW, 0, HL, HW, 0, line);
+  fill(-HL, -HW, 0, -HL, HW, 0, line); // ゴールライン
+  fill(HL, -HW, 0, HL, HW, 0, line);
+  fill(0, -HW, 0, 0, HW, 0, line); // ハーフウェーライン
+  for (const s of [1, -1]) {
+    // ペナルティエリア
+    fill(s * (HL - 8), -10, 0, s * (HL - 8), 10, 0, line);
+    fill(s * (HL - 8), -10, 0, s * HL, -10, 0, line);
+    fill(s * (HL - 8), 10, 0, s * HL, 10, 0, line);
+    // ゴールエリア
+    fill(s * (HL - 3), -5, 0, s * (HL - 3), 5, 0, line);
+    fill(s * (HL - 3), -5, 0, s * HL, -5, 0, line);
+    fill(s * (HL - 3), 5, 0, s * HL, 5, 0, line);
+    set(s * (HL - 6), 0, 0, line); // ペナルティマーク
+  }
+  // センターサークル
+  for (let u = -6; u <= 6; u++) {
+    for (let v = -6; v <= 6; v++) {
+      if (Math.abs(Math.hypot(u, v) - 5) < 0.5) set(u, v, 0, line);
+    }
+  }
+
+  // 観客席（タッチラインの外、青と白のしま模様の階段）
+  for (let k = 0; k < 6; k++) {
+    const color = k % 2 === 0 ? "blue_concrete" : "white_concrete";
+    fill(-HL, HW + 6 + k, 1, HL, HW + 6 + k, k + 1, color);
+    fill(-HL, -(HW + 6 + k), 1, HL, -(HW + 6 + k), k + 1, color);
+  }
+
+  // 照明塔（四隅）
+  for (const su of [1, -1]) {
+    for (const sv of [1, -1]) {
+      const u = su * (HL + 7);
+      const v = sv * (HW + 8);
+      fill(u, v, 1, u, v, 12, "white_concrete");
+      fill(u - 1, v - 1, 13, u + 1, v + 1, 13, "sea_lantern");
+    }
+  }
+
+  // ボールが外へ出ていかないように、見えない壁（バリア）で囲む
+  const BU = HL + 5;
+  const BV = HW + 5;
+  fill(-BU, -BV, 1, BU, -BV, 4, "barrier");
+  fill(-BU, BV, 1, BU, BV, 4, "barrier");
+  fill(-BU, -BV, 1, -BU, BV, 4, "barrier");
+  fill(BU, -BV, 1, BU, BV, 4, "barrier");
+
+  const players = dim.getPlayers({ location: loc, maxDistance: 64 });
+  for (const p of players) p.sendMessage("§eスタジアムを建設中…");
+
+  let i = 0;
+  const job = system.runInterval(() => {
+    for (let n = 0; n < COMMANDS_PER_TICK && i < cmds.length; n++) runCommand(dim, cmds[i++]);
+    if (i < cmds.length) return;
+    system.clearRun(job);
+    finishStadium(dim, at, dir, players);
+  }, 1);
+}
+
+function finishStadium(dim, at, dir, players) {
+  const center = (u, v) => {
+    const p = at(u, v, 1);
+    return { x: p.x + 0.5, y: p.y, z: p.z + 0.5 };
+  };
+  // 奥（向いている方向）が赤ゴール＝日本代表が攻めるゴール、手前が青ゴール
+  const red = dim.spawnEntity("soccer:goal_red", center(HALF_LENGTH, 0));
+  placeGoal(red, dir);
+  const blue = dim.spawnEntity("soccer:goal_blue", center(-HALF_LENGTH, 0));
+  placeGoal(blue, (dir + 2) % 4);
+
+  const kickoff = center(0, 0);
+  const balls = dim.getEntities({ type: BALL });
+  if (balls.length === 0) dim.spawnEntity(BALL, kickoff);
+  for (const ball of balls) placeBall(ball, kickoff);
+
+  // GK が出ていれば青ゴールの前へ
+  for (const keeper of dim.getEntities({ type: JP_KEEPER })) keeper.teleport(center(-HALF_LENGTH + 2, 0));
+
+  const start = center(-6, 0);
+  for (const p of players) {
+    if (!isValid(p)) continue;
+    p.teleport(start, { facingLocation: { x: kickoff.x, y: kickoff.y + 1, z: kickoff.z } });
+    p.sendMessage("§aスタジアムが完成しました！ 奥の§c赤ゴール§aを狙おう");
+  }
+}
+
+// スポーンエッグ「スタジアムを建てる」
+world.afterEvents.entitySpawn.subscribe((ev) => {
+  const marker = ev.entity;
+  if (!isValid(marker) || marker.typeId !== STADIUM) return;
+  const loc = marker.location;
+  const dim = marker.dimension;
+  marker.remove();
+  const [player] = dim.getPlayers({ location: loc, closest: 1 });
+  buildStadium(dim, loc, player ? yawToDir(player.getRotation().y) : 0);
+});

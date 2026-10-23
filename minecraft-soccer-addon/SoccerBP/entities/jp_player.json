@@ -57,6 +57,30 @@
         "minecraft:variant": {
           "value": 9
         }
+      },
+      "soccer:chase": {
+        "minecraft:behavior.melee_attack": {
+          "priority": 2,
+          "speed_multiplier": 1.25,
+          "track_target": false
+        },
+        "minecraft:behavior.nearest_attackable_target": {
+          "priority": 1,
+          "must_see": false,
+          "reselect_targets": true,
+          "within_radius": 40,
+          "entity_types": [
+            {
+              "filters": {
+                "test": "is_family",
+                "subject": "other",
+                "value": "soccer_ball"
+              },
+              "max_dist": 40
+            }
+          ],
+          "scan_interval": 10
+        }
       }
     },
     "components": {
@@ -113,27 +137,6 @@
       },
       "minecraft:attack": {
         "damage": 1
-      },
-      "minecraft:behavior.melee_attack": {
-        "priority": 2,
-        "speed_multiplier": 1.25,
-        "track_target": true
-      },
-      "minecraft:behavior.nearest_attackable_target": {
-        "priority": 1,
-        "must_see": false,
-        "reselect_targets": true,
-        "within_radius": 48,
-        "entity_types": [
-          {
-            "filters": {
-              "test": "is_family",
-              "subject": "other",
-              "value": "soccer_ball"
-            },
-            "max_dist": 48
-          }
-        ]
       }
     },
     "events": {
@@ -204,6 +207,27 @@
         "add": {
           "component_groups": [
             "soccer:v9"
+          ]
+        }
+      },
+      "minecraft:entity_spawned": {
+        "add": {
+          "component_groups": [
+            "soccer:chase"
+          ]
+        }
+      },
+      "soccer:chase_on": {
+        "add": {
+          "component_groups": [
+            "soccer:chase"
+          ]
+        }
+      },
+      "soccer:chase_off": {
+        "remove": {
+          "component_groups": [
+            "soccer:chase"
           ]
         }
       }
