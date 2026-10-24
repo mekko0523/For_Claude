@@ -12,7 +12,7 @@ import zipfile
 
 from PIL import Image
 
-VERSION = [1, 9, 0]
+VERSION = [1, 10, 0]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BP = os.path.join(ROOT, "SoccerBP")
@@ -46,6 +46,7 @@ STYLES = {
 
 # ===== チーム =====
 # players はフィールドプレイヤー10人。並び順は DF(CB,CB,LB,RB) → MF(4人) → FW(2人)
+# 各選手の最後の (速さ, シュート, パス) は得意・不得意（-1〜+2、0がふつう）
 # （scripts の PICKS / FORMATIONS がこの並び順を前提にしている）
 TEAMS = [
     {
@@ -55,16 +56,16 @@ TEAMS = [
         "keeper_kit": {"shirt": (232, 208, 32, 255), "shorts": (40, 40, 40, 255), "socks": (232, 208, 32, 255), "number": BLACK},
         # 背番号は W杯2026（北中米大会）のもの
         "players": [
-            (4, "板倉滉", "fair", "black", "normal"),
-            (22, "冨安健洋", "medium", "black", "long"),
-            (21, "伊藤洋輝", "light", "darkbrown", "short"),
-            (2, "菅原由勢", "fair", "brown", "parted"),
-            (7, "田中碧", "medium", "darkbrown", "side"),
-            (15, "鎌田大地", "light", "black", "normal"),
-            (8, "久保建英", "fair", "black", "long"),
-            (10, "堂安律", "medium", "darkbrown", "short"),
-            (14, "伊東純也", "light", "black", "parted"),
-            (18, "上田綺世", "fair", "black", "side"),
+            (4, "板倉滉", "fair", "black", "normal", (0, -1, 1)),
+            (22, "冨安健洋", "medium", "black", "long", (1, -1, 0)),
+            (21, "伊藤洋輝", "light", "darkbrown", "short", (0, -1, 1)),
+            (2, "菅原由勢", "fair", "brown", "parted", (1, -1, 1)),
+            (7, "田中碧", "medium", "darkbrown", "side", (0, 1, 1)),
+            (15, "鎌田大地", "light", "black", "normal", (0, 1, 1)),
+            (8, "久保建英", "fair", "black", "long", (1, 1, 1)),
+            (10, "堂安律", "medium", "darkbrown", "short", (0, 2, 0)),
+            (14, "伊東純也", "light", "black", "parted", (2, 0, 1)),
+            (18, "上田綺世", "fair", "black", "side", (0, 2, -1)),
         ],
         "keeper": (1, "鈴木彩艶", "brown", "black", "short"),
     },
@@ -75,16 +76,16 @@ TEAMS = [
         "keeper_kit": {"shirt": (40, 160, 80, 255), "shorts": (30, 30, 30, 255), "socks": (40, 160, 80, 255), "number": BLACK},
         # 背番号は W杯2026（北中米大会）のもの
         "players": [
-            (22, "クバルシ", "light", "darkbrown", "normal"),
-            (14, "ラポルテ", "light", "brown", "short"),
-            (24, "ククレジャ", "light", "darkbrown", "curly"),
-            (12, "ペドロ・ポロ", "tan", "black", "short"),
-            (16, "ロドリ", "light", "darkbrown", "short"),
-            (8, "ファビアン・ルイス", "light", "darkbrown", "long"),
-            (20, "ペドリ", "light", "black", "normal"),
-            (10, "ダニ・オルモ", "light", "darkbrown", "parted"),
-            (17, "ニコ・ウィリアムズ", "dark", "black", "short"),
-            (19, "ラミン・ヤマル", "brown", "black", "curly"),
+            (22, "クバルシ", "light", "darkbrown", "normal", (0, -1, 1)),
+            (14, "ラポルテ", "light", "brown", "short", (-1, -1, 1)),
+            (24, "ククレジャ", "light", "darkbrown", "curly", (1, -1, 0)),
+            (12, "ペドロ・ポロ", "tan", "black", "short", (1, 0, 1)),
+            (16, "ロドリ", "light", "darkbrown", "short", (0, 1, 2)),
+            (8, "ファビアン・ルイス", "light", "darkbrown", "long", (0, 1, 1)),
+            (20, "ペドリ", "light", "black", "normal", (0, 0, 2)),
+            (10, "ダニ・オルモ", "light", "darkbrown", "parted", (0, 2, 1)),
+            (17, "ニコ・ウィリアムズ", "dark", "black", "short", (2, 1, 0)),
+            (19, "ラミン・ヤマル", "brown", "black", "curly", (1, 1, 2)),
         ],
         "keeper": (1, "ダビド・ラヤ", "light", "darkbrown", "short"),
     },
@@ -176,14 +177,14 @@ def build_textures():
     tex = os.path.join(RP, "textures", "entity")
     os.makedirs(tex, exist_ok=True)
     for team in TEAMS:
-        for i, (num, _name, skin, hair, style) in enumerate(team["players"]):
+        for i, (num, _name, skin, hair, style, _stats) in enumerate(team["players"]):
             make_skin(num, team["kit"], skin, hair, style).save(os.path.join(tex, f"player_{team['key']}_{i}.png"))
         num, _name, skin, hair, style = team["keeper"]
         make_skin(num, team["keeper_kit"], skin, hair, style).save(os.path.join(tex, f"keeper_{team['key']}.png"))
 
 
-# 強さ（よわい・ふつう・つよい）ごとの走る速さ。scripts の DIFFICULTIES と同じ順番
-SPEEDS = [0.22, 0.28, 0.34]
+# 走る速さの段階。相手の強さ（よわい=1, ふつう=3, つよい=5）に、選手の「速さ」を足した段階を使う
+SPEEDS = [0.20, 0.23, 0.26, 0.28, 0.30, 0.33, 0.36]
 
 NO_DAMAGE = {"triggers": [{"cause": "all", "deals_damage": False}]}
 
@@ -401,7 +402,10 @@ def build_teams_js():
                 "name": team["name"],
                 "fieldVariantBase": t * 10,
                 "keeperVariant": t,
-                "players": [{"num": p[0], "name": p[1]} for p in team["players"]],
+                "players": [
+                    {"num": p[0], "name": p[1], "stats": {"spd": p[5][0], "sht": p[5][1], "pas": p[5][2]}}
+                    for p in team["players"]
+                ],
                 "keeper": {"num": team["keeper"][0], "name": team["keeper"][1]},
             }
         )

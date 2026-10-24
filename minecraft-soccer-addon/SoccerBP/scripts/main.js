@@ -5,7 +5,7 @@ import { TEAMS } from "./teams.js";
 // ===== 調整用の数値 =====
 const SHOT_POWER = 1.2; // プレイヤーがボールを叩いたとき（シュート）の強さ
 const SHOT_LIFT = 0.35; // シュートの浮き上がり（上を向くとさらに高く上がる）
-const PASS_POWER = 0.6; // スニーク中に叩いたとき（パス）の強さ
+const PASS_DISTANCE = 10; // スニーク中に叩いたとき（パス）に転がる距離
 const PASS_LIFT = 0.12;
 const POSSESS_RANGE = 1.5; // ボールにこれより近づくと、ボールを持つ（足元に吸い付く）
 const KEEP_RANGE = 3.0; // ボールがこれより離れたら、ボールを失う
@@ -69,7 +69,7 @@ const SIZE_LABELS = { 4: "5人制（GK＋4人）", 7: "8人制（GK＋7人）", 
 
 // ===== 相手の強さ =====
 // 味方（青サイド）はいつも「ふつう」。相手（赤サイド）はメニューで選ぶ
-//   speed      : 走る速さ（tools/build.py の SPEEDS と同じ順番）
+//   speed      : 走る速さの段階（tools/build.py の SPEEDS の何番目か。選手の「速さ」がこれに足される）
 //   shootRange : 相手ゴールまでこの距離以内ならシュート
 //   shotPower  : シュートの強さ
 //   aim        : シュートのねらいの幅（2.5 より大きいと枠を外すことがある）
@@ -78,10 +78,17 @@ const SIZE_LABELS = { 4: "5人制（GK＋4人）", 7: "8人制（GK＋7人）", 
 //   press      : ボールがこの距離まで来たら、持ち場の選手も取りに行く
 //   keeperReach / keeperRush / keeperSpeed : キーパーの届く距離・飛び出す距離・動く速さ
 const DIFFICULTIES = [
-  { label: "よわい", speed: 0, shootRange: 10, shotPower: 0.9, aim: 3.0, passChance: 0.2, chaseEvery: 20, press: 1.8, keeperReach: 1.2, keeperRush: 5, keeperSpeed: 0.2 },
-  { label: "ふつう", speed: 1, shootRange: 14, shotPower: 1.1, aim: 1.8, passChance: 0.4, chaseEvery: 10, press: 2.5, keeperReach: 1.6, keeperRush: 7, keeperSpeed: 0.25 },
-  { label: "つよい", speed: 2, shootRange: 18, shotPower: 1.35, aim: 1.6, passChance: 0.55, chaseEvery: 6, press: 3.5, keeperReach: 2.1, keeperRush: 9, keeperSpeed: 0.33 },
+  { label: "よわい", speed: 1, shootRange: 10, shotPower: 0.9, aim: 3.0, passChance: 0.2, chaseEvery: 20, press: 1.8, keeperReach: 1.2, keeperRush: 5, keeperSpeed: 0.2 },
+  { label: "ふつう", speed: 3, shootRange: 14, shotPower: 1.1, aim: 1.8, passChance: 0.4, chaseEvery: 10, press: 2.5, keeperReach: 1.6, keeperRush: 7, keeperSpeed: 0.25 },
+  { label: "つよい", speed: 5, shootRange: 18, shotPower: 1.35, aim: 1.6, passChance: 0.55, chaseEvery: 6, press: 3.5, keeperReach: 2.1, keeperRush: 9, keeperSpeed: 0.33 },
 ];
+
+// 選手ごとの得意・不得意（tools/build.py の TEAMS で決める）
+function npcStats(npc) {
+  const t = team(tagValue(npc, "soccer_team_"));
+  const i = Number(tagValue(npc, "soccer_pid") ?? -1);
+  return t.players[i]?.stats ?? { spd: 0, sht: 0, pas: 0 };
+}
 
 function skill(side) {
   return DIFFICULTIES[side === "red" ? getMatch().difficulty ?? 1 : 1] ?? DIFFICULTIES[1];
@@ -390,19 +397,75 @@ function freeBall(ball) {
   for (const [pid, bid] of possession) if (bid === ball.id) possession.delete(pid);
 }
 
-function kickToward(ball, from, to, power, lift) {
+// マイクラの地面はすべりが悪く、蹴ったボールがすぐ止まってしまう。
+// そこで蹴ったあとはスクリプトがボールを転がし、毎tick少しずつ遅くする（decay）。
+// 転がる距離 ≒ 速さ ÷ (1 - decay) なので、届けたい距離から速さを決められる。
+const ROLL_PASS = 0.94; // パス・クロス（約 速さ×17 ブロック転がる）
+const ROLL_SHOT = 0.975; // シュート・クリア（遠くまで伸びる）
+const ROLL_TOUCH = 0.85; // 選手のドリブルの小さなタッチ
+const MAX_BALL_SPEED = 2.0;
+const rolling = new Map(); // ボールの id → { ball, dir, speed, decay }
+
+function launch(ball, dir, speed, lift, decay = ROLL_PASS) {
+  speed = Math.min(MAX_BALL_SPEED, speed);
+  freeBall(ball);
+  ball.clearVelocity();
+  ball.applyImpulse({ x: dir.x * speed, y: lift, z: dir.z * speed });
+  rolling.set(ball.id, { ball, dir, speed, decay });
+}
+
+// distance ブロック先で止まる速さ
+function speedFor(distance, decay = ROLL_PASS) {
+  return Math.max(0.15, distance * (1 - decay));
+}
+
+function directionTo(from, to) {
   const dx = to.x - from.x;
   const dz = to.z - from.z;
   const len = Math.hypot(dx, dz) || 1;
-  freeBall(ball);
-  ball.clearVelocity();
-  ball.applyImpulse({ x: (dx / len) * power, y: lift, z: (dz / len) * power });
+  return { x: dx / len, z: dz / len };
 }
 
-function kickInDirection(ball, dir, power, lift) {
-  freeBall(ball);
-  ball.clearVelocity();
-  ball.applyImpulse({ x: dir.x * power, y: lift, z: dir.z * power });
+function kickToward(ball, from, to, speed, lift, decay = ROLL_PASS) {
+  launch(ball, directionTo(from, to), speed, lift, decay);
+}
+
+function kickInDirection(ball, dir, speed, lift, decay = ROLL_PASS) {
+  launch(ball, dir, speed, lift, decay);
+}
+
+// to まで届くように蹴る（extra ブロックだけ少し先まで転がす）
+function passTo(ball, to, lift, extra = 1.5) {
+  const d = horizontalDistance(ball.location, to);
+  launch(ball, directionTo(ball.location, to), speedFor(d + extra), lift, ROLL_PASS);
+}
+
+function isPossessed(ballId) {
+  for (const bid of possession.values()) if (bid === ballId) return true;
+  return false;
+}
+
+function rollTick() {
+  for (const [id, r] of rolling) {
+    const ball = r.ball;
+    if (!isValid(ball) || ball.hasTag("soccer_scored") || isPossessed(id)) {
+      rolling.delete(id);
+      continue;
+    }
+    const v = ball.getVelocity();
+    // 壁や人に当たって急に止まったら、転がしをやめる
+    if (Math.hypot(v.x, v.z) < r.speed * 0.3) {
+      rolling.delete(id);
+      continue;
+    }
+    r.speed *= r.decay;
+    if (r.speed < 0.04) {
+      rolling.delete(id);
+      continue;
+    }
+    ball.clearVelocity();
+    ball.applyImpulse({ x: r.dir.x * r.speed, y: v.y, z: r.dir.z * r.speed });
+  }
 }
 
 world.afterEvents.entityHitEntity.subscribe((ev) => {
@@ -419,9 +482,9 @@ world.afterEvents.entityHitEntity.subscribe((ev) => {
   const len = Math.hypot(view.x, view.z) || 1;
   const dir = { x: view.x / len, z: view.z / len };
   if (kicker.isSneaking) {
-    kickInDirection(ball, dir, PASS_POWER, PASS_LIFT);
+    kickInDirection(ball, dir, speedFor(PASS_DISTANCE), PASS_LIFT);
   } else {
-    kickInDirection(ball, dir, SHOT_POWER, Math.min(0.9, Math.max(0.15, SHOT_LIFT + view.y * 0.6)));
+    kickInDirection(ball, dir, SHOT_POWER, Math.min(0.9, Math.max(0.15, SHOT_LIFT + view.y * 0.6)), ROLL_SHOT);
   }
 });
 
@@ -501,7 +564,7 @@ function npcKick(ball, npc) {
   if (!target) {
     // 相手ゴールがないときは向いている方向へ蹴る
     const view = npc.getViewDirection();
-    kickToward(ball, npc.location, { x: ball.location.x + view.x, z: ball.location.z + view.z }, NPC_DRIBBLE_POWER, 0.1);
+    kickToward(ball, npc.location, { x: ball.location.x + view.x, z: ball.location.z + view.z }, NPC_DRIBBLE_POWER, 0.05, ROLL_TOUCH);
     return;
   }
 
@@ -510,29 +573,34 @@ function npcKick(ball, npc) {
   const distance = horizontalDistance(ball.location, mouth);
 
   const sk = skill(side);
-  if (distance <= sk.shootRange) {
-    // シュート: ゴールの中のどこかを狙う
-    const aim = (Math.random() * 2 - 1) * sk.aim;
+  const st = npcStats(npc);
+  if (distance <= sk.shootRange + st.sht * 2) {
+    // シュート: ゴールの中のどこかを狙う（シュートが得意な選手ほど強く正確）
+    const aim = (Math.random() * 2 - 1) * sk.aim * (1 - 0.15 * st.sht);
     const to = { x: base.x + 0.5 + f.x + r.x * aim, z: base.z + 0.5 + f.z + r.z * aim };
-    kickToward(ball, ball.location, to, sk.shotPower, 0.2 + Math.random() * 0.2);
+    kickToward(ball, ball.location, to, sk.shotPower * (1 + 0.08 * st.sht), 0.2 + Math.random() * 0.2, ROLL_SHOT);
     return;
   }
 
-  // パス: 自分よりゴールに近い味方がいたら、ときどきパスを出す
-  if (Math.random() < sk.passChance) {
+  // パス: 自分よりゴールに近い味方がいたら、ときどきパスを出す（パスが得意な選手ほどよく出し、正確）
+  if (Math.random() < sk.passChance + 0.12 * st.pas) {
     const mates = teammates(npc.dimension, side, npc.location, 16).filter(
       (m) => m.id !== npc.id && horizontalDistance(m.location, mouth) < distance - 4
     );
     if (mates.length > 0) {
       const mate = mates[Math.floor(Math.random() * mates.length)];
-      const d = horizontalDistance(ball.location, mate.location);
-      kickToward(ball, ball.location, mate.location, Math.min(0.9, 0.25 + d * 0.05), 0.15);
+      const miss = Math.max(0, 1.5 - st.pas * 0.75);
+      const to = {
+        x: mate.location.x + (Math.random() * 2 - 1) * miss,
+        z: mate.location.z + (Math.random() * 2 - 1) * miss,
+      };
+      passTo(ball, to, 0.14);
       return;
     }
   }
 
   // ドリブル: ゴールの方向へ軽く蹴り出す
-  kickToward(ball, ball.location, mouth, NPC_DRIBBLE_POWER, 0.08);
+  kickToward(ball, ball.location, mouth, NPC_DRIBBLE_POWER, 0.05, ROLL_TOUCH);
 }
 
 // キーパー: ゴール前でボールとゴールの間に立ち、近づいたら飛び出してクリア
@@ -565,7 +633,7 @@ function keeperTick(keeper, balls) {
     keeperCooldown.set(keeper.id, now + 20);
     const enemy = findGoal(keeper.dimension, SIDES[side].attack);
     const to = enemy ? enemy.location : { x: mouth.x - f.x * 20, z: mouth.z - f.z * 20 };
-    kickToward(ball, bp, to, 1.3, 0.6);
+    kickToward(ball, bp, to, 1.3, 0.6, ROLL_SHOT);
     return;
   }
 
@@ -752,9 +820,10 @@ function spawnTeam(dim, p, side, teamKey, size) {
     const pos = slotPosition(p, side, frac, offset);
     const npc = dim.spawnEntity(NPC, { x: pos.x, y: pos.y + 0.1, z: pos.z });
     npc.triggerEvent(`soccer:v${t.fieldVariantBase + index}`);
-    npc.triggerEvent(`soccer:speed${skill(side).speed}`);
-    for (const tag of [`soccer_side_${side}`, `soccer_team_${t.key}`, `soccer_slot${slot}`, `soccer_size${size}`]) npc.addTag(tag);
     const info = t.players[index];
+    npc.triggerEvent(`soccer:speed${Math.max(0, Math.min(6, skill(side).speed + info.stats.spd))}`);
+    for (const tag of [`soccer_side_${side}`, `soccer_team_${t.key}`, `soccer_slot${slot}`, `soccer_size${size}`, `soccer_pid${index}`])
+      npc.addTag(tag);
     npc.nameTag = `${SIDES[side].color}${info.num} ${info.name}`;
   });
 
@@ -932,10 +1001,9 @@ function doPass(player) {
   const dir = stickDirection(player);
   const mate = findMate(player, ball, dir);
   if (mate) {
-    const d = horizontalDistance(ball.location, mate.location);
-    kickToward(ball, ball.location, mate.location, Math.min(1.0, 0.25 + d * 0.045), 0.1);
+    passTo(ball, mate.location, 0.12);
   } else {
-    kickInDirection(ball, dir, 0.6, 0.1);
+    kickInDirection(ball, dir, speedFor(12), 0.12);
   }
 }
 
@@ -945,10 +1013,11 @@ function doLob(player) {
   const dir = stickDirection(player);
   const mate = findMate(player, ball, dir);
   if (mate) {
+    // 遠い味方ほど高く上げる
     const d = horizontalDistance(ball.location, mate.location);
-    kickToward(ball, ball.location, mate.location, Math.min(1.0, 0.2 + d * 0.03), 0.55);
+    passTo(ball, mate.location, Math.min(0.8, 0.4 + d * 0.012), 2);
   } else {
-    kickInDirection(ball, dir, 0.6, 0.55);
+    kickInDirection(ball, dir, speedFor(16), 0.6);
   }
 }
 
@@ -958,7 +1027,7 @@ function doThroughPass(player) {
   const dir = stickDirection(player);
   const mate = findMate(player, ball, dir);
   if (!mate) {
-    kickInDirection(ball, dir, 0.8, 0.08);
+    kickInDirection(ball, dir, speedFor(16), 0.1);
     return;
   }
   // 味方の少し前（相手ゴール側、なければパスの方向）へ出す
@@ -972,8 +1041,7 @@ function doThroughPass(player) {
     ahead = { x: gx / len, z: gz / len };
   }
   const spot = { x: mate.location.x + ahead.x * 4, z: mate.location.z + ahead.z * 4 };
-  const d = horizontalDistance(ball.location, spot);
-  kickToward(ball, ball.location, spot, Math.min(1.1, 0.3 + d * 0.045), 0.08);
+  passTo(ball, spot, 0.1, 1.5);
 }
 
 function doShot(player) {
@@ -991,11 +1059,11 @@ function doShot(player) {
       // ゴールの方を向いていたら、スティックの向きに近いほうのサイドを狙う
       const side = Math.max(-1.8, Math.min(1.8, (dir.x * r.x + dir.z * r.z) * 6));
       const to = { x: base.x + 0.5 + f.x + r.x * side, z: base.z + 0.5 + f.z + r.z * side };
-      kickToward(ball, ball.location, to, 1.25, Math.min(0.45, 0.2 + gd * 0.01));
+      kickToward(ball, ball.location, to, 1.4, Math.min(0.45, 0.2 + gd * 0.01), ROLL_SHOT);
       return;
     }
   }
-  kickInDirection(ball, dir, 1.2, 0.3);
+  kickInDirection(ball, dir, 1.3, 0.3, ROLL_SHOT);
 }
 
 // アイテムを「使う」: シューズ＝シュート、パス、クロス、スルーパス、ホイッスル＝メニュー
@@ -1075,6 +1143,7 @@ system.runInterval(() => {
     lastSneak.set(player.id, sneaking);
     dribbleTick(player);
   }
+  rollTick();
 }, 1);
 
 // 手に持っているサッカーのアイテムを、画面下に大きく表示する（ホットバーで見分けやすく）

@@ -137,17 +137,37 @@
       },
       "soccer:speed0": {
         "minecraft:movement": {
-          "value": 0.22
+          "value": 0.2
         }
       },
       "soccer:speed1": {
         "minecraft:movement": {
-          "value": 0.28
+          "value": 0.23
         }
       },
       "soccer:speed2": {
         "minecraft:movement": {
-          "value": 0.34
+          "value": 0.26
+        }
+      },
+      "soccer:speed3": {
+        "minecraft:movement": {
+          "value": 0.28
+        }
+      },
+      "soccer:speed4": {
+        "minecraft:movement": {
+          "value": 0.3
+        }
+      },
+      "soccer:speed5": {
+        "minecraft:movement": {
+          "value": 0.33
+        }
+      },
+      "soccer:speed6": {
+        "minecraft:movement": {
+          "value": 0.36
         }
       }
     },
@@ -362,6 +382,34 @@
         "add": {
           "component_groups": [
             "soccer:speed2"
+          ]
+        }
+      },
+      "soccer:speed3": {
+        "add": {
+          "component_groups": [
+            "soccer:speed3"
+          ]
+        }
+      },
+      "soccer:speed4": {
+        "add": {
+          "component_groups": [
+            "soccer:speed4"
+          ]
+        }
+      },
+      "soccer:speed5": {
+        "add": {
+          "component_groups": [
+            "soccer:speed5"
+          ]
+        }
+      },
+      "soccer:speed6": {
+        "add": {
+          "component_groups": [
+            "soccer:speed6"
           ]
         }
       },
