@@ -39,6 +39,9 @@ const NPC = "soccer:player";
 const KEEPER = "soccer:keeper";
 const BOOTS = "soccer:boots";
 const WHISTLE = "soccer:whistle";
+const PASS_ITEM = "soccer:pass";
+const CROSS_ITEM = "soccer:cross";
+const THROUGH_ITEM = "soccer:through";
 const NET = "minecraft:iron_bars";
 const DIMENSIONS = ["overworld", "nether", "the_end"];
 
@@ -843,6 +846,7 @@ async function openMenu(player) {
 //   アイテムを捨てる → スルーパス（味方の前のスペースへ）
 //   スプリント       → ダッシュ（マイクラの通常のダッシュ）
 //   使う（ホイッスル）→ 試合メニュー
+// ホットバーのアイテムを「使う」でも発動できる: パス／クロス／スルーパス
 const lastJump = new Map();
 const lastSneak = new Map();
 const lastOnGround = new Map();
@@ -972,24 +976,30 @@ function doShot(player) {
   kickInDirection(ball, dir, 1.2, 0.3);
 }
 
-// アイテムを「使う」: シューズ＝シュート、ホイッスル＝メニュー
+// アイテムを「使う」: シューズ＝シュート、パス、クロス、スルーパス、ホイッスル＝メニュー
 // （使えたかどうかに関係なく反応するよう before と after の両方で受ける。二重にはならない）
 const lastItemUse = new Map();
+const ITEM_ACTIONS = {
+  [BOOTS]: doShot,
+  [PASS_ITEM]: doPass,
+  [CROSS_ITEM]: doLob,
+  [THROUGH_ITEM]: doThroughPass,
+  [WHISTLE]: openMenu,
+};
 
 function onItemUse(player, id) {
   if (!player || player.typeId !== "minecraft:player") return;
   const now = system.currentTick;
   if ((lastItemUse.get(player.id) ?? -10) > now - 4) return;
   lastItemUse.set(player.id, now);
-  if (id === BOOTS) doShot(player);
-  else if (id === WHISTLE) openMenu(player);
+  ITEM_ACTIONS[id]?.(player);
 }
 
 world.afterEvents.itemUse.subscribe((ev) => onItemUse(ev.source, ev.itemStack?.typeId));
 world.beforeEvents?.itemUse?.subscribe((ev) => {
   const player = ev.source;
   const id = ev.itemStack?.typeId;
-  if (id === BOOTS || id === WHISTLE) system.run(() => onItemUse(player, id));
+  if (ITEM_ACTIONS[id]) system.run(() => onItemUse(player, id));
 });
 
 // スルーパス: シューズを「捨てる」→ すぐ手元に戻す
@@ -1020,9 +1030,12 @@ function giveItem(player, id, slot) {
   else inv.addItem(new ItemStack(id, 1));
 }
 
-// シューズはホットバーの1番目、ホイッスルは9番目
+// ホットバー: 1=シュート 2=パス 3=クロス 4=スルーパス 9=ホイッスル
 function giveSoccerItems(player) {
   giveItem(player, BOOTS, 0);
+  giveItem(player, PASS_ITEM, 1);
+  giveItem(player, CROSS_ITEM, 2);
+  giveItem(player, THROUGH_ITEM, 3);
   giveItem(player, WHISTLE, 8);
 }
 

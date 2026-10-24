@@ -8,3 +8,6 @@ item.spawn_egg.entity.soccer:goal_red.name=赤ゴールを設置
 item.spawn_egg.entity.soccer:goal_blue.name=青ゴールを設置
 item.soccer:boots.name=サッカーシューズ（使う＝シュート）
 item.soccer:whistle.name=ホイッスル（使う＝試合メニュー）
+item.soccer:pass.name=パス（使う＝パス）
+item.soccer:cross.name=クロス／ロブ（使う＝浮き球）
+item.soccer:through.name=スルーパス（使う＝スルーパス）

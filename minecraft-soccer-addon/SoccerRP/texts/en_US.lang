@@ -8,3 +8,6 @@ item.spawn_egg.entity.soccer:goal_red.name=Place Red Goal
 item.spawn_egg.entity.soccer:goal_blue.name=Place Blue Goal
 item.soccer:boots.name=Soccer Boots (Use = Shoot)
 item.soccer:whistle.name=Whistle (Use = Match Menu)
+item.soccer:pass.name=Pass (Use)
+item.soccer:cross.name=Cross / Lob (Use)
+item.soccer:through.name=Through Ball (Use)

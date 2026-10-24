@@ -12,7 +12,7 @@ import zipfile
 
 from PIL import Image
 
-VERSION = [1, 7, 0]
+VERSION = [1, 8, 0]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BP = os.path.join(ROOT, "SoccerBP")
@@ -301,6 +301,79 @@ def build_entities():
         )
 
 
+# ===== 操作アイテム（使うと発動） =====
+# (id, テクスチャ名, 日本語名, 英語名, 矢印の色, 矢印の形)
+ACTION_ITEMS = [
+    ("soccer:pass", "soccer_pass", "パス（使う＝パス）", "Pass (Use)", (60, 200, 80, 255), "straight"),
+    ("soccer:cross", "soccer_cross", "クロス／ロブ（使う＝浮き球）", "Cross / Lob (Use)", (240, 190, 40, 255), "arc"),
+    ("soccer:through", "soccer_through", "スルーパス（使う＝スルーパス）", "Through Ball (Use)", (60, 140, 240, 255), "double"),
+]
+# 手で描いた（build.py で作らない）アイテム
+STATIC_ITEMS = [
+    ("soccer:boots", "soccer_boots", "サッカーシューズ（使う＝シュート）", "Soccer Boots (Use = Shoot)"),
+    ("soccer:whistle", "soccer_whistle", "ホイッスル（使う＝試合メニュー）", "Whistle (Use = Match Menu)"),
+]
+
+
+def make_action_icon(color, shape):
+    """左下にボール、右上へ向かう矢印のアイコン（16x16）"""
+    img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    ball = ["..WWWW..", ".WWKKWW.", "WWKKKKWW", "WWWKKWWW", "WKWWWWKW", "WWWWWWWW", ".WWWWWW.", "..WWWW.."]
+    for y, row in enumerate(ball):
+        for x, c in enumerate(row):
+            if c != ".":
+                img.putpixel((x, 8 + y), WHITE if c == "W" else BLACK)
+    pts = []
+    if shape == "straight":
+        pts = [(9 + i, 6) for i in range(6)] + [(13, 4), (13, 5), (14, 5), (13, 7), (13, 8), (14, 7)]
+    elif shape == "arc":
+        pts = [(8, 7), (8, 6), (9, 5), (9, 4), (10, 3), (11, 3), (12, 3), (13, 4), (13, 5), (14, 6), (14, 7)]
+        pts += [(12, 6), (13, 7), (15, 6), (15, 5)]
+    elif shape == "double":
+        for y in (3, 7):
+            pts += [(9 + i, y) for i in range(5)] + [(13, y - 1), (14, y), (13, y + 1)]
+    for x, y in pts:
+        if 0 <= x < 16 and 0 <= y < 16:
+            img.putpixel((x, y), color)
+    return img
+
+
+def build_items():
+    items_dir = os.path.join(BP, "items")
+    tex_dir = os.path.join(RP, "textures", "items")
+    os.makedirs(tex_dir, exist_ok=True)
+    texture_data = {}
+    for ident, tex, *_ in STATIC_ITEMS:
+        texture_data[tex] = {"textures": f"textures/items/{tex}"}
+    for ident, tex, _ja, _en, color, shape in ACTION_ITEMS:
+        make_action_icon(color, shape).save(os.path.join(tex_dir, f"{tex}.png"))
+        texture_data[tex] = {"textures": f"textures/items/{tex}"}
+        write_json(
+            os.path.join(items_dir, f"{tex}.json"),
+            {
+                "format_version": "1.20.80",
+                "minecraft:item": {
+                    "description": {"identifier": ident, "menu_category": {"category": "equipment"}},
+                    "components": {"minecraft:icon": {"texture": tex}, "minecraft:max_stack_size": 1},
+                },
+            },
+        )
+    write_json(
+        os.path.join(RP, "textures", "item_texture.json"),
+        {"resource_pack_name": "soccer", "texture_name": "atlas.items", "texture_data": texture_data},
+    )
+
+    # 名前（.lang）の item 行を作り直す
+    for lang, col in (("ja_JP", 2), ("en_US", 3)):
+        path = os.path.join(RP, "texts", f"{lang}.lang")
+        with open(path, encoding="utf-8") as f:
+            lines = [l for l in f.read().splitlines() if l and not l.startswith("item.soccer:")]
+        for item in STATIC_ITEMS + [a[:4] for a in ACTION_ITEMS]:
+            lines.append(f"item.{item[0]}.name={item[col]}")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+
 def build_teams_js():
     """スクリプトが使うチームの一覧を書き出す"""
     teams = []
@@ -355,6 +428,7 @@ def build_mcaddon():
 if __name__ == "__main__":
     build_textures()
     build_entities()
+    build_items()
     build_teams_js()
     build_manifests()
     print(build_mcaddon())

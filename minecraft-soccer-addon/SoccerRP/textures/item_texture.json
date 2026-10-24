@@ -7,6 +7,15 @@
     },
     "soccer_whistle": {
       "textures": "textures/items/soccer_whistle"
+    },
+    "soccer_pass": {
+      "textures": "textures/items/soccer_pass"
+    },
+    "soccer_cross": {
+      "textures": "textures/items/soccer_cross"
+    },
+    "soccer_through": {
+      "textures": "textures/items/soccer_through"
     }
   }
 }
