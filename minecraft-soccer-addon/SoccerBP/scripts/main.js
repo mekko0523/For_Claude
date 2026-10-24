@@ -449,6 +449,7 @@ const ROLL_PASS = 0.94; // パス・クロス（約 速さ×17 ブロック転�
 const ROLL_SHOT = 0.96; // シュート・クリア（パスより遠くまで伸びる。強すぎるとピッチの外まで飛ぶ）
 const ROLL_TOUCH = 0.85; // 選手のドリブルの小さなタッチ
 const MAX_BALL_SPEED = 2.0;
+const BALL_GRAVITY = 0.08; // 転がしている間の重力（毎tick、上向きの速さから引く）
 const rolling = new Map(); // ボールの id → { ball, dir, speed, decay }
 
 function launch(ball, dir, speed, lift, decay = ROLL_PASS) {
@@ -456,7 +457,7 @@ function launch(ball, dir, speed, lift, decay = ROLL_PASS) {
   freeBall(ball);
   ball.clearVelocity();
   ball.applyImpulse({ x: dir.x * speed, y: lift, z: dir.z * speed });
-  rolling.set(ball.id, { ball, dir, speed, decay });
+  rolling.set(ball.id, { ball, dir, speed, decay, vy: lift });
 }
 
 // distance ブロック先で止まる速さ
@@ -490,6 +491,12 @@ function isPossessed(ballId) {
   return false;
 }
 
+function isOnGround(entity) {
+  if (typeof entity.isOnGround === "boolean") return entity.isOnGround;
+  const l = entity.location;
+  return !isPassable(entity.dimension, { x: l.x, y: l.y - 0.1, z: l.z });
+}
+
 function rollTick() {
   for (const [id, r] of rolling) {
     const ball = r.ball;
@@ -508,8 +515,11 @@ function rollTick() {
       rolling.delete(id);
       continue;
     }
+    // 上下の動きもスクリプトで決める（マイクラの速度をそのまま使うと、空中で止まってしまうため）
+    if (isOnGround(ball) && r.vy <= 0) r.vy = 0;
+    else r.vy = Math.max(-1.5, r.vy - BALL_GRAVITY);
     ball.clearVelocity();
-    ball.applyImpulse({ x: r.dir.x * r.speed, y: v.y, z: r.dir.z * r.speed });
+    ball.applyImpulse({ x: r.dir.x * r.speed, y: r.vy, z: r.dir.z * r.speed });
   }
 }
 
@@ -649,6 +659,8 @@ function npcKick(ball, npc) {
 }
 
 // キーパー: ゴール前でボールとゴールの間に立ち、近づいたら飛び出してクリア
+const KEEPER_PASS_RANGE = 20; // キーパーがパスを出す味方を探す距離
+const KEEPER_CLEAR_DISTANCE = 15; // 味方がいないとき、ゴールからどれだけ前へ蹴り出すか
 const keeperCooldown = new Map();
 
 function keeperTick(keeper, balls) {
@@ -676,9 +688,21 @@ function keeperTick(keeper, balls) {
     (keeperCooldown.get(keeper.id) ?? 0) <= now
   ) {
     keeperCooldown.set(keeper.id, now + 20);
-    const enemy = findGoal(keeper.dimension, SIDES[side].attack);
-    const to = enemy ? enemy.location : { x: mouth.x - f.x * 20, z: mouth.z - f.z * 20 };
-    kickToward(ball, bp, to, 1.0, 0.5, ROLL_SHOT);
+    // 近くの味方（ゴールから少し離れた選手）へつなぐ。いなければ、ボールのある側へ15ブロックほど蹴り出す
+    const mates = teammates(keeper.dimension, side, kp, KEEPER_PASS_RANGE).filter(
+      (m) => m.id !== keeper.id && horizontalDistance(m.location, mouth) > 6
+    );
+    if (mates.length > 0) {
+      const mate = mates[Math.floor(Math.random() * mates.length)];
+      passTo(ball, mate.location, 0.3);
+    } else {
+      const offset = (bp.x - mouth.x) * r.x + (bp.z - mouth.z) * r.z;
+      const spot = {
+        x: mouth.x - f.x * KEEPER_CLEAR_DISTANCE + r.x * Math.sign(offset || 1) * 8,
+        z: mouth.z - f.z * KEEPER_CLEAR_DISTANCE + r.z * Math.sign(offset || 1) * 8,
+      };
+      passTo(ball, spot, 0.35, 0);
+    }
     return;
   }
 
@@ -1061,7 +1085,7 @@ function doLob(player) {
   if (mate) {
     // 遠い味方ほど高く上げる
     const d = horizontalDistance(ball.location, mate.location);
-    passTo(ball, mate.location, Math.min(0.65, 0.4 + d * 0.01), 2);
+    passTo(ball, mate.location, Math.min(0.65, 0.4 + d * 0.01), 3);
   } else {
     kickInDirection(ball, dir, speedFor(16), 0.6);
   }
