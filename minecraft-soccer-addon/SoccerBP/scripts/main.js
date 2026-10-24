@@ -7,7 +7,11 @@ const SHOT_POWER = 1.2; // プレイヤーがボールを叩いたとき（シ�
 const SHOT_LIFT = 0.35; // シュートの浮き上がり（上を向くとさらに高く上がる）
 const PASS_POWER = 0.6; // スニーク中に叩いたとき（パス）の強さ
 const PASS_LIFT = 0.12;
-const DRIBBLE_RANGE = 1.0; // ドリブルでボールが押される距離
+const POSSESS_RANGE = 1.5; // ボールにこれより近づくと、ボールを持つ（足元に吸い付く）
+const KEEP_RANGE = 3.0; // ボールがこれより離れたら、ボールを失う
+const FEET_DISTANCE = 0.9; // ドリブル中、ボールを体の前のどこに置くか
+const DRIBBLE_PULL = 0.35; // ボールを足元へ引き寄せる強さ
+const FREE_TICKS = 10; // 蹴った直後、ボールが足元に吸い付かない時間（tick）
 const RESET_DELAY = 60; // ゴール後、ボールが戻るまでの時間（tick、20 = 1秒）
 
 const NPC_SHOOT_RANGE = 14; // 相手ゴールまでこの距離以内ならシュート
@@ -26,7 +30,7 @@ const SHIFT_SIDE = 0.35; // ボールの位置に合わせて、チーム全体�
 
 const KICK_RANGE = 2.2; // この距離以内にボールがあるとボタンで蹴れる
 const PASS_CONE = 0.7; // パス相手を探す向きの幅（cos、0.7 ≒ 左右45度）
-const SHOT_CONE = 0.5; // ゴールを自動で狙う向きの幅（cos、0.5 ≒ 左右60度）
+const SHOT_CONE = 0.35; // ゴールを自動で狙う向きの幅（cos、0.35 ≒ 左右70度）
 const BUTTON_COOLDOWN = 6; // tick
 
 // ===== 名前 =====
@@ -291,6 +295,7 @@ function centerFor(dimension, scoredGoal) {
 
 function placeBall(ball, pos) {
   if (!isValid(ball)) return;
+  freeBall(ball);
   ball.teleport(pos);
   ball.clearVelocity();
   ball.removeTag("soccer_scored");
@@ -359,16 +364,27 @@ function checkGoal(ball, goals) {
   }
 }
 
-// ===== プレイヤーのキック（ボールを直接叩く） =====
+// ===== キック =====
+// 蹴ったボールは、しばらく誰の足元にも吸い付かない（ドリブルが解ける）
+const possession = new Map(); // プレイヤーの id → 持っているボールの id
+const ballFreeUntil = new Map(); // ボールの id → 吸い付かなくなる時間
+
+function freeBall(ball) {
+  ballFreeUntil.set(ball.id, system.currentTick + FREE_TICKS);
+  for (const [pid, bid] of possession) if (bid === ball.id) possession.delete(pid);
+}
+
 function kickToward(ball, from, to, power, lift) {
   const dx = to.x - from.x;
   const dz = to.z - from.z;
   const len = Math.hypot(dx, dz) || 1;
+  freeBall(ball);
   ball.clearVelocity();
   ball.applyImpulse({ x: (dx / len) * power, y: lift, z: (dz / len) * power });
 }
 
 function kickInDirection(ball, dir, power, lift) {
+  freeBall(ball);
   ball.clearVelocity();
   ball.applyImpulse({ x: dir.x * power, y: lift, z: dir.z * power });
 }
@@ -393,27 +409,65 @@ world.afterEvents.entityHitEntity.subscribe((ev) => {
   }
 });
 
-// ===== ドリブル =====
-function dribble(ball, players) {
-  const bp = ball.location;
-  for (const player of players) {
-    const pp = player.location;
-    const dx = bp.x - pp.x;
-    const dz = bp.z - pp.z;
-    if (Math.hypot(dx, dz) > DRIBBLE_RANGE || Math.abs(bp.y - pp.y) > 1.5) continue;
+// ===== ドリブル: ボールを持っている間は、足元の前に吸い付く =====
+function findBallById(player, id) {
+  return player.dimension
+    .getEntities({ type: BALL, location: player.location, maxDistance: KEEP_RANGE })
+    .find((b) => b.id === id);
+}
 
-    const pv = player.getVelocity();
-    const speed = Math.hypot(pv.x, pv.z);
-    if (speed < 0.05) continue;
-    // プレイヤーが進む方向の前にボールがあるときだけ押す
-    if (dx * pv.x + dz * pv.z <= 0) continue;
+function isPossessedByOther(player, ball) {
+  for (const [pid, bid] of possession) if (bid === ball.id && pid !== player.id) return true;
+  return false;
+}
 
-    const bv = ball.getVelocity();
-    const want = { x: pv.x * 1.4, z: pv.z * 1.4 };
-    if (Math.hypot(bv.x, bv.z) >= Math.hypot(want.x, want.z)) continue;
-    ball.applyImpulse({ x: want.x - bv.x, y: 0, z: want.z - bv.z });
-    return;
+function dribbleTick(player) {
+  const now = system.currentTick;
+  let ball;
+  const id = possession.get(player.id);
+  if (id !== undefined) {
+    ball = findBallById(player, id);
+    if (!ball || ball.hasTag("soccer_scored") || Math.abs(ball.location.y - player.location.y) > 2) {
+      possession.delete(player.id);
+      ball = undefined;
+    }
   }
+  if (!ball) {
+    ball = player.dimension
+      .getEntities({ type: BALL, location: player.location, maxDistance: POSSESS_RANGE + 1 })
+      .find(
+        (b) =>
+          !b.hasTag("soccer_scored") &&
+          (ballFreeUntil.get(b.id) ?? 0) <= now &&
+          horizontalDistance(b.location, player.location) < POSSESS_RANGE &&
+          Math.abs(b.location.y - player.location.y) < 1.5 &&
+          !isPossessedByOther(player, b)
+      );
+    if (!ball) return;
+    possession.set(player.id, ball.id);
+  }
+
+  // 体の前（動いている方向、止まっていれば向いている方向）へボールを運ぶ
+  const dir = stickDirection(player);
+  const pv = player.getVelocity();
+  const bv = ball.getVelocity();
+  const target = { x: player.location.x + dir.x * FEET_DISTANCE, z: player.location.z + dir.z * FEET_DISTANCE };
+  ball.clearVelocity();
+  ball.applyImpulse({
+    x: pv.x + (target.x - ball.location.x) * DRIBBLE_PULL,
+    y: Math.min(bv.y, 0),
+    z: pv.z + (target.z - ball.location.z) * DRIBBLE_PULL,
+  });
+}
+
+// 持っているボール（なければ近くのボール）
+function controlledBall(player) {
+  const id = possession.get(player.id);
+  if (id !== undefined) {
+    const ball = findBallById(player, id);
+    if (ball && !ball.hasTag("soccer_scored")) return ball;
+  }
+  return nearestBall(player);
 }
 
 // ===== 選手（NPC） =====
@@ -658,13 +712,11 @@ system.runInterval(() => {
     const balls = dim.getEntities({ type: BALL });
     if (balls.length === 0) continue;
     const goals = getGoals(dim);
-    const players = dim.getPlayers();
     for (const keeper of dim.getEntities({ type: KEEPER })) keeperTick(keeper, balls);
     retreatTick(dim, balls);
     positionTick(dim, balls);
     for (const ball of balls) {
       if (ball.hasTag("soccer_scored")) continue;
-      dribble(ball, players);
       checkGoal(ball, goals);
     }
   }
@@ -849,7 +901,7 @@ function canKick(player) {
 }
 
 function doPass(player) {
-  const ball = nearestBall(player);
+  const ball = controlledBall(player);
   if (!ball || !canKick(player)) return;
   const dir = stickDirection(player);
   const mate = findMate(player, ball, dir);
@@ -862,7 +914,7 @@ function doPass(player) {
 }
 
 function doLob(player) {
-  const ball = nearestBall(player);
+  const ball = controlledBall(player);
   if (!ball || !canKick(player)) return;
   const dir = stickDirection(player);
   const mate = findMate(player, ball, dir);
@@ -875,7 +927,7 @@ function doLob(player) {
 }
 
 function doThroughPass(player) {
-  const ball = nearestBall(player);
+  const ball = controlledBall(player);
   if (!ball || !canKick(player)) return;
   const dir = stickDirection(player);
   const mate = findMate(player, ball, dir);
@@ -899,7 +951,7 @@ function doThroughPass(player) {
 }
 
 function doShot(player) {
-  const ball = nearestBall(player);
+  const ball = controlledBall(player);
   if (!ball || !canKick(player)) return;
   const dir = stickDirection(player);
   const goal = findGoal(player.dimension, SIDES.blue.attack);
@@ -920,10 +972,24 @@ function doShot(player) {
   kickInDirection(ball, dir, 1.2, 0.3);
 }
 
-world.afterEvents.itemUse.subscribe((ev) => {
+// アイテムを「使う」: シューズ＝シュート、ホイッスル＝メニュー
+// （使えたかどうかに関係なく反応するよう before と after の両方で受ける。二重にはならない）
+const lastItemUse = new Map();
+
+function onItemUse(player, id) {
+  if (!player || player.typeId !== "minecraft:player") return;
+  const now = system.currentTick;
+  if ((lastItemUse.get(player.id) ?? -10) > now - 4) return;
+  lastItemUse.set(player.id, now);
+  if (id === BOOTS) doShot(player);
+  else if (id === WHISTLE) openMenu(player);
+}
+
+world.afterEvents.itemUse.subscribe((ev) => onItemUse(ev.source, ev.itemStack?.typeId));
+world.beforeEvents?.itemUse?.subscribe((ev) => {
+  const player = ev.source;
   const id = ev.itemStack?.typeId;
-  if (id === BOOTS) doShot(ev.source);
-  else if (id === WHISTLE) openMenu(ev.source);
+  if (id === BOOTS || id === WHISTLE) system.run(() => onItemUse(player, id));
 });
 
 // スルーパス: シューズを「捨てる」→ すぐ手元に戻す
@@ -935,7 +1001,7 @@ world.afterEvents.entitySpawn.subscribe((ev) => {
   const [player] = item.dimension.getPlayers({ location: item.location, closest: 1, maxDistance: 4 });
   item.remove();
   if (!player) return;
-  giveItem(player, BOOTS, true);
+  giveItem(player, BOOTS, player.selectedSlotIndex ?? player.selectedSlot);
   doThroughPass(player);
 });
 
@@ -946,20 +1012,18 @@ function hasItem(inv, id) {
   return false;
 }
 
-function giveItem(player, id, toSelectedSlot = false) {
+// 持っていなければ渡す。slot が空いていればそこ（ホットバーの決まった場所）に置く
+function giveItem(player, id, slot) {
   const inv = player.getComponent("minecraft:inventory")?.container;
-  if (!inv) return;
-  const slot = player.selectedSlotIndex ?? player.selectedSlot;
-  if (toSelectedSlot && slot !== undefined && !inv.getItem(slot)) {
-    inv.setItem(slot, new ItemStack(id, 1));
-  } else if (!hasItem(inv, id)) {
-    inv.addItem(new ItemStack(id, 1));
-  }
+  if (!inv || hasItem(inv, id)) return;
+  if (slot !== undefined && !inv.getItem(slot)) inv.setItem(slot, new ItemStack(id, 1));
+  else inv.addItem(new ItemStack(id, 1));
 }
 
+// シューズはホットバーの1番目、ホイッスルは9番目
 function giveSoccerItems(player) {
-  giveItem(player, BOOTS);
-  giveItem(player, WHISTLE);
+  giveItem(player, BOOTS, 0);
+  giveItem(player, WHISTLE, 8);
 }
 
 // パス（ジャンプ）とロブ（スニーク）は、ボタンを押した瞬間を見つける
@@ -974,6 +1038,7 @@ system.runInterval(() => {
     if (sneaking && !lastSneak.get(player.id)) doLob(player);
     lastJump.set(player.id, jumping);
     lastSneak.set(player.id, sneaking);
+    dribbleTick(player);
   }
 }, 1);
 
