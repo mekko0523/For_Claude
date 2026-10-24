@@ -12,7 +12,7 @@ import zipfile
 
 from PIL import Image
 
-VERSION = [1, 8, 0]
+VERSION = [1, 9, 0]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BP = os.path.join(ROOT, "SoccerBP")
@@ -182,6 +182,9 @@ def build_textures():
         make_skin(num, team["keeper_kit"], skin, hair, style).save(os.path.join(tex, f"keeper_{team['key']}.png"))
 
 
+# 強さ（よわい・ふつう・つよい）ごとの走る速さ。scripts の DIFFICULTIES と同じ順番
+SPEEDS = [0.22, 0.28, 0.34]
+
 NO_DAMAGE = {"triggers": [{"cause": "all", "deals_damage": False}]}
 
 
@@ -224,6 +227,9 @@ def build_entities():
         },
     }
     events = {f"soccer:v{i}": {"add": {"component_groups": [f"soccer:v{i}"]}} for i in range(field_variants)}
+    for k, speed in enumerate(SPEEDS):
+        groups[f"soccer:speed{k}"] = {"minecraft:movement": {"value": speed}}
+        events[f"soccer:speed{k}"] = {"add": {"component_groups": [f"soccer:speed{k}"]}}
     events["minecraft:entity_spawned"] = {"add": {"component_groups": ["soccer:chase"]}}
     events["soccer:chase_on"] = {"add": {"component_groups": ["soccer:chase"]}}
     events["soccer:chase_off"] = {"remove": {"component_groups": ["soccer:chase"]}}
@@ -316,26 +322,45 @@ STATIC_ITEMS = [
 
 
 def make_action_icon(color, shape):
-    """左下にボール、右上へ向かう矢印のアイコン（16x16）"""
+    """色の丸に白い太い矢印のアイコン（16x16）。ホットバーで見分けやすいように大きく描く"""
     img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
-    ball = ["..WWWW..", ".WWKKWW.", "WWKKKKWW", "WWWKKWWW", "WKWWWWKW", "WWWWWWWW", ".WWWWWW.", "..WWWW.."]
-    for y, row in enumerate(ball):
-        for x, c in enumerate(row):
-            if c != ".":
-                img.putpixel((x, 8 + y), WHITE if c == "W" else BLACK)
+    dark = tuple(max(0, c - 90) for c in color[:3]) + (255,)
+    for y in range(16):
+        for x in range(16):
+            d = ((x - 7.5) ** 2 + (y - 7.5) ** 2) ** 0.5
+            if d <= 7.6:
+                img.putpixel((x, y), dark if d > 6.6 else color)
+    W = (255, 255, 255, 255)
     pts = []
-    if shape == "straight":
-        pts = [(9 + i, 6) for i in range(6)] + [(13, 4), (13, 5), (14, 5), (13, 7), (13, 8), (14, 7)]
-    elif shape == "arc":
-        pts = [(8, 7), (8, 6), (9, 5), (9, 4), (10, 3), (11, 3), (12, 3), (13, 4), (13, 5), (14, 6), (14, 7)]
-        pts += [(12, 6), (13, 7), (15, 6), (15, 5)]
-    elif shape == "double":
-        for y in (3, 7):
-            pts += [(9 + i, y) for i in range(5)] + [(13, y - 1), (14, y), (13, y + 1)]
+    if shape == "straight":  # →
+        pts = [(x, y) for x in range(3, 10) for y in (7, 8)]
+        pts += [(9, 4), (10, 5), (11, 6), (12, 7), (12, 8), (11, 9), (10, 10), (9, 11), (9, 5), (10, 6), (11, 7), (11, 8), (10, 9), (9, 10)]
+    elif shape == "arc":  # ⤴ 山なり
+        pts = [(3, 11), (3, 10), (4, 9), (4, 8), (5, 7), (5, 6), (6, 5), (7, 4), (8, 4), (9, 4), (10, 5), (11, 6), (11, 7)]
+        pts += [(4, 11), (4, 10), (5, 9), (5, 8), (6, 7), (6, 6), (7, 5), (8, 5), (9, 5), (10, 6)]
+        pts += [(9, 8), (10, 8), (11, 8), (12, 8), (13, 8), (12, 7), (12, 9), (11, 9), (11, 10)]
+    elif shape == "double":  # ⇉
+        for y in (5, 10):
+            pts += [(x, y) for x in range(3, 11)]
+            pts += [(10, y - 2), (11, y - 1), (12, y), (11, y + 1), (10, y + 2), (10, y - 1), (10, y + 1)]
     for x, y in pts:
         if 0 <= x < 16 and 0 <= y < 16:
-            img.putpixel((x, y), color)
+            img.putpixel((x, y), W)
     return img
+
+
+def item_json(ident, tex, name):
+    return {
+        "format_version": "1.21.40",
+        "minecraft:item": {
+            "description": {"identifier": ident, "menu_category": {"category": "equipment"}},
+            "components": {
+                "minecraft:icon": {"textures": {"default": tex}},
+                "minecraft:display_name": {"value": name},
+                "minecraft:max_stack_size": 1,
+            },
+        },
+    }
 
 
 def build_items():
@@ -343,21 +368,13 @@ def build_items():
     tex_dir = os.path.join(RP, "textures", "items")
     os.makedirs(tex_dir, exist_ok=True)
     texture_data = {}
-    for ident, tex, *_ in STATIC_ITEMS:
+    for ident, tex, ja, _en in STATIC_ITEMS:
         texture_data[tex] = {"textures": f"textures/items/{tex}"}
+        write_json(os.path.join(items_dir, f"{tex}.json"), item_json(ident, tex, ja))
     for ident, tex, _ja, _en, color, shape in ACTION_ITEMS:
         make_action_icon(color, shape).save(os.path.join(tex_dir, f"{tex}.png"))
         texture_data[tex] = {"textures": f"textures/items/{tex}"}
-        write_json(
-            os.path.join(items_dir, f"{tex}.json"),
-            {
-                "format_version": "1.20.80",
-                "minecraft:item": {
-                    "description": {"identifier": ident, "menu_category": {"category": "equipment"}},
-                    "components": {"minecraft:icon": {"texture": tex}, "minecraft:max_stack_size": 1},
-                },
-            },
-        )
+        write_json(os.path.join(items_dir, f"{tex}.json"), item_json(ident, tex, _ja))
     write_json(
         os.path.join(RP, "textures", "item_texture.json"),
         {"resource_pack_name": "soccer", "texture_name": "atlas.items", "texture_data": texture_data},

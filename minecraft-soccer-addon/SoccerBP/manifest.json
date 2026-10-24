@@ -1,12 +1,12 @@
 {
   "format_version": 2,
   "header": {
-    "name": "サッカー v1.8.0 ビヘイビア",
+    "name": "サッカー v1.9.0 ビヘイビア",
     "description": "国を選んでサッカー！ ボール・ゴール・スタジアム・代表チーム",
     "uuid": "863fa85e-1cd8-4429-875f-8880b827ac10",
     "version": [
       1,
-      8,
+      9,
       0
     ],
     "min_engine_version": [
@@ -21,7 +21,7 @@
       "uuid": "37fa0345-e2aa-43d1-a9c2-7bcf96af07ad",
       "version": [
         1,
-        8,
+        9,
         0
       ]
     },
@@ -31,7 +31,7 @@
       "uuid": "c8342c65-810a-4eb3-a0cc-5dbe6d1be1d4",
       "version": [
         1,
-        8,
+        9,
         0
       ],
       "entry": "scripts/main.js"
@@ -42,7 +42,7 @@
       "uuid": "918de813-a9f1-4570-96fa-6c087f541686",
       "version": [
         1,
-        8,
+        9,
         0
       ]
     },

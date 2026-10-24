@@ -14,17 +14,10 @@ const DRIBBLE_PULL = 0.35; // ボールを足元へ引き寄せる強さ
 const FREE_TICKS = 10; // 蹴った直後、ボールが足元に吸い付かない時間（tick）
 const RESET_DELAY = 60; // ゴール後、ボールが戻るまでの時間（tick、20 = 1秒）
 
-const NPC_SHOOT_RANGE = 14; // 相手ゴールまでこの距離以内ならシュート
-const NPC_SHOT_POWER = 1.1;
 const NPC_DRIBBLE_POWER = 0.45;
-const NPC_PASS_CHANCE = 0.4;
-const KEEPER_REACH = 1.6; // キーパーがボールに触れる距離
-const KEEPER_RUSH_RANGE = 7; // ゴールからこの距離にボールが来たら飛び出す
 const RETREAT_STEP = 0.35; // 自陣へ戻るとき、2tickごとに進む距離
 const POSITION_STEP = 0.28; // ポジションへ動くとき、2tickごとに進む距離
-const CHASER_INTERVAL = 10; // ボールを追う選手を選び直す間隔（tick）
 const CHASER_SWITCH_MARGIN = 2; // 今追っている選手より、これだけ近い選手がいたら交代
-const PRESS_RANGE = 2.5; // ボールがこの距離まで来たら、ポジションの選手も取りに行く
 const SHIFT_FORWARD = 0.4; // ボールの位置に合わせて、チーム全体が前後に動く量
 const SHIFT_SIDE = 0.35; // ボールの位置に合わせて、チーム全体が左右に動く量
 
@@ -74,6 +67,26 @@ const FORMATIONS = {
 };
 const SIZE_LABELS = { 4: "5人制（GK＋4人）", 7: "8人制（GK＋7人）", 10: "11人制（GK＋10人）※重め" };
 
+// ===== 相手の強さ =====
+// 味方（青サイド）はいつも「ふつう」。相手（赤サイド）はメニューで選ぶ
+//   speed      : 走る速さ（tools/build.py の SPEEDS と同じ順番）
+//   shootRange : 相手ゴールまでこの距離以内ならシュート
+//   shotPower  : シュートの強さ
+//   aim        : シュートのねらいの幅（2.5 より大きいと枠を外すことがある）
+//   passChance : パスを出す確率
+//   chaseEvery : ボールを追う選手を選び直す間隔（tick、小さいほど反応が速い）
+//   press      : ボールがこの距離まで来たら、持ち場の選手も取りに行く
+//   keeperReach / keeperRush / keeperSpeed : キーパーの届く距離・飛び出す距離・動く速さ
+const DIFFICULTIES = [
+  { label: "よわい", speed: 0, shootRange: 10, shotPower: 0.9, aim: 3.0, passChance: 0.2, chaseEvery: 20, press: 1.8, keeperReach: 1.2, keeperRush: 5, keeperSpeed: 0.2 },
+  { label: "ふつう", speed: 1, shootRange: 14, shotPower: 1.1, aim: 1.8, passChance: 0.4, chaseEvery: 10, press: 2.5, keeperReach: 1.6, keeperRush: 7, keeperSpeed: 0.25 },
+  { label: "つよい", speed: 2, shootRange: 18, shotPower: 1.35, aim: 1.6, passChance: 0.55, chaseEvery: 6, press: 3.5, keeperReach: 2.1, keeperRush: 9, keeperSpeed: 0.33 },
+];
+
+function skill(side) {
+  return DIFFICULTIES[side === "red" ? getMatch().difficulty ?? 1 : 1] ?? DIFFICULTIES[1];
+}
+
 // 向き: 0=南(+z) 1=西(-x) 2=北(-z) 3=東(+x)
 const DIRS = [
   { x: 0, z: 1 },
@@ -120,7 +133,7 @@ function getMatch() {
     const m = JSON.parse(world.getDynamicProperty(MATCH) ?? "");
     if (m.blue && m.red && PICKS[m.size]) return m;
   } catch {}
-  return { blue: TEAMS[0].key, red: TEAMS[1].key, size: 4 };
+  return { blue: TEAMS[0].key, red: TEAMS[1].key, size: 4, difficulty: 1 };
 }
 
 function setMatch(m) {
@@ -496,16 +509,17 @@ function npcKick(ball, npc) {
   const mouth = goalMouth(target);
   const distance = horizontalDistance(ball.location, mouth);
 
-  if (distance <= NPC_SHOOT_RANGE) {
+  const sk = skill(side);
+  if (distance <= sk.shootRange) {
     // シュート: ゴールの中のどこかを狙う
-    const aim = (Math.random() * 2 - 1) * 1.8;
+    const aim = (Math.random() * 2 - 1) * sk.aim;
     const to = { x: base.x + 0.5 + f.x + r.x * aim, z: base.z + 0.5 + f.z + r.z * aim };
-    kickToward(ball, ball.location, to, NPC_SHOT_POWER, 0.2 + Math.random() * 0.2);
+    kickToward(ball, ball.location, to, sk.shotPower, 0.2 + Math.random() * 0.2);
     return;
   }
 
   // パス: 自分よりゴールに近い味方がいたら、ときどきパスを出す
-  if (Math.random() < NPC_PASS_CHANCE) {
+  if (Math.random() < sk.passChance) {
     const mates = teammates(npc.dimension, side, npc.location, 16).filter(
       (m) => m.id !== npc.id && horizontalDistance(m.location, mouth) < distance - 4
     );
@@ -537,13 +551,14 @@ function keeperTick(keeper, balls) {
   }
   const kp = keeper.location;
   const bp = ball.location;
-  const rushing = horizontalDistance(bp, mouth) < KEEPER_RUSH_RANGE;
+  const sk = skill(side);
+  const rushing = horizontalDistance(bp, mouth) < sk.keeperRush;
 
   // ボールに届いたらクリア（相手ゴールの方向へ大きく蹴る）
   const now = system.currentTick;
   if (
     !ball.hasTag("soccer_scored") &&
-    horizontalDistance(kp, bp) < KEEPER_REACH &&
+    horizontalDistance(kp, bp) < sk.keeperReach &&
     Math.abs(kp.y - bp.y) < 2 &&
     (keeperCooldown.get(keeper.id) ?? 0) <= now
   ) {
@@ -563,7 +578,7 @@ function keeperTick(keeper, balls) {
     const s = Math.max(-2, Math.min(2, offset * 0.3));
     spot = { x: mouth.x - f.x * 1.5 + r.x * s, z: mouth.z - f.z * 1.5 + r.z * s };
   }
-  stepToward(keeper, spot, rushing ? 0.4 : 0.25, bp);
+  stepToward(keeper, spot, rushing ? sk.keeperSpeed * 1.6 : sk.keeperSpeed, bp);
 }
 
 function isPassable(dim, pos) {
@@ -681,9 +696,9 @@ function positionTick(dim, balls) {
   const p = pitch(dim);
   const ball = balls.find((b) => !b.hasTag("soccer_scored"));
   if (!p || !ball) return;
-  const reselect = system.currentTick % CHASER_INTERVAL < 2;
-
   for (const side of ["blue", "red"]) {
+    const sk = skill(side);
+    const reselect = system.currentTick % sk.chaseEvery < 2;
     const npcs = dim.getEntities({ type: NPC, tags: [`soccer_side_${side}`] });
     if (npcs.length === 0) continue;
     const key = `${dim.id}:${side}`;
@@ -691,7 +706,7 @@ function positionTick(dim, balls) {
     const frame = ballInSideFrame(p, side, ball.location);
 
     for (const npc of npcs) {
-      const close = horizontalDistance(npc.location, ball.location) < PRESS_RANGE;
+      const close = horizontalDistance(npc.location, ball.location) < sk.press;
       if (npc === chaser || close) {
         setChasing(npc, true);
       } else {
@@ -737,6 +752,7 @@ function spawnTeam(dim, p, side, teamKey, size) {
     const pos = slotPosition(p, side, frac, offset);
     const npc = dim.spawnEntity(NPC, { x: pos.x, y: pos.y + 0.1, z: pos.z });
     npc.triggerEvent(`soccer:v${t.fieldVariantBase + index}`);
+    npc.triggerEvent(`soccer:speed${skill(side).speed}`);
     for (const tag of [`soccer_side_${side}`, `soccer_team_${t.key}`, `soccer_slot${slot}`, `soccer_size${size}`]) npc.addTag(tag);
     const info = t.players[index];
     npc.nameTag = `${SIDES[side].color}${info.num} ${info.name}`;
@@ -751,14 +767,14 @@ function spawnTeam(dim, p, side, teamKey, size) {
   keeper.nameTag = `${SIDES[side].color}${t.keeper.num} ${t.keeper.name}`;
 }
 
-function startMatch(player, blueKey, redKey, size) {
+function startMatch(player, blueKey, redKey, size, difficulty = 1) {
   const dim = player.dimension;
   const p = pitch(dim);
   if (!p) {
     player.sendMessage("§c赤ゴールと青ゴールの両方が必要です。スタジアムを建てるか、ゴールを置いてください");
     return;
   }
-  setMatch({ blue: blueKey, red: redKey, size });
+  setMatch({ blue: blueKey, red: redKey, size, difficulty });
   clearTeams(dim);
   resetScores();
   retreatUntil.delete(dim.id);
@@ -810,14 +826,20 @@ async function openMatchSetup(player) {
   for (const s of sizes) form.button(SIZE_LABELS[s]);
   const res = await showForm(player, form);
   if (res.canceled) return;
-  startMatch(player, mine, rival, sizes[res.selection]);
+  const level = new ActionFormData().title("相手の強さ");
+  for (const d of DIFFICULTIES) level.button(d.label);
+  const lv = await showForm(player, level);
+  if (lv.canceled) return;
+  startMatch(player, mine, rival, sizes[res.selection], lv.selection);
 }
 
 async function openMenu(player) {
   const m = getMatch();
   const form = new ActionFormData()
     .title("サッカー メニュー")
-    .body(`いまの試合: ${sideLabel("blue")}§r vs ${sideLabel("red")}§r（${SIZE_LABELS[m.size]}）`)
+    .body(
+      `いまの試合: ${sideLabel("blue")}§r vs ${sideLabel("red")}§r（${SIZE_LABELS[m.size]}・相手は${DIFFICULTIES[m.difficulty ?? 1].label}）`
+    )
     .button("試合を始める（国と人数を選ぶ）")
     .button("同じ組み合わせでもう一度")
     .button("キックオフに戻す（スコアはそのまま）")
@@ -825,7 +847,7 @@ async function openMenu(player) {
   const res = await showForm(player, form);
   if (res.canceled) return;
   if (res.selection === 0) await openMatchSetup(player);
-  else if (res.selection === 1) startMatch(player, m.blue, m.red, m.size);
+  else if (res.selection === 1) startMatch(player, m.blue, m.red, m.size, m.difficulty ?? 1);
   else if (res.selection === 2) {
     const p = pitch(player.dimension);
     if (!p) return;
@@ -1054,6 +1076,25 @@ system.runInterval(() => {
     dribbleTick(player);
   }
 }, 1);
+
+// 手に持っているサッカーのアイテムを、画面下に大きく表示する（ホットバーで見分けやすく）
+const HELD_LABELS = {
+  [BOOTS]: "§b■ シュート",
+  [PASS_ITEM]: "§a■ パス",
+  [CROSS_ITEM]: "§e■ クロス／ロブ",
+  [THROUGH_ITEM]: "§9■ スルーパス",
+  [WHISTLE]: "§f■ ホイッスル（メニュー）",
+};
+
+system.runInterval(() => {
+  for (const player of world.getAllPlayers()) {
+    const inv = player.getComponent("minecraft:inventory")?.container;
+    const slot = player.selectedSlotIndex ?? player.selectedSlot;
+    if (!inv || slot === undefined) continue;
+    const label = HELD_LABELS[inv.getItem(slot)?.typeId];
+    if (label) player.onScreenDisplay.setActionBar(label);
+  }
+}, 10);
 
 // ===== スタジアム =====
 const HALF_LENGTH = 25; // センターからゴールラインまで

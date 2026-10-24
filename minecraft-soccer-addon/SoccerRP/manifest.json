@@ -1,12 +1,12 @@
 {
   "format_version": 2,
   "header": {
-    "name": "サッカー v1.8.0 リソース",
+    "name": "サッカー v1.9.0 リソース",
     "description": "サッカーアドオンの見た目（選手・ボール・アイテム）",
     "uuid": "918de813-a9f1-4570-96fa-6c087f541686",
     "version": [
       1,
-      8,
+      9,
       0
     ],
     "min_engine_version": [
@@ -21,7 +21,7 @@
       "uuid": "8f01e85b-4f65-4a1f-b0ce-9f4a4c100e13",
       "version": [
         1,
-        8,
+        9,
         0
       ]
     }
