@@ -13,10 +13,16 @@ const RESET_DELAY = 60; // ゴール後、ボールが戻るまでの時間（ti
 const NPC_SHOOT_RANGE = 14; // 相手ゴールまでこの距離以内ならシュート
 const NPC_SHOT_POWER = 1.1;
 const NPC_DRIBBLE_POWER = 0.45;
-const NPC_PASS_CHANCE = 0.25;
+const NPC_PASS_CHANCE = 0.4;
 const KEEPER_REACH = 1.6; // キーパーがボールに触れる距離
 const KEEPER_RUSH_RANGE = 7; // ゴールからこの距離にボールが来たら飛び出す
 const RETREAT_STEP = 0.35; // 自陣へ戻るとき、2tickごとに進む距離
+const POSITION_STEP = 0.28; // ポジションへ動くとき、2tickごとに進む距離
+const CHASER_INTERVAL = 10; // ボールを追う選手を選び直す間隔（tick）
+const CHASER_SWITCH_MARGIN = 2; // 今追っている選手より、これだけ近い選手がいたら交代
+const PRESS_RANGE = 2.5; // ボールがこの距離まで来たら、ポジションの選手も取りに行く
+const SHIFT_FORWARD = 0.4; // ボールの位置に合わせて、チーム全体が前後に動く量
+const SHIFT_SIDE = 0.35; // ボールの位置に合わせて、チーム全体が左右に動く量
 
 const KICK_RANGE = 2.2; // この距離以内にボールがあるとボタンで蹴れる
 const PASS_CONE = 0.7; // パス相手を探す向きの幅（cos、0.7 ≒ 左右45度）
@@ -555,8 +561,7 @@ function retreatTick(dim, balls) {
   if (until === undefined) return;
   const npcs = dim.getEntities({ type: NPC });
   if (system.currentTick >= until) {
-    retreatUntil.delete(dim.id);
-    for (const npc of npcs) setChasing(npc, true);
+    retreatUntil.delete(dim.id); // ここからはポジションの動き（positionTick）に戻る
     return;
   }
   const p = pitch(dim);
@@ -565,6 +570,78 @@ function retreatTick(dim, balls) {
   for (const npc of npcs) {
     const [frac, offset] = npcSlot(npc);
     stepToward(npc, slotPosition(p, sideOf(npc), frac, offset), RETREAT_STEP, look);
+  }
+}
+
+// ===== ポジション: ボールを追うのは各チーム1人だけ、ほかは自分の持ち場を守る =====
+const chasers = new Map(); // "ディメンション:サイド" → 追っている選手の id
+
+// ボールが自陣ゴールからどれだけ進んだか（0〜1）と、横のずれ（そのサイドから見た向き）
+function ballInSideFrame(p, side, ball) {
+  const s = side === "blue" ? 1 : -1;
+  const dx = ball.x - p.center.x;
+  const dz = ball.z - p.center.z;
+  const along = (dx * p.u.x + dz * p.u.z) * s; // センターから相手ゴール方向へ
+  return { frac: 0.5 + along / p.length, offset: (dx * p.v.x + dz * p.v.z) * s };
+}
+
+// 持ち場: フォーメーションの位置を、ボールの位置に合わせてずらす
+function positionTarget(p, npc, ballFrame) {
+  const [frac, offset] = npcSlot(npc);
+  const f = Math.max(0.05, Math.min(0.9, frac + (ballFrame.frac - 0.35) * SHIFT_FORWARD * 1.5));
+  return slotPosition(p, sideOf(npc), f, offset + ballFrame.offset * SHIFT_SIDE);
+}
+
+function pickChaser(dim, side, npcs, ball) {
+  const key = `${dim.id}:${side}`;
+  let nearest;
+  let nearestDist = Infinity;
+  for (const npc of npcs) {
+    const d = horizontalDistance(npc.location, ball.location);
+    if (d < nearestDist) {
+      nearest = npc;
+      nearestDist = d;
+    }
+  }
+  // 自分（プレイヤー）がボールの近くにいるときは、味方はボールを取りに来ない
+  if (side === "blue") {
+    for (const player of dim.getPlayers({ location: ball.location, maxDistance: 4 })) {
+      if (horizontalDistance(player.location, ball.location) < nearestDist) {
+        chasers.delete(key);
+        return undefined;
+      }
+    }
+  }
+  // 交代が多すぎてバタバタしないよう、今の選手がそこそこ近ければそのまま
+  const current = npcs.find((n) => n.id === chasers.get(key));
+  if (current && horizontalDistance(current.location, ball.location) < nearestDist + CHASER_SWITCH_MARGIN) return current;
+  if (nearest) chasers.set(key, nearest.id);
+  return nearest;
+}
+
+function positionTick(dim, balls) {
+  if (retreatUntil.has(dim.id)) return;
+  const p = pitch(dim);
+  const ball = balls.find((b) => !b.hasTag("soccer_scored"));
+  if (!p || !ball) return;
+  const reselect = system.currentTick % CHASER_INTERVAL < 2;
+
+  for (const side of ["blue", "red"]) {
+    const npcs = dim.getEntities({ type: NPC, tags: [`soccer_side_${side}`] });
+    if (npcs.length === 0) continue;
+    const key = `${dim.id}:${side}`;
+    const chaser = reselect ? pickChaser(dim, side, npcs, ball) : npcs.find((n) => n.id === chasers.get(key));
+    const frame = ballInSideFrame(p, side, ball.location);
+
+    for (const npc of npcs) {
+      const close = horizontalDistance(npc.location, ball.location) < PRESS_RANGE;
+      if (npc === chaser || close) {
+        setChasing(npc, true);
+      } else {
+        setChasing(npc, false);
+        stepToward(npc, positionTarget(p, npc, frame), POSITION_STEP, ball.location);
+      }
+    }
   }
 }
 
@@ -584,6 +661,7 @@ system.runInterval(() => {
     const players = dim.getPlayers();
     for (const keeper of dim.getEntities({ type: KEEPER })) keeperTick(keeper, balls);
     retreatTick(dim, balls);
+    positionTick(dim, balls);
     for (const ball of balls) {
       if (ball.hasTag("soccer_scored")) continue;
       dribble(ball, players);
