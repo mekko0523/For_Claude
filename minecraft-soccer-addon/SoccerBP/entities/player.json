@@ -222,7 +222,7 @@
           "must_see": false,
           "reselect_targets": true,
           "within_radius": 40,
-          "scan_interval": 10,
+          "scan_interval": 20,
           "entity_types": [
             {
               "filters": {
@@ -299,8 +299,8 @@
       },
       "minecraft:physics": {},
       "minecraft:pushable": {
-        "is_pushable": true,
-        "is_pushable_by_piston": true
+        "is_pushable": false,
+        "is_pushable_by_piston": false
       },
       "minecraft:nameable": {
         "always_show": true,
@@ -314,13 +314,6 @@
       "minecraft:navigation.walk": {
         "avoid_water": true,
         "can_path_over_water": false
-      },
-      "minecraft:behavior.look_at_player": {
-        "priority": 8,
-        "look_distance": 8
-      },
-      "minecraft:behavior.random_look_around": {
-        "priority": 9
       }
     },
     "events": {

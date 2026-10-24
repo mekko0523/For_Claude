@@ -17,6 +17,7 @@ const RESET_DELAY = 60; // ゴール後、ボールが戻るまでの時間（ti
 const NPC_DRIBBLE_POWER = 0.45;
 const RETREAT_STEP = 0.35; // 自陣へ戻るとき、2tickごとに進む距離
 const POSITION_STEP = 0.28; // ポジションへ動くとき、2tickごとに進む距離
+const POSITION_DEADZONE = 1.2; // 持ち場からこれ以内なら動かずに待つ（軽量化）
 const CHASER_SWITCH_MARGIN = 2; // 今追っている選手より、これだけ近い選手がいたら交代
 const SHIFT_FORWARD = 0.4; // ボールの位置に合わせて、チーム全体が前後に動く量
 const SHIFT_SIDE = 0.35; // ボールの位置に合わせて、チーム全体が左右に動く量
@@ -65,7 +66,9 @@ const FORMATIONS = {
     [0.45, -4], [0.45, 4],
   ],
 };
-const SIZE_LABELS = { 4: "5人制（GK＋4人）", 7: "8人制（GK＋7人）", 10: "11人制（GK＋10人）※重め" };
+// 11人制（22人）は重いのでメニューからは外した（PICKS / FORMATIONS の 10 は残してある）
+const MENU_SIZES = [4, 7];
+const SIZE_LABELS = { 4: "5人制（GK＋4人）", 7: "8人制（GK＋7人）", 10: "11人制（GK＋10人）" };
 
 // ===== 相手の強さ =====
 // 味方（青サイド）はいつも「ふつう」。相手（赤サイド）はメニューで選ぶ
@@ -135,15 +138,20 @@ function sideOf(entity) {
 // ===== 試合の設定（どの国どうし・何人制） =====
 const MATCH = "soccer:match";
 
+// 何度も呼ばれるので、読んだ内容は覚えておく（軽量化）
+let matchCache;
+
 function getMatch() {
+  if (matchCache) return matchCache;
   try {
     const m = JSON.parse(world.getDynamicProperty(MATCH) ?? "");
-    if (m.blue && m.red && PICKS[m.size]) return m;
+    if (m.blue && m.red && PICKS[m.size]) return (matchCache = m);
   } catch {}
-  return { blue: TEAMS[0].key, red: TEAMS[1].key, size: 4, difficulty: 1 };
+  return (matchCache = { blue: TEAMS[0].key, red: TEAMS[1].key, size: 4, difficulty: 1 });
 }
 
 function setMatch(m) {
+  matchCache = m;
   world.setDynamicProperty(MATCH, JSON.stringify(m));
 }
 
@@ -278,7 +286,18 @@ function findGoal(dim, type) {
 }
 
 // ピッチの向き: 青ゴール(B) → 赤ゴール(R)
+// 同じtickの中では計算し直さない（軽量化）
+const pitchCache = new Map();
+
 function pitch(dim) {
+  const c = pitchCache.get(dim.id);
+  if (c && c.tick === system.currentTick) return c.value;
+  const value = computePitch(dim);
+  pitchCache.set(dim.id, { tick: system.currentTick, value });
+  return value;
+}
+
+function computePitch(dim) {
   const blue = findGoal(dim, "soccer:goal_blue");
   const red = findGoal(dim, "soccer:goal_red");
   if (!blue || !red) return undefined;
@@ -544,10 +563,21 @@ world.afterEvents.entityHitEntity.subscribe((ev) => {
 });
 
 // ===== ドリブル: ボールを持っている間は、足元の前に吸い付く =====
+// ボールの一覧は1tickに1回だけ探す（プレイヤーごとに探さない。軽量化）
+const ballListCache = new Map();
+
+function ballsIn(dim) {
+  const c = ballListCache.get(dim.id);
+  if (c && c.tick === system.currentTick) return c.list;
+  const list = dim.getEntities({ type: BALL });
+  ballListCache.set(dim.id, { tick: system.currentTick, list });
+  return list;
+}
+
 function findBallById(player, id) {
-  return player.dimension
-    .getEntities({ type: BALL, location: player.location, maxDistance: KEEP_RANGE })
-    .find((b) => b.id === id);
+  return ballsIn(player.dimension).find(
+    (b) => b.id === id && isValid(b) && horizontalDistance(b.location, player.location) <= KEEP_RANGE
+  );
 }
 
 function isPossessedByOther(player, ball) {
@@ -567,9 +597,7 @@ function dribbleTick(player) {
     }
   }
   if (!ball) {
-    ball = player.dimension
-      .getEntities({ type: BALL, location: player.location, maxDistance: POSSESS_RANGE + 1 })
-      .find(
+    ball = ballsIn(player.dimension).find(
         (b) =>
           !b.hasTag("soccer_scored") &&
           (ballFreeUntil.get(b.id) ?? 0) <= now &&
@@ -729,12 +757,13 @@ function isPassable(dim, pos) {
 }
 
 // 少しずつテレポートして歩かせる（壁や段差に埋まらないよう、空いているときだけ進む）
-function stepToward(entity, spot, maxStep, look) {
+// 少し離れているだけなら動かない（細かいテレポートを減らして軽くする）
+function stepToward(entity, spot, maxStep, look, deadZone = 0.3) {
   const p = entity.location;
   const dx = spot.x - p.x;
   const dz = spot.z - p.z;
   const dist = Math.hypot(dx, dz);
-  if (dist < 0.1) return;
+  if (dist < deadZone) return;
   const step = Math.min(dist, maxStep);
   const next = { x: p.x + (dx / dist) * step, y: p.y, z: p.z + (dz / dist) * step };
   const dim = entity.dimension;
@@ -765,10 +794,9 @@ function npcSlot(npc) {
   return (FORMATIONS[size] ?? FORMATIONS[10])[slot] ?? [0.3, 0];
 }
 
-function retreatTick(dim, balls) {
+function retreatTick(dim, balls, npcs) {
   const until = retreatUntil.get(dim.id);
   if (until === undefined) return;
-  const npcs = dim.getEntities({ type: NPC });
   if (system.currentTick >= until) {
     retreatUntil.delete(dim.id); // ここからはポジションの動き（positionTick）に戻る
     return;
@@ -828,7 +856,7 @@ function pickChaser(dim, side, npcs, ball) {
   return nearest;
 }
 
-function positionTick(dim, balls) {
+function positionTick(dim, balls, allNpcs) {
   if (retreatUntil.has(dim.id)) return;
   const p = pitch(dim);
   const ball = balls.find((b) => !b.hasTag("soccer_scored"));
@@ -836,7 +864,7 @@ function positionTick(dim, balls) {
   for (const side of ["blue", "red"]) {
     const sk = skill(side);
     const reselect = system.currentTick % sk.chaseEvery < 2;
-    const npcs = dim.getEntities({ type: NPC, tags: [`soccer_side_${side}`] });
+    const npcs = allNpcs.filter((n) => n.hasTag(`soccer_side_${side}`));
     if (npcs.length === 0) continue;
     const key = `${dim.id}:${side}`;
     const chaser = reselect ? pickChaser(dim, side, npcs, ball) : npcs.find((n) => n.id === chasers.get(key));
@@ -848,7 +876,7 @@ function positionTick(dim, balls) {
         setChasing(npc, true);
       } else {
         setChasing(npc, false);
-        stepToward(npc, positionTarget(p, npc, frame), POSITION_STEP, ball.location);
+        stepToward(npc, positionTarget(p, npc, frame), POSITION_STEP, ball.location, POSITION_DEADZONE);
       }
     }
   }
@@ -867,9 +895,10 @@ system.runInterval(() => {
     const balls = dim.getEntities({ type: BALL });
     if (balls.length === 0) continue;
     const goals = getGoals(dim);
+    const npcs = dim.getEntities({ type: NPC });
     for (const keeper of dim.getEntities({ type: KEEPER })) keeperTick(keeper, balls);
-    retreatTick(dim, balls);
-    positionTick(dim, balls);
+    retreatTick(dim, balls, npcs);
+    positionTick(dim, balls, npcs);
     for (const ball of balls) {
       if (ball.hasTag("soccer_scored")) continue;
       checkGoal(ball, goals);
@@ -960,7 +989,7 @@ async function openMatchSetup(player) {
   if (!mine) return;
   const rival = await chooseTeam(player, "相手チーム（赤サイド）", mine);
   if (!rival) return;
-  const sizes = [4, 7, 10];
+  const sizes = MENU_SIZES;
   const form = new ActionFormData().title("人数");
   for (const s of sizes) form.button(SIZE_LABELS[s]);
   const res = await showForm(player, form);
@@ -986,7 +1015,7 @@ async function openMenu(player) {
   const res = await showForm(player, form);
   if (res.canceled) return;
   if (res.selection === 0) await openMatchSetup(player);
-  else if (res.selection === 1) startMatch(player, m.blue, m.red, m.size, m.difficulty ?? 1);
+  else if (res.selection === 1) startMatch(player, m.blue, m.red, MENU_SIZES.includes(m.size) ? m.size : 7, m.difficulty ?? 1);
   else if (res.selection === 2) {
     const p = pitch(player.dimension);
     if (!p) return;
@@ -1026,7 +1055,8 @@ function stickDirection(player) {
 function nearestBall(player) {
   let best;
   let bestDist = KICK_RANGE;
-  for (const ball of player.dimension.getEntities({ type: BALL, location: player.location, maxDistance: KICK_RANGE + 1 })) {
+  for (const ball of ballsIn(player.dimension)) {
+    if (!isValid(ball)) continue;
     if (ball.hasTag("soccer_scored")) continue;
     const d = horizontalDistance(ball.location, player.location);
     if (d <= bestDist && Math.abs(ball.location.y - player.location.y) < 1.5) {
@@ -1217,6 +1247,7 @@ system.runInterval(() => {
 }, 1);
 
 // 手に持っているサッカーのアイテムを、画面下に大きく表示する（ホットバーで見分けやすく）
+const lastHeldLabel = new Map();
 const HELD_LABELS = {
   [BOOTS]: "§b■ シュート",
   [PASS_ITEM]: "§a■ パス",
@@ -1231,7 +1262,9 @@ system.runInterval(() => {
     const slot = player.selectedSlotIndex ?? player.selectedSlot;
     if (!inv || slot === undefined) continue;
     const label = HELD_LABELS[inv.getItem(slot)?.typeId];
-    if (label) player.onScreenDisplay.setActionBar(label);
+    // 持ち替えたときだけ表示する（毎回送らない）
+    if (label && label !== lastHeldLabel.get(player.id)) player.onScreenDisplay.setActionBar(label);
+    lastHeldLabel.set(player.id, label);
   }
 }, 10);
 

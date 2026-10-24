@@ -12,7 +12,7 @@ import zipfile
 
 from PIL import Image
 
-VERSION = [1, 12, 0]
+VERSION = [1, 13, 0]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BP = os.path.join(ROOT, "SoccerBP")
@@ -237,14 +237,13 @@ def npc_components():
         "minecraft:damage_sensor": NO_DAMAGE,
         "minecraft:knockback_resistance": {"value": 1.0},
         "minecraft:physics": {},
-        "minecraft:pushable": {"is_pushable": True, "is_pushable_by_piston": True},
+        # 選手どうしで押し合う計算をしない（軽量化）
+        "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False},
         "minecraft:nameable": {"always_show": True, "allow_name_tag_renaming": False},
         "minecraft:movement": {"value": 0.28},
         "minecraft:movement.basic": {},
         "minecraft:jump.static": {},
         "minecraft:navigation.walk": {"avoid_water": True, "can_path_over_water": False},
-        "minecraft:behavior.look_at_player": {"priority": 8, "look_distance": 8},
-        "minecraft:behavior.random_look_around": {"priority": 9},
     }
 
 
@@ -261,7 +260,7 @@ def build_entities():
             "must_see": False,
             "reselect_targets": True,
             "within_radius": 40,
-            "scan_interval": 10,
+            "scan_interval": 20,
             "entity_types": [
                 {"filters": {"test": "is_family", "subject": "other", "value": "soccer_ball"}, "max_dist": 40}
             ],
