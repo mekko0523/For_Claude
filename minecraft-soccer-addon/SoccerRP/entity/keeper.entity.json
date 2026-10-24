@@ -21,7 +21,9 @@
       "identifier": "soccer:keeper",
       "textures": {
         "v0": "textures/entity/keeper_japan",
-        "v1": "textures/entity/keeper_spain"
+        "v1": "textures/entity/keeper_spain",
+        "v2": "textures/entity/keeper_england",
+        "v3": "textures/entity/keeper_france"
       },
       "render_controllers": [
         "controller.render.soccer_keeper"

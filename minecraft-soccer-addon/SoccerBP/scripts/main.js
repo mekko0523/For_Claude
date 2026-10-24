@@ -387,6 +387,51 @@ function checkGoal(ball, goals) {
   }
 }
 
+// ===== ボールがピッチの外に出たとき =====
+const OUT_MARGIN = 1.5; // ラインからこれだけ外に出たらアウト
+const OUT_DELAY = 30; // アウトからボールが戻るまで（tick）
+
+function checkOut(ball, dim) {
+  if (ball.hasTag("soccer_out")) return;
+  const p = pitch(dim);
+  if (!p) return;
+  const halfL = p.length / 2;
+  const halfW = (p.length * HALF_WIDTH) / (2 * HALF_LENGTH); // スタジアムと同じ縦横の比
+  const dx = ball.location.x - p.center.x;
+  const dz = ball.location.z - p.center.z;
+  const along = dx * p.u.x + dz * p.u.z; // センターから赤ゴール方向へ
+  const side = dx * p.v.x + dz * p.v.z; // センターから横へ
+  const dy = ball.location.y - p.center.y;
+
+  let restart;
+  if (Math.abs(side) > halfW + 8 || Math.abs(along) > halfL + 8 || dy < -6 || dy > 30) {
+    restart = { along: 0, side: 0, label: "センターから再開" }; // 遠くへ飛んでいった
+  } else if (Math.abs(side) > halfW + OUT_MARGIN) {
+    restart = { along: Math.max(-halfL + 2, Math.min(halfL - 2, along)), side: Math.sign(side) * (halfW - 1), label: "スローイン" };
+  } else if (Math.abs(along) > halfL + OUT_MARGIN) {
+    restart = { along: Math.sign(along) * (halfL - 6), side: 0, label: "ゴールキック" };
+  }
+  if (!restart) return;
+
+  ball.addTag("soccer_out");
+  freeBall(ball);
+  rolling.delete(ball.id);
+  for (const player of dim.getPlayers({ location: p.center, maxDistance: 100 })) {
+    player.onScreenDisplay.setActionBar(`§eアウト！ ${restart.label}`);
+  }
+  const pos = {
+    x: p.center.x + p.u.x * restart.along + p.v.x * restart.side,
+    y: p.center.y,
+    z: p.center.z + p.u.z * restart.along + p.v.z * restart.side,
+  };
+  system.runTimeout(() => {
+    if (!isValid(ball)) return;
+    ball.teleport(pos);
+    ball.clearVelocity();
+    ball.removeTag("soccer_out");
+  }, OUT_DELAY);
+}
+
 // ===== キック =====
 // 蹴ったボールは、しばらく誰の足元にも吸い付かない（ドリブルが解ける）
 const possession = new Map(); // プレイヤーの id → 持っているボールの id
@@ -401,7 +446,7 @@ function freeBall(ball) {
 // そこで蹴ったあとはスクリプトがボールを転がし、毎tick少しずつ遅くする（decay）。
 // 転がる距離 ≒ 速さ ÷ (1 - decay) なので、届けたい距離から速さを決められる。
 const ROLL_PASS = 0.94; // パス・クロス（約 速さ×17 ブロック転がる）
-const ROLL_SHOT = 0.975; // シュート・クリア（遠くまで伸びる）
+const ROLL_SHOT = 0.96; // シュート・クリア（パスより遠くまで伸びる。強すぎるとピッチの外まで飛ぶ）
 const ROLL_TOUCH = 0.85; // 選手のドリブルの小さなタッチ
 const MAX_BALL_SPEED = 2.0;
 const rolling = new Map(); // ボールの id → { ball, dir, speed, decay }
@@ -484,7 +529,7 @@ world.afterEvents.entityHitEntity.subscribe((ev) => {
   if (kicker.isSneaking) {
     kickInDirection(ball, dir, speedFor(PASS_DISTANCE), PASS_LIFT);
   } else {
-    kickInDirection(ball, dir, SHOT_POWER, Math.min(0.9, Math.max(0.15, SHOT_LIFT + view.y * 0.6)), ROLL_SHOT);
+    kickInDirection(ball, dir, SHOT_POWER, Math.min(0.6, Math.max(0.15, SHOT_LIFT + view.y * 0.6)), ROLL_SHOT);
   }
 });
 
@@ -633,7 +678,7 @@ function keeperTick(keeper, balls) {
     keeperCooldown.set(keeper.id, now + 20);
     const enemy = findGoal(keeper.dimension, SIDES[side].attack);
     const to = enemy ? enemy.location : { x: mouth.x - f.x * 20, z: mouth.z - f.z * 20 };
-    kickToward(ball, bp, to, 1.3, 0.6, ROLL_SHOT);
+    kickToward(ball, bp, to, 1.0, 0.5, ROLL_SHOT);
     return;
   }
 
@@ -804,6 +849,7 @@ system.runInterval(() => {
     for (const ball of balls) {
       if (ball.hasTag("soccer_scored")) continue;
       checkGoal(ball, goals);
+      if (!ball.hasTag("soccer_scored")) checkOut(ball, dim);
     }
   }
 }, 2);
@@ -1015,7 +1061,7 @@ function doLob(player) {
   if (mate) {
     // 遠い味方ほど高く上げる
     const d = horizontalDistance(ball.location, mate.location);
-    passTo(ball, mate.location, Math.min(0.8, 0.4 + d * 0.012), 2);
+    passTo(ball, mate.location, Math.min(0.65, 0.4 + d * 0.01), 2);
   } else {
     kickInDirection(ball, dir, speedFor(16), 0.6);
   }
@@ -1261,10 +1307,10 @@ function buildStadium(dim, loc, dir, onDone) {
   // ボールが外へ出ていかないように、見えない壁（バリア）で囲む
   const BU = HL + 5;
   const BV = HW + 5;
-  fill(-BU, -BV, 1, BU, -BV, 4, "barrier");
-  fill(-BU, BV, 1, BU, BV, 4, "barrier");
-  fill(-BU, -BV, 1, -BU, BV, 4, "barrier");
-  fill(BU, -BV, 1, BU, BV, 4, "barrier");
+  fill(-BU, -BV, 1, BU, -BV, 10, "barrier");
+  fill(-BU, BV, 1, BU, BV, 10, "barrier");
+  fill(-BU, -BV, 1, -BU, BV, 10, "barrier");
+  fill(BU, -BV, 1, BU, BV, 10, "barrier");
 
   const players = dim.getPlayers({ location: loc, maxDistance: 64 });
   for (const p of players) p.sendMessage("§eスタジアムを建設中…");

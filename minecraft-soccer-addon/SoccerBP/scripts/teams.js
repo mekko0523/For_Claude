@@ -203,5 +203,209 @@ export const TEAMS = [
       "num": 1,
       "name": "ダビド・ラヤ"
     }
+  },
+  {
+    "key": "england",
+    "name": "イングランド",
+    "fieldVariantBase": 20,
+    "keeperVariant": 2,
+    "players": [
+      {
+        "num": 5,
+        "name": "ストーンズ",
+        "stats": {
+          "spd": 0,
+          "sht": -1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 6,
+        "name": "グエーイ",
+        "stats": {
+          "spd": 1,
+          "sht": -1,
+          "pas": 0
+        }
+      },
+      {
+        "num": 3,
+        "name": "オライリー",
+        "stats": {
+          "spd": 1,
+          "sht": 0,
+          "pas": 1
+        }
+      },
+      {
+        "num": 24,
+        "name": "リース・ジェームズ",
+        "stats": {
+          "spd": 0,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 4,
+        "name": "デクラン・ライス",
+        "stats": {
+          "spd": 0,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 8,
+        "name": "アンダーソン",
+        "stats": {
+          "spd": 0,
+          "sht": 0,
+          "pas": 1
+        }
+      },
+      {
+        "num": 10,
+        "name": "ベリンガム",
+        "stats": {
+          "spd": 1,
+          "sht": 2,
+          "pas": 1
+        }
+      },
+      {
+        "num": 7,
+        "name": "ブカヨ・サカ",
+        "stats": {
+          "spd": 1,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 11,
+        "name": "ラッシュフォード",
+        "stats": {
+          "spd": 2,
+          "sht": 1,
+          "pas": 0
+        }
+      },
+      {
+        "num": 9,
+        "name": "ハリー・ケイン",
+        "stats": {
+          "spd": 0,
+          "sht": 2,
+          "pas": 1
+        }
+      }
+    ],
+    "keeper": {
+      "num": 1,
+      "name": "ピックフォード"
+    }
+  },
+  {
+    "key": "france",
+    "name": "フランス",
+    "fieldVariantBase": 30,
+    "keeperVariant": 3,
+    "players": [
+      {
+        "num": 17,
+        "name": "サリバ",
+        "stats": {
+          "spd": 1,
+          "sht": -1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 4,
+        "name": "ウパメカノ",
+        "stats": {
+          "spd": 0,
+          "sht": -1,
+          "pas": 0
+        }
+      },
+      {
+        "num": 19,
+        "name": "テオ・エルナンデス",
+        "stats": {
+          "spd": 2,
+          "sht": 0,
+          "pas": 0
+        }
+      },
+      {
+        "num": 5,
+        "name": "クンデ",
+        "stats": {
+          "spd": 1,
+          "sht": -1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 8,
+        "name": "チュアメニ",
+        "stats": {
+          "spd": 0,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 14,
+        "name": "ラビオ",
+        "stats": {
+          "spd": 0,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 11,
+        "name": "オリーズ",
+        "stats": {
+          "spd": 1,
+          "sht": 1,
+          "pas": 2
+        }
+      },
+      {
+        "num": 7,
+        "name": "デンベレ",
+        "stats": {
+          "spd": 2,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 20,
+        "name": "ドゥエ",
+        "stats": {
+          "spd": 1,
+          "sht": 1,
+          "pas": 1
+        }
+      },
+      {
+        "num": 10,
+        "name": "エムバペ",
+        "stats": {
+          "spd": 2,
+          "sht": 2,
+          "pas": 1
+        }
+      }
+    ],
+    "keeper": {
+      "num": 16,
+      "name": "メニャン"
+    }
   }
 ];

@@ -39,7 +39,27 @@
         "v16": "textures/entity/player_spain_6",
         "v17": "textures/entity/player_spain_7",
         "v18": "textures/entity/player_spain_8",
-        "v19": "textures/entity/player_spain_9"
+        "v19": "textures/entity/player_spain_9",
+        "v20": "textures/entity/player_england_0",
+        "v21": "textures/entity/player_england_1",
+        "v22": "textures/entity/player_england_2",
+        "v23": "textures/entity/player_england_3",
+        "v24": "textures/entity/player_england_4",
+        "v25": "textures/entity/player_england_5",
+        "v26": "textures/entity/player_england_6",
+        "v27": "textures/entity/player_england_7",
+        "v28": "textures/entity/player_england_8",
+        "v29": "textures/entity/player_england_9",
+        "v30": "textures/entity/player_france_0",
+        "v31": "textures/entity/player_france_1",
+        "v32": "textures/entity/player_france_2",
+        "v33": "textures/entity/player_france_3",
+        "v34": "textures/entity/player_france_4",
+        "v35": "textures/entity/player_france_5",
+        "v36": "textures/entity/player_france_6",
+        "v37": "textures/entity/player_france_7",
+        "v38": "textures/entity/player_france_8",
+        "v39": "textures/entity/player_france_9"
       },
       "render_controllers": [
         "controller.render.soccer_player"

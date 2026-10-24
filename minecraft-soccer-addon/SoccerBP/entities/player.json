@@ -108,6 +108,106 @@
           "value": 19
         }
       },
+      "soccer:v20": {
+        "minecraft:variant": {
+          "value": 20
+        }
+      },
+      "soccer:v21": {
+        "minecraft:variant": {
+          "value": 21
+        }
+      },
+      "soccer:v22": {
+        "minecraft:variant": {
+          "value": 22
+        }
+      },
+      "soccer:v23": {
+        "minecraft:variant": {
+          "value": 23
+        }
+      },
+      "soccer:v24": {
+        "minecraft:variant": {
+          "value": 24
+        }
+      },
+      "soccer:v25": {
+        "minecraft:variant": {
+          "value": 25
+        }
+      },
+      "soccer:v26": {
+        "minecraft:variant": {
+          "value": 26
+        }
+      },
+      "soccer:v27": {
+        "minecraft:variant": {
+          "value": 27
+        }
+      },
+      "soccer:v28": {
+        "minecraft:variant": {
+          "value": 28
+        }
+      },
+      "soccer:v29": {
+        "minecraft:variant": {
+          "value": 29
+        }
+      },
+      "soccer:v30": {
+        "minecraft:variant": {
+          "value": 30
+        }
+      },
+      "soccer:v31": {
+        "minecraft:variant": {
+          "value": 31
+        }
+      },
+      "soccer:v32": {
+        "minecraft:variant": {
+          "value": 32
+        }
+      },
+      "soccer:v33": {
+        "minecraft:variant": {
+          "value": 33
+        }
+      },
+      "soccer:v34": {
+        "minecraft:variant": {
+          "value": 34
+        }
+      },
+      "soccer:v35": {
+        "minecraft:variant": {
+          "value": 35
+        }
+      },
+      "soccer:v36": {
+        "minecraft:variant": {
+          "value": 36
+        }
+      },
+      "soccer:v37": {
+        "minecraft:variant": {
+          "value": 37
+        }
+      },
+      "soccer:v38": {
+        "minecraft:variant": {
+          "value": 38
+        }
+      },
+      "soccer:v39": {
+        "minecraft:variant": {
+          "value": 39
+        }
+      },
       "soccer:chase": {
         "minecraft:attack": {
           "damage": 1
@@ -361,6 +461,146 @@
         "add": {
           "component_groups": [
             "soccer:v19"
+          ]
+        }
+      },
+      "soccer:v20": {
+        "add": {
+          "component_groups": [
+            "soccer:v20"
+          ]
+        }
+      },
+      "soccer:v21": {
+        "add": {
+          "component_groups": [
+            "soccer:v21"
+          ]
+        }
+      },
+      "soccer:v22": {
+        "add": {
+          "component_groups": [
+            "soccer:v22"
+          ]
+        }
+      },
+      "soccer:v23": {
+        "add": {
+          "component_groups": [
+            "soccer:v23"
+          ]
+        }
+      },
+      "soccer:v24": {
+        "add": {
+          "component_groups": [
+            "soccer:v24"
+          ]
+        }
+      },
+      "soccer:v25": {
+        "add": {
+          "component_groups": [
+            "soccer:v25"
+          ]
+        }
+      },
+      "soccer:v26": {
+        "add": {
+          "component_groups": [
+            "soccer:v26"
+          ]
+        }
+      },
+      "soccer:v27": {
+        "add": {
+          "component_groups": [
+            "soccer:v27"
+          ]
+        }
+      },
+      "soccer:v28": {
+        "add": {
+          "component_groups": [
+            "soccer:v28"
+          ]
+        }
+      },
+      "soccer:v29": {
+        "add": {
+          "component_groups": [
+            "soccer:v29"
+          ]
+        }
+      },
+      "soccer:v30": {
+        "add": {
+          "component_groups": [
+            "soccer:v30"
+          ]
+        }
+      },
+      "soccer:v31": {
+        "add": {
+          "component_groups": [
+            "soccer:v31"
+          ]
+        }
+      },
+      "soccer:v32": {
+        "add": {
+          "component_groups": [
+            "soccer:v32"
+          ]
+        }
+      },
+      "soccer:v33": {
+        "add": {
+          "component_groups": [
+            "soccer:v33"
+          ]
+        }
+      },
+      "soccer:v34": {
+        "add": {
+          "component_groups": [
+            "soccer:v34"
+          ]
+        }
+      },
+      "soccer:v35": {
+        "add": {
+          "component_groups": [
+            "soccer:v35"
+          ]
+        }
+      },
+      "soccer:v36": {
+        "add": {
+          "component_groups": [
+            "soccer:v36"
+          ]
+        }
+      },
+      "soccer:v37": {
+        "add": {
+          "component_groups": [
+            "soccer:v37"
+          ]
+        }
+      },
+      "soccer:v38": {
+        "add": {
+          "component_groups": [
+            "soccer:v38"
+          ]
+        }
+      },
+      "soccer:v39": {
+        "add": {
+          "component_groups": [
+            "soccer:v39"
           ]
         }
       },

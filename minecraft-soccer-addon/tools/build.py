@@ -12,7 +12,7 @@ import zipfile
 
 from PIL import Image
 
-VERSION = [1, 10, 0]
+VERSION = [1, 11, 0]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BP = os.path.join(ROOT, "SoccerBP")
@@ -88,6 +88,46 @@ TEAMS = [
             (19, "ラミン・ヤマル", "brown", "black", "curly", (1, 1, 2)),
         ],
         "keeper": (1, "ダビド・ラヤ", "light", "darkbrown", "short"),
+    },
+    {
+        "key": "england",
+        "name": "イングランド",
+        "kit": {"shirt": WHITE, "shorts": (25, 35, 90, 255), "socks": WHITE, "number": (25, 35, 90, 255)},
+        "keeper_kit": {"shirt": (230, 120, 30, 255), "shorts": (30, 30, 30, 255), "socks": (230, 120, 30, 255), "number": BLACK},
+        # 背番号は W杯2026（北中米大会）のもの
+        "players": [
+            (5, "ストーンズ", "light", "brown", "short", (0, -1, 1)),
+            (6, "グエーイ", "dark", "black", "short", (1, -1, 0)),
+            (3, "オライリー", "light", "brown", "normal", (1, 0, 1)),
+            (24, "リース・ジェームズ", "brown", "black", "short", (0, 1, 1)),
+            (4, "デクラン・ライス", "light", "brown", "short", (0, 1, 1)),
+            (8, "アンダーソン", "light", "darkbrown", "normal", (0, 0, 1)),
+            (10, "ベリンガム", "brown", "black", "short", (1, 2, 1)),
+            (7, "ブカヨ・サカ", "dark", "black", "short", (1, 1, 1)),
+            (11, "ラッシュフォード", "dark", "black", "short", (2, 1, 0)),
+            (9, "ハリー・ケイン", "light", "brown", "short", (0, 2, 1)),
+        ],
+        "keeper": (1, "ピックフォード", "light", "brown", "short"),
+    },
+    {
+        "key": "france",
+        "name": "フランス",
+        "kit": {"shirt": (25, 40, 120, 255), "shorts": WHITE, "socks": (200, 30, 40, 255), "number": WHITE},
+        "keeper_kit": {"shirt": (70, 70, 75, 255), "shorts": (30, 30, 30, 255), "socks": (70, 70, 75, 255), "number": WHITE},
+        # 背番号は W杯2026（北中米大会）のもの
+        "players": [
+            (17, "サリバ", "dark", "black", "short", (1, -1, 1)),
+            (4, "ウパメカノ", "dark", "black", "short", (0, -1, 0)),
+            (19, "テオ・エルナンデス", "light", "darkbrown", "normal", (2, 0, 0)),
+            (5, "クンデ", "brown", "black", "curly", (1, -1, 1)),
+            (8, "チュアメニ", "dark", "black", "short", (0, 1, 1)),
+            (14, "ラビオ", "light", "brown", "long", (0, 1, 1)),
+            (11, "オリーズ", "brown", "black", "short", (1, 1, 2)),
+            (7, "デンベレ", "brown", "black", "curly", (2, 1, 1)),
+            (20, "ドゥエ", "brown", "black", "short", (1, 1, 1)),
+            (10, "エムバペ", "brown", "black", "short", (2, 2, 1)),
+        ],
+        "keeper": (16, "メニャン", "brown", "black", "short"),
     },
 ]
 
