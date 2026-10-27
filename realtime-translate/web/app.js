@@ -4,7 +4,9 @@
 const SILENCE_TIMEOUT_MS = 3 * 60_000;   // 話し声の文字起こしがこの時間届かなければ自動停止(待機時間)
 const COUNTDOWN_SHOW_MS = 30_000;        // 残りこの時間になったらカウントダウン表示
 const CONNECT_TIMEOUT_MS = 30_000;       // 接続がこの時間で完了しなければエラー
-const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強制停止)
+const MAX_SESSION_MS = 90 * 60_000;      // 1セッションの最大時間(強制停止・ChatGPT)
+const MAX_SESSION_MS_SONIOX = 180 * 60_000; // Soniox は安いので長い講演にも対応
+const SX_DRAIN_MS = 3_000;               // 停止後、最後の確定・訳を待つ時間
 const PRICE_PER_MIN_USD = 0.034;         // 入力音声 1分あたりの料金(OpenAI)
 // 翻訳エンジン: OpenAI(gpt-realtime-translate)/ Soniox(stt-rt + 翻訳)
 const LS_ENGINE = "rt.engine";
@@ -22,6 +24,9 @@ const SX_SPEED = {
   fastest: { endpoint: 500, pause: 250, force: 6000 },
 };
 const SX_FINALIZE_MIN_MS = 2500;         // 確定を送る最短間隔(送りすぎると切断されることがある)
+// iPhone がマイクを止めた(画面ロック・電話・Siri・他アプリの録音など)まま戻らなければ、無音に料金を払わないよう停止する
+const MIC_MUTED_STOP_MS = 30_000;
+let micMutedTimer = null;
 const SX_VAD_MIN_LEVEL = 0.03;           // 話し声とみなす最小の音量
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
 // 話が途切れず続くと1つの段落が際限なく伸び、届くたびに全文を描き直して重くなるため、文の終わりで段落を分ける
@@ -168,7 +173,7 @@ const panes = {
 
 // ===== 初期化 =====
 $("silenceSec").textContent = fmtDuration(SILENCE_TIMEOUT_MS);
-$("maxMin").textContent = MAX_SESSION_MS / 60_000;
+$("maxMin").textContent = `${MAX_SESSION_MS / 60_000}(Soniox は ${MAX_SESSION_MS_SONIOX / 60_000})`;
 passInput.value = loadPassphrase();
 passInput.addEventListener("input", () => savePassphrase(passInput.value));
 passInput.addEventListener("change", () => savePassphrase(passInput.value));
@@ -238,6 +243,7 @@ $("settingsBtn").addEventListener("click", renderDiagLog);
 settings.addEventListener("close", () => savePassphrase(passInput.value));
 
 document.addEventListener("visibilitychange", () => {
+  if (state !== "idle") diag(`画面: ${document.visibilityState === "visible" ? "表示" : "非表示(ロック・別アプリ)"}`);
   if (document.visibilityState === "visible" && state === "live") acquireWakeLock();
   if (document.visibilityState === "hidden") saveSession();
 });
@@ -441,7 +447,7 @@ async function reconnect(reason, { rotate = false } = {}) {
   if (!rotate) showNotice("字幕が止まったため、つなぎ直しています…");
   try {
     if (runEngine === "soniox") {
-      closeSoniox({ keepAudio: true });
+      closeSoniox({ keepAudio: true, drain: true });
       await openSoniox(sx.track, passInput.value.trim(), getWorkerUrl());
       if (gen !== generation) return;
       markSessionStart();
@@ -507,7 +513,7 @@ function stop(reason, message) {
   stopRecorder(); // マイクを止める前に録音を確定させる
   try { drainingChannel?.close(); } catch {}
   drainingChannel = null;
-  closeSoniox();
+  closeSoniox({ drain: reason !== "error" });
   setProvisional("en", "");
   setProvisional("ja", "");
   try { dc?.close(); } catch {}
@@ -517,6 +523,8 @@ function stop(reason, message) {
   dc = null; pc = null; micStream = null;
   stopStats();
   if (remoteAudio) { remoteAudio.srcObject = null; remoteAudio = null; }
+  clearTimeout(micMutedTimer);
+  micMutedTimer = null;
   diag(`停止: ${reason}${message ? ` / ${message}` : ""} (受信 ${eventCount} 件)`);
   releaseWakeLock();
   stopTicking();
@@ -526,8 +534,11 @@ function stop(reason, message) {
   if (reason === "silence") {
     showNotice(`無音が${fmtDuration(SILENCE_TIMEOUT_MS)}続いたため停止しました`);
     statusEl.textContent = "自動停止";
+  } else if (reason === "muted") {
+    showNotice(`iPhone がマイクを止めたまま${MIC_MUTED_STOP_MS / 1000}秒たったため停止しました(画面ロック・電話・他のアプリの録音など)。「再開」で続けられます`, true);
+    statusEl.textContent = "自動停止";
   } else if (reason === "max") {
-    showNotice(`最長時間(${MAX_SESSION_MS / 60_000}分)に達したため停止しました`);
+    showNotice(`最長時間(${maxSessionMs() / 60_000}分)に達したため停止しました`);
     statusEl.textContent = "自動停止";
   } else if (reason === "error") {
     statusEl.dataset.state = "error";
@@ -819,7 +830,7 @@ function tick() {
     if (remaining <= 0) {
       return state === "live" ? stop("silence") : stop("error", "接続がタイムアウトしました");
     }
-    if (liveSince && now - liveSince >= MAX_SESSION_MS) return stop("max");
+    if (liveSince && now - liveSince >= maxSessionMs()) return stop("max");
     if (state === "live" && remaining <= COUNTDOWN_SHOW_MS) {
       countdownEl.hidden = false;
       countdownEl.textContent = `無音のため ${Math.ceil(remaining / 1000)} 秒後に停止します`;
@@ -1087,7 +1098,10 @@ async function openSoniox(track, passphrase, workerUrl) {
     };
     ws.onerror = () => { clearTimeout(timer); reject(new Error("Soniox に接続できませんでした")); };
   });
-  ws.onmessage = (e) => { if (gen === generation && ws === sx.ws) handleSoniox(e.data); };
+  ws.onmessage = (e) => {
+    if (ws === sx.drainWs) return handleSoniox(e.data, { draining: true });
+    if (gen === generation && ws === sx.ws) handleSoniox(e.data);
+  };
   ws.onclose = (e) => {
     if (gen !== generation || ws !== sx.ws || state !== "live") return;
     diag(`Soniox 切断 code=${e.code} ${e.reason || ""}`);
@@ -1097,12 +1111,22 @@ async function openSoniox(track, passphrase, workerUrl) {
   sx.ws = ws;
 }
 
-function closeSoniox({ keepAudio = false } = {}) {
+// drain: 「音声はここまで」(空のフレーム)を送り、残りの確定・訳が届くのを少し待ってから閉じる(最後の一文を失わないため)
+function closeSoniox({ keepAudio = false, drain = false } = {}) {
   const ws = sx.ws;
   sx.ws = null;
   if (ws) {
-    try { if (ws.readyState === WebSocket.OPEN) ws.send(""); } catch {} // 空のフレーム = 音声の終わり
-    setTimeout(() => { try { ws.close(); } catch {} }, 1_000);
+    const open = ws.readyState === WebSocket.OPEN;
+    try { if (open) ws.send(""); } catch {} // 空のフレーム = 音声の終わり
+    if (drain && open) {
+      finishDrain(); // 前の待ちが残っていれば終わらせる
+      sx.drainWs = ws;
+      sx.drainSession = session;
+      sx.drainCount = 0;
+      sx.drainTimer = setTimeout(() => finishDrain(), SX_DRAIN_MS);
+    } else {
+      setTimeout(() => { try { ws.close(); } catch {} }, 1_000);
+    }
   }
   if (!keepAudio) {
     try { sx.node?.disconnect(); } catch {}
@@ -1112,9 +1136,24 @@ function closeSoniox({ keepAudio = false } = {}) {
 }
 
 // Soniox の応答: tokens の is_final が確定、それ以外は暫定(あとで変わる)。translation_status で原文/訳文を区別
-function handleSoniox(raw) {
+function handleSoniox(raw, { draining = false } = {}) {
   let msg;
   try { msg = JSON.parse(raw); } catch { return; }
+  if (draining) {
+    // 停止後の残り: 確定した文字だけ、停止したときのセッションに追加する
+    if (session === sx.drainSession) {
+      for (const t of msg.tokens || []) {
+        if (!t.is_final || t.text === "<end>" || t.text === "<fin>") continue;
+        const lang = isBidi()
+          ? (t.language ? (t.language.startsWith("ja") ? "ja" : "en") : (/[\u3040-\u30ff\u3400-\u9fff]/.test(t.text) ? "ja" : "en"))
+          : (t.translation_status === "translation" ? "ja" : "en");
+        appendDelta(lang, t.text, isBidi() && t.translation_status === "translation");
+        sx.drainCount++;
+      }
+    }
+    if (msg.finished || msg.error_code) finishDrain();
+    return;
+  }
   eventCount++;
   if (msg.error_code || msg.error_message) {
     diag(`Soniox エラー: ${msg.error_code} ${msg.error_message || ""}`);
@@ -1172,6 +1211,24 @@ function sonioxVad(rms) {
   sx.lastFin = now;
   sx.speechSinceFin = false;
   sx.finCount++;
+}
+
+function finishDrain() {
+  const ws = sx.drainWs;
+  if (!ws) return;
+  clearTimeout(sx.drainTimer);
+  sx.drainWs = null;
+  try { ws.close(); } catch {}
+  if (sx.drainCount) {
+    diag(`停止前の残り ${sx.drainCount} 件を受信`);
+    if (session === sx.drainSession) saveSession();
+    else persistSession(sx.drainSession);
+  }
+  sx.drainSession = null;
+}
+
+function maxSessionMs() {
+  return runEngine === "soniox" ? MAX_SESSION_MS_SONIOX : MAX_SESSION_MS;
 }
 
 // 確定前の文字(薄く表示)。段落がなければ仮の段落に出す
@@ -1242,11 +1299,30 @@ function fixTerms(text, lang) {
 function watchMicTrack(track) {
   $("micName").textContent = shortMicName(track?.label);
   diag(`マイク取得: ${track?.label || "(名前なし)"} muted=${track?.muted} state=${track?.readyState} ${JSON.stringify(track?.getSettings?.() || {})}`);
-  track?.addEventListener("mute", () => diag("マイクトラック mute(iOS がマイクを止めた可能性)"));
-  track?.addEventListener("unmute", () => diag("マイクトラック unmute"));
+  track?.addEventListener("mute", () => { diag("マイクトラック mute(iOS がマイクを止めた可能性)"); onMicMuted(); });
+  track?.addEventListener("unmute", () => { diag("マイクトラック unmute"); onMicUnmuted(); });
   track?.addEventListener("ended", () => diag("マイクトラック ended"));
   micCheckSince = Date.now();
   micMaxLevel = 0;
+}
+
+function onMicMuted() {
+  if (state !== "live") return;
+  // それまでに話された分は確定させて訳を出しておく
+  if (runEngine === "soniox" && sx.ws?.readyState === WebSocket.OPEN) {
+    try { sx.ws.send(JSON.stringify({ type: "finalize" })); } catch {}
+  }
+  showNotice(`iPhone がマイクを止めました(画面ロック・電話・Siri・他のアプリの録音など)。${MIC_MUTED_STOP_MS / 1000}秒以内に戻らなければ停止します`, true);
+  clearTimeout(micMutedTimer);
+  micMutedTimer = setTimeout(() => {
+    micMutedTimer = null;
+    if (state === "live") stop("muted");
+  }, MIC_MUTED_STOP_MS);
+}
+function onMicUnmuted() {
+  clearTimeout(micMutedTimer);
+  micMutedTimer = null;
+  if (state === "live" && noticeEl.textContent.startsWith("iPhone がマイクを止めました")) showNotice("マイクが戻りました");
 }
 
 function shortMicName(label) {
@@ -1344,7 +1420,10 @@ async function acquireWakeLock() {
   if (!("wakeLock" in navigator) || wakeLock) return;
   try {
     wakeLock = await navigator.wakeLock.request("screen");
-    wakeLock.addEventListener("release", () => { wakeLock = null; });
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+      if (state === "live") diag("画面スリープ防止(Wake Lock)が解除された");
+    });
     if (state === "idle") releaseWakeLock();
   } catch { wakeLock = null; }
 }
