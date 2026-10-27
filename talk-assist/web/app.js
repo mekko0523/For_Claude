@@ -629,7 +629,7 @@ function deleteConv(c) {
 }
 
 function formatConv(c) {
-  const lines = [`会話カンペ ${fmtDate(c.startedAt)}${c.scene ? `（${sceneLabel(c.scene)}）` : ""}`, ""];
+  const lines = [`ハヤサポEnglish ${fmtDate(c.startedAt)}${c.scene ? `（${sceneLabel(c.scene)}）` : ""}`, ""];
   for (const t of c.turns) {
     lines.push(`${t.who === "me" ? "自分" : "相手"}: ${t.en}`);
     if (t.ja) lines.push(`　（${t.ja}）`);

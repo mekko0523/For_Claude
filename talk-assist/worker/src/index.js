@@ -1,4 +1,4 @@
-// 会話カンペ(talk-assist)の Cloudflare Worker。
+// ハヤサポEnglish(英会話サポート / talk-assist)の Cloudflare Worker。
 //   - web/ の静的ファイル(画面)を配信する(wrangler.toml の [assets])
 //   - POST /api/soniox-key : Soniox の一時キーを発行(長期キーはブラウザに渡さない)
 //   - POST /api/suggest    : 相手の英語に対する返答候補を Claude で作り、1行1候補の JSON でストリーミングする
