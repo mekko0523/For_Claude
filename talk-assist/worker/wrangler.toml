@@ -1,0 +1,22 @@
+name = "talk-assist"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# 画面(web/)もこの Worker から配信する。/api/ 以外は静的ファイル
+[assets]
+directory = "../web"
+binding = "ASSETS"
+
+[vars]
+# 返答候補を作る Claude のモデルと考える量(low / medium / high)
+# 速さを優先するなら CLAUDE_MODEL = "claude-haiku-5-5"
+CLAUDE_MODEL = "claude-opus-5-5"
+CLAUDE_EFFORT = "low"
+# Soniox のリアルタイム音声認識モデル
+SONIOX_MODEL = "stt-rt-v5"
+
+# Secret はここに書かない(名前のみ記載)。GitHub Actions が GitHub Secrets から登録する。
+#   ANTHROPIC_API_KEY : Claude の API キー
+#   SONIOX_API_KEY    : Soniox の API キー
+#   APP_PASSPHRASE    : 画面で入力する合言葉
+# ローカル開発では .dev.vars に書く(.gitignore 済み)。.dev.vars.example を参照。

@@ -1,0 +1,615 @@
+"use strict";
+
+// ===== 定数(ここを変えれば挙動を調整できる) =====
+const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
+const SONIOX_SAMPLE_RATE = 16_000;
+const CONNECT_TIMEOUT_MS = 20_000;
+const SILENCE_STOP_MS = 5 * 60_000;     // 何も聞こえないままこの時間たったら自動停止(料金の節約)
+const MAX_RECONNECTS = 5;               // 接続が切れたときに自動でつなぎ直す回数
+const MAX_TURNS = 200;                  // 端末に残す発言数
+const HISTORY_FOR_CLAUDE = 30;          // 候補作りに使う直近の発言数
+// 自分の発言の見分け: 表示中の候補を読み上げたら「自分」とみなす
+const SELF_MATCH_DICE = 0.6;            // 候補との単語の一致度(Dice 係数)がこれ以上
+const SELF_MATCH_CONTAINED = 0.8;       // または、聞こえた単語のこの割合以上が候補に含まれる(3語以上)
+const PICKED_ECHO_MS = 30_000;          // 候補をタップしてからこの時間は、それを読み上げた声を二重に記録しない
+const LS = {
+  pass: "ta.passphrase", profile: "ta.profile", scenePreset: "ta.scenePreset", sceneNote: "ta.sceneNote",
+  endpoint: "ta.endpoint", showJa: "ta.showJa", turns: "ta.turns",
+};
+
+// ===== DOM =====
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+const liveEl = $("live");
+const emptyEl = $("empty");
+const cardsEl = $("cards");
+const sgTitle = $("sgTitle");
+const regenBtn = $("regenBtn");
+const meBtn = $("meBtn");
+const toggleBtn = $("toggleBtn");
+const dotEl = $("dot");
+const statusText = $("statusText");
+const noticeEl = $("notice");
+const settings = $("settings");
+const passInput = $("passphrase");
+const profileInput = $("profile");
+const scenePreset = $("scenePreset");
+const sceneNote = $("sceneNote");
+const endpointSel = $("endpointSel");
+const showJa = $("showJa");
+const intentForm = $("intentForm");
+const intentInput = $("intent");
+
+// ===== 状態 =====
+let state = "idle";              // idle | connecting | live
+let generation = 0;              // 停止後に古い非同期処理が戻ってきても無視するための世代番号
+let ws = null;
+let audio = null;                // { ctx, node, stream }
+let wakeLock = null;
+let reconnects = 0;
+let lastHeardAt = 0;
+let tickTimer = null;
+let uttFinal = "";               // 話し中の発言の確定部分
+let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
+let turns = loadTurns();         // [{ id, who: "them" | "me", en, ja }]
+let nextId = turns.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+let suggestions = [];            // 表示中の候補 [{ kind, en, ja }]
+let picked = null;               // タップした候補 { en, words: Set, at, covered: Set }
+let suggestCtl = null;           // 候補作りの通信(新しい発言が来たら取り消す)
+
+// ===== 初期化 =====
+passInput.value = lsGet(LS.pass) || "";
+profileInput.value = lsGet(LS.profile) || "";
+scenePreset.value = lsGet(LS.scenePreset) || "";
+sceneNote.value = lsGet(LS.sceneNote) || "";
+endpointSel.value = lsGet(LS.endpoint) || "1200";
+showJa.checked = lsGet(LS.showJa) !== "0";
+applyShowJa();
+for (const t of turns) logEl.insertBefore(renderTurn(t), liveEl);
+updateEmpty();
+scrollToBottom(true);
+setCardsPlaceholder(turns.length ? "相手が話すと、ここに返事の候補が出ます" : "");
+regenBtn.disabled = !turns.length;
+
+toggleBtn.addEventListener("click", () => (state === "idle" ? start() : stop()));
+$("settingsBtn").addEventListener("click", () => settings.showModal());
+$("newBtn").addEventListener("click", newConversation);
+regenBtn.addEventListener("click", () => requestSuggestions());
+meBtn.addEventListener("click", () => setMeMode(!meMode));
+intentForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const intent = intentInput.value.trim();
+  if (!intent) return;
+  intentInput.blur();
+  requestSuggestions({ intent });
+});
+settings.addEventListener("close", saveSettings);
+showJa.addEventListener("change", applyShowJa);
+document.addEventListener("visibilitychange", onVisibility);
+
+if (!passInput.value) settings.showModal();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+// ===== 開始・停止 =====
+async function start() {
+  if (state !== "idle") return;
+  const pass = passInput.value.trim();
+  if (!pass) { settings.showModal(); return; }
+  const gen = ++generation;
+  setState("connecting");
+  showNotice("");
+  reconnects = 0;
+  try {
+    // iOS では音声処理をボタンを押した直後に作らないと動かないことがあるため、最初に作る
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    ctx.resume?.().catch(() => {});
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("このブラウザはマイクに対応していません（Safari で開いてください）");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (gen !== generation) { stream.getTracks().forEach((t) => t.stop()); ctx.close(); return; }
+    audio = { ctx, stream, node: null };
+    await setupAudio(ctx, stream);
+    stream.getAudioTracks()[0]?.addEventListener("ended", () => {
+      if (state !== "idle") stop("マイクが止まりました。もう一度「開始」を押してください", true);
+    });
+    await connect(gen);
+    if (gen !== generation) return;
+    acquireWakeLock();
+    lastHeardAt = Date.now();
+    tickTimer = setInterval(tick, 1_000);
+    setState("live");
+  } catch (err) {
+    if (gen !== generation) return;
+    stop(err?.message || String(err), true);
+  }
+}
+
+function stop(message = "", isError = false) {
+  generation++;
+  if (uttFinal.trim()) endUtterance();
+  closeSocket();
+  if (audio) {
+    try { audio.node?.disconnect(); } catch {}
+    audio.stream.getTracks().forEach((t) => t.stop());
+    audio.ctx.close().catch(() => {});
+    audio = null;
+  }
+  clearInterval(tickTimer);
+  tickTimer = null;
+  releaseWakeLock();
+  setLive("");
+  setState("idle");
+  if (message) showNotice(message, isError);
+}
+
+function tick() {
+  if (state === "live" && Date.now() - lastHeardAt > SILENCE_STOP_MS) {
+    stop("しばらく何も聞こえなかったので停止しました");
+  }
+}
+
+// ===== 音声(マイク → 16kHz の 16bit PCM → Soniox) =====
+const PCM_WORKLET_SRC = `
+class PcmSender extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.ratio = o.processorOptions.ratio; this.pos = 0; this.sum = 0; this.n = 0;
+    this.out = new Int16Array(1600); this.len = 0;
+  }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.sum += ch[i]; this.n++; this.pos += 1;
+      if (this.pos >= this.ratio) {
+        this.pos -= this.ratio;
+        const s = Math.max(-1, Math.min(1, this.sum / this.n));
+        this.sum = 0; this.n = 0;
+        this.out[this.len++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        if (this.len === this.out.length) {
+          const buf = this.out.slice(0).buffer;
+          this.port.postMessage(buf, [buf]);
+          this.len = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-sender", PcmSender);
+`;
+
+async function setupAudio(ctx, stream) {
+  const url = URL.createObjectURL(new Blob([PCM_WORKLET_SRC], { type: "application/javascript" }));
+  try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+  const src = ctx.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(ctx, "pcm-sender", { processorOptions: { ratio: ctx.sampleRate / SONIOX_SAMPLE_RATE } });
+  const mute = ctx.createGain();
+  mute.gain.value = 0; // 処理を動かすためにつなぐだけ(音は出さない)
+  src.connect(node).connect(mute).connect(ctx.destination);
+  node.port.onmessage = ({ data }) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(data);
+  };
+  await ctx.resume?.().catch(() => {});
+  audio.node = node;
+}
+
+// ===== Soniox =====
+async function connect(gen) {
+  const res = await api("/api/soniox-key", {});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.value) throw new Error(apiErrorMessage(res.status, data, "音声認識の準備"));
+  if (gen !== generation) return;
+
+  const sock = new WebSocket(SONIOX_WS_URL, ["soniox-api-key", data.value]);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("音声認識への接続がタイムアウトしました")), CONNECT_TIMEOUT_MS);
+    sock.onopen = () => {
+      clearTimeout(timer);
+      sock.send(JSON.stringify({
+        model: data.model || "stt-rt-v5",
+        audio_format: "pcm_s16le",
+        sample_rate: SONIOX_SAMPLE_RATE,
+        num_channels: 1,
+        language_hints: ["en"],
+        enable_endpoint_detection: true,
+        max_endpoint_delay_ms: Number(endpointSel.value) || 1200,
+        context: {
+          general: [
+            { key: "setting", value: "Face-to-face conversation in English" },
+            ...(sceneText() ? [{ key: "scene", value: sceneText().slice(0, 300) }] : []),
+          ],
+        },
+      }));
+      resolve();
+    };
+    sock.onerror = () => { clearTimeout(timer); reject(new Error("音声認識に接続できませんでした")); };
+  });
+  if (gen !== generation) { try { sock.close(); } catch {} return; }
+  sock.onerror = null;
+  sock.onmessage = (e) => { if (sock === ws) handleSoniox(e.data); };
+  sock.onclose = (e) => {
+    if (sock !== ws || gen !== generation || state === "idle") return;
+    ws = null;
+    if (reconnects >= MAX_RECONNECTS) {
+      stop(`音声認識との接続が切れました（${e.code}）。もう一度「開始」を押してください`, true);
+      return;
+    }
+    reconnects++;
+    setState("connecting");
+    setTimeout(() => {
+      if (gen !== generation) return;
+      connect(gen).then(() => { if (gen === generation) setState("live"); })
+        .catch((err) => { if (gen === generation) stop(err?.message || String(err), true); });
+    }, 800);
+  };
+  ws = sock;
+}
+
+function closeSocket() {
+  const sock = ws;
+  ws = null;
+  if (!sock) return;
+  try { if (sock.readyState === WebSocket.OPEN) sock.send(""); } catch {} // 空のフレーム = 音声の終わり
+  setTimeout(() => { try { sock.close(); } catch {} }, 500);
+}
+
+// tokens の is_final が確定、それ以外は暫定(あとで変わる)。<end> は話し終わりの合図
+function handleSoniox(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  if (msg.error_code || msg.error_message) {
+    stop(`音声認識のエラー: ${msg.error_message || msg.error_code}`, true);
+    return;
+  }
+  let prov = "";
+  for (const t of msg.tokens || []) {
+    if (t.text === "<end>" || t.text === "<fin>") {
+      if (t.is_final) endUtterance();
+      continue;
+    }
+    if (t.translation_status === "translation") continue;
+    lastHeardAt = Date.now();
+    if (t.is_final) uttFinal += t.text;
+    else prov += t.text;
+  }
+  setLive(uttFinal + prov);
+}
+
+// 1つの発言が終わった: 自分の発言か相手の発言かを見分けて記録する
+function endUtterance() {
+  const text = uttFinal.replace(/\s+/g, " ").trim();
+  uttFinal = "";
+  setLive("");
+  if (!/[a-z0-9]/i.test(text)) return;
+
+  if (meMode) {
+    addTurn({ who: "me", en: text });
+    return;
+  }
+  const words = toWords(text);
+  // タップした候補を読み上げた声(すでに記録済み)
+  if (picked && Date.now() - picked.at < PICKED_ECHO_MS && containedRatio(words, picked.words) >= 0.7) {
+    for (const w of words) picked.covered.add(w);
+    if (picked.covered.size >= picked.words.size * 0.7) picked = null;
+    return;
+  }
+  // 表示中の候補を読み上げた
+  const match = bestSuggestion(words);
+  if (match) {
+    addTurn({ who: "me", en: match.en, ja: match.ja });
+    clearSuggestions("相手の返事を待っています…");
+    return;
+  }
+  addTurn({ who: "them", en: text });
+  requestSuggestions();
+}
+
+function bestSuggestion(words) {
+  let best = null;
+  let bestScore = 0;
+  for (const s of suggestions) {
+    const sw = toWords(s.en);
+    const d = dice(words, sw);
+    const ok = d >= SELF_MATCH_DICE || (words.size >= 3 && containedRatio(words, sw) >= SELF_MATCH_CONTAINED);
+    if (ok && d > bestScore) { best = s; bestScore = d; }
+  }
+  return best;
+}
+
+function toWords(text) {
+  return new Set(text.toLowerCase().replace(/[’`]/g, "'").replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean));
+}
+function dice(a, b) {
+  if (!a.size || !b.size) return 0;
+  let n = 0;
+  for (const w of a) if (b.has(w)) n++;
+  return (2 * n) / (a.size + b.size);
+}
+function containedRatio(a, b) {
+  if (!a.size) return 0;
+  let n = 0;
+  for (const w of a) if (b.has(w)) n++;
+  return n / a.size;
+}
+
+// ===== 返答候補(Claude) =====
+async function requestSuggestions({ intent = "" } = {}) {
+  if (!turns.length && !intent) return;
+  if (!passInput.value.trim()) { settings.showModal(); return; }
+  suggestCtl?.abort();
+  const ctl = new AbortController();
+  suggestCtl = ctl;
+  suggestions = [];
+  picked = null;
+  cardsEl.replaceChildren(...[0, 1, 2].map(() => el("div", "loading")));
+  sgTitle.textContent = intent ? `「${intent}」の言い方` : "返答候補";
+  regenBtn.disabled = true;
+
+  const history = turns.slice(-HISTORY_FOR_CLAUDE).map((t) => ({
+    id: t.id, who: t.who, en: t.en, translate: t.who === "them" && !t.ja,
+  }));
+  let shown = 0;
+  try {
+    const res = await api("/api/suggest", { history, intent, scene: sceneText(), profile: profileInput.value.trim() }, ctl.signal);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(apiErrorMessage(res.status, data, "候補作り"));
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0 || (done && buf.trim())) {
+        const line = (nl >= 0 ? buf.slice(0, nl) : buf).trim();
+        buf = nl >= 0 ? buf.slice(nl + 1) : "";
+        if (ctl !== suggestCtl) return;
+        if (handleSuggestionLine(line)) shown++;
+      }
+      if (done) break;
+    }
+  } catch (err) {
+    if (ctl.signal.aborted || ctl !== suggestCtl) return;
+    showNotice(err?.message || String(err), true);
+  } finally {
+    if (ctl === suggestCtl) {
+      suggestCtl = null;
+      cardsEl.querySelectorAll(".loading").forEach((n) => n.remove());
+      if (!shown) setCardsPlaceholder("候補を作れませんでした。「別の候補」で作り直せます");
+      regenBtn.disabled = !turns.length;
+    }
+  }
+}
+
+// 1行 = 1つの JSON。和訳なら発言に付け、候補ならカードを足す。カードを足したら true
+function handleSuggestionLine(line) {
+  if (!line.startsWith("{")) return false;
+  let obj;
+  try { obj = JSON.parse(line); } catch { return false; }
+  if (obj.error) {
+    showNotice(obj.error === "refusal" ? "この内容では候補を作れませんでした" : `候補作りでエラー: ${obj.message || obj.error}`, true);
+    return false;
+  }
+  if (obj.kind === "translation") {
+    const id = Number(String(obj.id || "").replace(/^T/, ""));
+    const turn = turns.find((t) => t.id === id);
+    if (turn && typeof obj.ja === "string") {
+      turn.ja = obj.ja;
+      saveTurns();
+      const node = logEl.querySelector(`[data-id="${id}"]`);
+      if (node) node.replaceWith(renderTurn(turn));
+    }
+    return false;
+  }
+  if (typeof obj.en !== "string" || !obj.en.trim()) return false;
+  const s = { kind: obj.kind, en: obj.en.trim(), ja: typeof obj.ja === "string" ? obj.ja : "" };
+  suggestions.push(s);
+  const card = el("button", "card");
+  card.type = "button";
+  card.append(
+    el("div", "kind", { answer: "返事", question: "質問", other: "ほかに" }[s.kind] || ""),
+    el("div", "en", s.en),
+    el("div", "ja", s.ja),
+  );
+  card.addEventListener("click", () => pickSuggestion(s, card));
+  const firstLoading = cardsEl.querySelector(".loading");
+  cardsEl.insertBefore(card, firstLoading);
+  return true;
+}
+
+// 候補をタップ = これを言う。会話に記録して、読み上げた声を二重に記録しないようにする
+function pickSuggestion(s, card) {
+  card.classList.add("picked");
+  addTurn({ who: "me", en: s.en, ja: s.ja });
+  picked = { en: s.en, words: toWords(s.en), at: Date.now(), covered: new Set() };
+  suggestions = [];
+  setTimeout(() => clearSuggestions("相手の返事を待っています…"), 400);
+}
+
+function clearSuggestions(text) {
+  suggestCtl?.abort();
+  suggestCtl = null;
+  suggestions = [];
+  sgTitle.textContent = "返答候補";
+  setCardsPlaceholder(text);
+  regenBtn.disabled = !turns.length;
+}
+
+function setCardsPlaceholder(text) {
+  cardsEl.replaceChildren(...(text ? [el("div", "placeholder", text)] : []));
+}
+
+// ===== 会話ログ =====
+function addTurn({ who, en, ja = "" }) {
+  const turn = { id: nextId++, who, en, ja };
+  turns.push(turn);
+  if (turns.length > MAX_TURNS) {
+    const old = turns.shift();
+    logEl.querySelector(`[data-id="${old.id}"]`)?.remove();
+  }
+  saveTurns();
+  logEl.insertBefore(renderTurn(turn), liveEl);
+  updateEmpty();
+  scrollToBottom();
+  return turn;
+}
+
+function renderTurn(t) {
+  const node = el("div", `turn ${t.who}`);
+  node.dataset.id = t.id;
+  node.append(el("div", "who", t.who === "me" ? "自分" : "相手"), el("div", "en", t.en));
+  if (t.ja) node.append(el("div", "ja", t.ja));
+  node.addEventListener("click", () => editTurn(t));
+  return node;
+}
+
+// 発言をタップ: 相手 → 自分 に直す / 自分の発言を取り消す(聞き分けの間違いを直す用)
+function editTurn(t) {
+  if (t.who === "them") {
+    if (!confirm("この発言を「自分」の発言に直しますか？")) return;
+    t.who = "me";
+    saveTurns();
+    logEl.querySelector(`[data-id="${t.id}"]`)?.replaceWith(renderTurn(t));
+    if (turns[turns.length - 1] === t) clearSuggestions("相手の返事を待っています…");
+    return;
+  }
+  if (!confirm("この発言を会話から消しますか？")) return;
+  turns = turns.filter((x) => x !== t);
+  saveTurns();
+  logEl.querySelector(`[data-id="${t.id}"]`)?.remove();
+  updateEmpty();
+  if (turns[turns.length - 1]?.who === "them") requestSuggestions();
+}
+
+function setLive(text) {
+  const show = text.trim();
+  liveEl.hidden = !show;
+  liveEl.firstElementChild.textContent = show;
+  if (show) { updateEmpty(); scrollToBottom(); }
+}
+
+function newConversation() {
+  if (turns.length && !confirm("会話の記録を消して、新しい会話を始めますか？")) return;
+  turns = [];
+  saveTurns();
+  logEl.querySelectorAll(".turn:not(.live)").forEach((n) => n.remove());
+  clearSuggestions("");
+  showNotice("");
+  updateEmpty();
+}
+
+function updateEmpty() {
+  emptyEl.hidden = turns.length > 0 || !liveEl.hidden;
+}
+
+function scrollToBottom(force = false) {
+  const near = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 160;
+  if (force || near) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+}
+
+// ===== 画面の状態 =====
+function setState(s) {
+  state = s;
+  dotEl.className = `dot ${s === "idle" ? "" : s}`;
+  statusText.textContent = { idle: "停止中", connecting: "接続中…", live: "聞き取り中" }[s];
+  toggleBtn.textContent = s === "idle" ? "▶ 開始" : "■ 停止";
+  toggleBtn.classList.toggle("stop", s !== "idle");
+}
+
+function setMeMode(on) {
+  meMode = on;
+  meBtn.setAttribute("aria-pressed", String(on));
+  meBtn.textContent = on ? "🙋 自分が話し中…" : "🙋 自分が話す";
+  // 話し終わる前に戻したときは、その時点までを自分の発言として区切る
+  if (!on && uttFinal.trim()) {
+    meMode = true;
+    endUtterance();
+    meMode = false;
+  }
+}
+
+function showNotice(text, isError = false) {
+  noticeEl.hidden = !text;
+  noticeEl.textContent = text;
+  noticeEl.classList.toggle("error", isError);
+}
+
+function applyShowJa() {
+  document.body.classList.toggle("hide-ja", !showJa.checked);
+}
+
+function saveSettings() {
+  lsSet(LS.pass, passInput.value.trim());
+  lsSet(LS.profile, profileInput.value);
+  lsSet(LS.scenePreset, scenePreset.value);
+  lsSet(LS.sceneNote, sceneNote.value);
+  lsSet(LS.endpoint, endpointSel.value);
+  lsSet(LS.showJa, showJa.checked ? "1" : "0");
+}
+
+function sceneText() {
+  return [scenePreset.value, sceneNote.value.trim()].filter(Boolean).join(". ");
+}
+
+// iOS は画面を離れるとマイクが止まることがある。戻ってきたら確認する
+function onVisibility() {
+  if (document.visibilityState !== "visible" || state === "idle") return;
+  acquireWakeLock();
+  audio?.ctx.resume?.().catch(() => {});
+  const track = audio?.stream.getAudioTracks()[0];
+  if (!track || track.readyState === "ended") stop("画面を離れたためマイクが止まりました。もう一度「開始」を押してください", true);
+}
+
+async function acquireWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+    if (state === "idle") releaseWakeLock();
+  } catch { wakeLock = null; }
+}
+function releaseWakeLock() {
+  const wl = wakeLock;
+  wakeLock = null;
+  wl?.release().catch(() => {});
+}
+
+// ===== 通信・保存の小物 =====
+function api(path, body, signal) {
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Passphrase": passInput.value.trim() },
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+function apiErrorMessage(status, data, what) {
+  if (data?.error === "invalid_passphrase") {
+    settings.showModal();
+    return "合言葉が違います（設定で入力し直してください）";
+  }
+  if (data?.error === "soniox_not_configured") return "Soniox のキーが未設定です（GitHub Secret に SONIOX_API_KEY を登録してデプロイしてください）";
+  if (data?.error === "anthropic_not_configured") return "Claude のキーが未設定です（GitHub Secret に ANTHROPIC_API_KEY を登録してデプロイしてください）";
+  return `${what}に失敗しました（${status} ${data?.error || ""} ${data?.message || ""}）`.replace(/\s+）/, "）");
+}
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function loadTurns() {
+  try {
+    const arr = JSON.parse(lsGet(LS.turns) || "[]");
+    return Array.isArray(arr) ? arr.filter((t) => t && (t.who === "them" || t.who === "me") && typeof t.en === "string") : [];
+  } catch { return []; }
+}
+function saveTurns() { lsSet(LS.turns, JSON.stringify(turns.slice(-MAX_TURNS))); }
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }

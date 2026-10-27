@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#101418"/>
+  <path d="M96 150c0-33 27-60 60-60h150c33 0 60 27 60 60v80c0 33-27 60-60 60h-96l-66 52v-52c-27-4-48-28-48-58z" fill="#2c3a48"/>
+  <text x="231" y="222" font-family="Helvetica, Arial, sans-serif" font-size="96" font-weight="700" fill="#eef2f6" text-anchor="middle">Hi</text>
+  <path d="M206 296c0-30 24-54 54-54h120c30 0 54 24 54 54v64c0 28-21 51-48 54v46l-58-46h-68c-30 0-54-24-54-54z" fill="#4fb3ff"/>
+  <rect x="246" y="302" width="148" height="18" rx="9" fill="#04121f"/>
+  <rect x="246" y="342" width="104" height="18" rx="9" fill="#04121f"/>
+</svg>

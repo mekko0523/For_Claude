@@ -1,0 +1,91 @@
+name: Deploy talk-assist (Cloudflare Worker)
+
+# デフォルトブランチへの push(talk-assist/ 配下の変更)で、画面と API を1つの Cloudflare Worker としてデプロイする。
+# ANTHROPIC_API_KEY / SONIOX_API_KEY / APP_PASSPHRASE を Worker Secret に登録する。
+# Secret の値は GitHub Secrets にのみ存在し、リポジトリには一切書かない。
+on:
+  push:
+    paths:
+      - "talk-assist/**"
+      - ".github/workflows/deploy-talk-assist.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: talk-assist-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SONIOX_API_KEY: ${{ secrets.SONIOX_API_KEY }}
+          APP_PASSPHRASE: ${{ secrets.APP_PASSPHRASE }}
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ANTHROPIC_API_KEY SONIOX_API_KEY APP_PASSPHRASE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::GitHub Secret '$name' が未登録です(Settings → Secrets and variables → Actions)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: talk-assist/worker
+        run: npm ci
+
+      - name: Bump Service Worker cache
+        run: sed -i "s/const CACHE = \"talk-assist-[^\"]*\"/const CACHE = \"talk-assist-${GITHUB_SHA::8}\"/" talk-assist/web/sw.js
+
+      - name: Deploy Worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: talk-assist/worker
+          wranglerVersion: "4"
+          command: deploy
+
+      # 初回でも Worker が存在してから登録できるよう、デプロイ後に Secret を入れる
+      - name: Upload Worker secrets
+        uses: cloudflare/wrangler-action@v4
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SONIOX_API_KEY: ${{ secrets.SONIOX_API_KEY }}
+          APP_PASSPHRASE: ${{ secrets.APP_PASSPHRASE }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: talk-assist/worker
+          wranglerVersion: "4"
+          command: secret list
+          secrets: |
+            ANTHROPIC_API_KEY
+            SONIOX_API_KEY
+            APP_PASSPHRASE
+
+      - name: Show app URL
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+          COMMAND_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+        run: |
+          url="$DEPLOYMENT_URL"
+          [ -z "$url" ] && url=$(printf '%s' "$COMMAND_OUTPUT" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | head -n1 || true)
+          echo "アプリの URL: ${url:-(取得できませんでした。Cloudflare の Workers & Pages → talk-assist で確認してください)}"
+          echo "### アプリの URL: ${url}" >> "$GITHUB_STEP_SUMMARY"

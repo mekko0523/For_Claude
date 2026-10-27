@@ -1,0 +1,4 @@
+# cp .dev.vars.example .dev.vars して値を入れる(.dev.vars はコミットしない)
+ANTHROPIC_API_KEY=
+SONIOX_API_KEY=
+APP_PASSPHRASE=

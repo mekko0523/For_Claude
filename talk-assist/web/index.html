@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101418">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="会話カンペ">
+  <title>会話カンペ</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">停止中</span></div>
+    <div class="bar-actions">
+      <button id="newBtn" class="icon-btn" type="button" aria-label="新しい会話">🗒️</button>
+      <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">⚙️</button>
+    </div>
+  </header>
+
+  <div id="notice" class="notice" hidden></div>
+
+  <main id="log" class="log" aria-live="polite">
+    <p id="empty" class="empty">「開始」を押して、相手に話してもらってください。<br>聞こえた英語と、あなたが読み上げる返事の候補がここに出ます。</p>
+    <div id="live" class="turn them live" hidden><div class="en"></div></div>
+  </main>
+
+  <section class="suggest" aria-label="返答候補">
+    <div class="sg-head">
+      <span id="sgTitle">返答候補</span>
+      <button id="regenBtn" class="chip" type="button" disabled>🔄 別の候補</button>
+    </div>
+    <div id="cards" class="cards"></div>
+    <form id="intentForm" class="intent">
+      <input id="intent" type="text" enterkeyhint="send" autocomplete="off" placeholder="言いたいことを日本語で（例：もう少しゆっくり）">
+      <button type="submit" class="chip">英語に</button>
+    </form>
+  </section>
+
+  <footer class="controls">
+    <button id="meBtn" class="me-btn" type="button" aria-pressed="false">🙋 自分が話す</button>
+    <button id="toggleBtn" class="primary" type="button">▶ 開始</button>
+  </footer>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>設定</h2>
+      <label>合言葉
+        <input id="passphrase" type="password" autocomplete="current-password">
+      </label>
+      <label>場面
+        <select id="scenePreset">
+          <option value="">指定しない</option>
+          <option value="Travel abroad (hotel, airport, sightseeing)">旅行（ホテル・空港・観光）</option>
+          <option value="Shopping or ordering at a restaurant or cafe">買い物・レストラン</option>
+          <option value="Business meeting or trade show with a client">商談・展示会</option>
+          <option value="Casual small talk with a new acquaintance">雑談・初対面</option>
+          <option value="Asking for help or directions">道案内・困りごと</option>
+        </select>
+      </label>
+      <label>場面の補足（任意）
+        <input id="sceneNote" type="text" placeholder="例：海外の農業展示会でブースに来たお客さんと話す">
+      </label>
+      <label>自己紹介メモ（返事の中身に使います）
+        <textarea id="profile" rows="5" placeholder="例：名前は田中。日本の農薬メーカーで営業。出張でアメリカに来ている。趣味は釣り。"></textarea>
+      </label>
+      <label>話し終わりの判定
+        <select id="endpointSel">
+          <option value="700">早い（候補が早く出る）</option>
+          <option value="1200" selected>ふつう</option>
+          <option value="2000">ゆっくり（途中で切れにくい）</option>
+        </select>
+      </label>
+      <label class="check"><input id="showJa" type="checkbox" checked> 日本語訳を表示する</label>
+      <p class="hint">合言葉と設定はこの端末にだけ保存されます。</p>
+      <div class="settings-actions">
+        <button value="close" class="primary">閉じる</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
