@@ -58,7 +58,7 @@ def plot(crop, data, out):
     ax.set_ylabel("作付面積（千ha）", color=INK)
     ax2.set_ylabel("平均作付面積（ha／経営体）", color=INK)
     ax.set_ylim(0, max(area) * 1.18)
-    ax2.set_ylim(0, max(avg) * 1.25)
+    ax2.set_ylim(0, max(avg) * 1.6)  # 線の最大値を棒より低く置き、ラベルの重なりを防ぐ
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
     ax.grid(axis="y", color=GRID, linewidth=0.8, zorder=0)
     for a in (ax, ax2):
@@ -74,9 +74,9 @@ def plot(crop, data, out):
     h2, l2 = ax2.get_legend_handles_labels()
     ax.legend(h1 + h2, l1 + l2, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, frameon=False,
               fontsize=9, labelcolor=INK, borderaxespad=0.2)
-    fig.text(0.01, 0.01, "資料：農林水産省「農林業センサス」（農業経営体、販売目的の作付）。平均作付面積＝作付面積÷作付経営体数。",
+    fig.text(0.01, 0.01, "資料：農林水産省「農林業センサス」（農業経営体・販売目的の作付。2005〜2020年は累年統計、2025年は確定値）\n平均作付面積＝作付面積÷作付経営体数",
              fontsize=8, color=MUTED)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
     fig.savefig(out, facecolor="white")
     plt.close(fig)
 
