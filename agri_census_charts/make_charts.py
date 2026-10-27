@@ -14,7 +14,7 @@ from matplotlib import font_manager
 
 HERE = Path(__file__).parent
 YEARS = [2005, 2010, 2015, 2020, 2025]
-BAR_COLOR = {"水稲": "#7FA65A", "大豆": "#C9A227"}
+BAR_COLOR = {"水稲": "#C9A227", "大豆": "#7FA65A"}
 LINE_COLOR = "#2B4C7E"
 INK, MUTED, GRID = "#1F2328", "#5B6470", "#E3E6EA"
 
