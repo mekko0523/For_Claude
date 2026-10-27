@@ -7,7 +7,11 @@ const CONNECT_TIMEOUT_MS = 20_000;
 const SILENCE_STOP_MS = 5 * 60_000;     // 何も聞こえないままこの時間たったら自動停止(料金の節約)
 const MAX_RECONNECTS = 5;               // 接続が切れたときに自動でつなぎ直す回数
 const MAX_TURNS = 300;                  // 1つの会話に残す発言数
-const MAX_CONVS = 60;                   // 端末に残す会話の数(古いものから消える)
+const MAX_CONVS = 60;
+// 使用量の表示(概算)。Soniox は送った音声の長さで課金される。Claude の料金は Worker が計算して返す
+const SONIOX_USD_PER_HOUR = 0.12;
+const PCM_BYTES_PER_SEC = SONIOX_SAMPLE_RATE * 2; // 16kHz・16bit・モノラル
+const USD_JPY = 150;                   // 端末に残す会話の数(古いものから消える)
 const MEMORY_MIN_NEW_TURNS = 4;         // 新しい発言がこれ以上あれば、停止時に「覚えていること」を更新する
 // 場面(画面上部のボタンで切り替え)。mode があるものは Worker で専用の指示を足す
 const SCENES = [
@@ -62,6 +66,8 @@ const historyDlg = $("history");
 const histList = $("histList");
 const histView = $("histView");
 const histText = $("histText");
+const histUsage = $("histUsage");
+const usageEl = $("usage");
 const histTitle = $("histTitle");
 
 // ===== 状態 =====
@@ -184,10 +190,13 @@ function stop(message = "", isError = false) {
   setLive("");
   setState("idle");
   if (message) showNotice(message, isError);
+  if (hasUsage(conv)) saveTurns(); // 聞き取った時間を保存
+  renderUsage();
   updateMemory(conv);
 }
 
 function tick() {
+  renderUsage();
   if (state === "live" && Date.now() - lastHeardAt > SILENCE_STOP_MS) {
     stop("しばらく何も聞こえなかったので停止しました");
   }
@@ -233,7 +242,10 @@ async function setupAudio(ctx, stream) {
   mute.gain.value = 0; // 処理を動かすためにつなぐだけ(音は出さない)
   src.connect(node).connect(mute).connect(ctx.destination);
   node.port.onmessage = ({ data }) => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(data);
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(data);
+      usageOf(conv).sonioxBytes += data.byteLength;
+    }
   };
   await ctx.resume?.().catch(() => {});
   audio.node = node;
@@ -441,6 +453,10 @@ function handleSuggestionLine(line) {
     showNotice(obj.error === "refusal" ? "この内容では候補を作れませんでした" : `候補作りでエラー: ${obj.message || obj.error}`, true);
     return false;
   }
+  if (obj.kind === "usage") {
+    addClaudeUsage(conv, obj);
+    return false;
+  }
   if (obj.kind === "translation") {
     const id = Number(String(obj.id || "").replace(/^T/, ""));
     const turn = turns.find((t) => t.id === id);
@@ -560,18 +576,72 @@ function switchConv(c) {
   renderLog();
 }
 
+// ===== 使用量(会話ごと) =====
+function emptyUsage() {
+  return { claudeCalls: 0, claudeIn: 0, claudeOut: 0, claudeUsd: 0, sonioxBytes: 0 };
+}
+function usageOf(c) {
+  if (!c.usage) c.usage = emptyUsage();
+  return c.usage;
+}
+function hasUsage(c) {
+  const u = usageOf(c);
+  return u.claudeCalls > 0 || u.sonioxBytes > 0;
+}
+function addClaudeUsage(c, u) {
+  if (!u || typeof u.usd !== "number") return;
+  const x = usageOf(c);
+  x.claudeCalls++;
+  x.claudeIn += u.input || 0;
+  x.claudeOut += u.output || 0;
+  x.claudeUsd += u.usd;
+  saveTurns();
+  renderUsage();
+}
+function sonioxSec(c) { return usageOf(c).sonioxBytes / PCM_BYTES_PER_SEC; }
+function sonioxUsd(c) { return (sonioxSec(c) / 3600) * SONIOX_USD_PER_HOUR; }
+function totalUsd(c) { return usageOf(c).claudeUsd + sonioxUsd(c); }
+function fmtMoney(usd) {
+  const yen = usd * USD_JPY;
+  return `$${usd.toFixed(usd < 0.1 ? 3 : 2)}（約${yen < 10 ? yen.toFixed(1) : Math.round(yen)}円）`;
+}
+function fmtDuration(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m ? `${m}分${s}秒` : `${s}秒`;
+}
+function renderUsage() {
+  // 画面上部は狭いので円だけ(内訳は 📜 で会話を開くと見られる)
+  const yen = totalUsd(conv) * USD_JPY;
+  usageEl.textContent = hasUsage(conv) ? `約${yen < 10 ? yen.toFixed(1) : Math.round(yen)}円` : "";
+  usageEl.title = hasUsage(conv) ? fmtMoney(totalUsd(conv)) : "";
+}
+function renderUsageDetail(c) {
+  const u = usageOf(c);
+  histUsage.replaceChildren();
+  const line = (label, text) => {
+    const d = el("div");
+    d.append(el("b", null, label), document.createTextNode(` ${text}`));
+    histUsage.append(d);
+  };
+  line("Claude", `${u.claudeCalls}回 ・ 入力 ${u.claudeIn.toLocaleString()} / 出力 ${u.claudeOut.toLocaleString()} トークン ・ ${fmtMoney(u.claudeUsd)}`);
+  line("Soniox", `${fmtDuration(sonioxSec(c))} ・ ${fmtMoney(sonioxUsd(c))}`);
+  line("合計", `${fmtMoney(totalUsd(c))}（概算）`);
+}
+
 function renderLog() {
   logEl.querySelectorAll(".turn:not(.live)").forEach((n) => n.remove());
   for (const t of turns) logEl.insertBefore(renderTurn(t), liveEl);
   updateEmpty();
   scrollToBottom(true);
+  renderUsage();
   clearSuggestions(turns.length ? "相手が話すと、ここに返事の候補が出ます" : "");
 }
 
 // ===== 会話の記録 =====
 function newConv() {
   const now = Date.now();
-  return { id: `c${now.toString(36)}`, startedAt: now, updatedAt: now, scene: "", memUpTo: 0, turns: [] };
+  return { id: `c${now.toString(36)}`, startedAt: now, updatedAt: now, scene: "", memUpTo: 0, turns: [], usage: emptyUsage() };
 }
 
 function openHistory() {
@@ -584,7 +654,7 @@ function showHistoryList() {
   histView.hidden = true;
   histList.hidden = false;
   histTitle.textContent = "会話の記録";
-  const list = [conv, ...convs.filter((c) => c !== conv)].filter((c) => c.turns.length);
+  const list = [conv, ...convs.filter((c) => c !== conv)].filter((c) => c.turns.length || hasUsage(c));
   if (!list.length) {
     histList.replaceChildren(el("p", "hint", "まだ記録はありません"));
     return;
@@ -593,8 +663,8 @@ function showHistoryList() {
     const item = el("button", `hist-item${c === conv ? " current" : ""}`);
     item.type = "button";
     item.append(
-      el("div", "meta", `${fmtDate(c.startedAt)}${c === conv ? "（今の会話）" : ""} ・ ${sceneLabel(c.scene)} ・ ${c.turns.length}発言`),
-      el("div", "first", c.turns[0].en),
+      el("div", "meta", `${fmtDate(c.startedAt)}${c === conv ? "（今の会話）" : ""} ・ ${sceneLabel(c.scene)} ・ ${c.turns.length}発言 ・ ${fmtMoney(totalUsd(c))}`),
+      el("div", "first", c.turns[0]?.en || "（発言なし）"),
     );
     item.addEventListener("click", () => showHistoryConv(c));
     return item;
@@ -607,6 +677,7 @@ function showHistoryConv(c) {
   histView.hidden = false;
   histTitle.textContent = fmtDate(c.startedAt);
   histText.textContent = formatConv(c);
+  renderUsageDetail(c);
   $("histContinue").hidden = c === conv;
 }
 
@@ -688,6 +759,7 @@ async function updateMemory(c, { force = false } = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.memory) throw new Error(apiErrorMessage(res.status, data, "「覚えていること」の更新"));
+    addClaudeUsage(c, data.usage);
     memoryInput.value = data.memory;
     lsSet(LS.memory, data.memory);
     c.memUpTo = upTo;
@@ -875,7 +947,7 @@ function loadConvs() {
   let list = [];
   try {
     const arr = JSON.parse(lsGet(LS.convs) || "[]");
-    if (Array.isArray(arr)) list = arr.filter((c) => c && typeof c.id === "string").map((c) => ({ ...c, turns: validTurns(c.turns) }));
+    if (Array.isArray(arr)) list = arr.filter((c) => c && typeof c.id === "string").map((c) => ({ ...c, turns: validTurns(c.turns), usage: { ...emptyUsage(), ...(c.usage || {}) } }));
   } catch {}
   // 以前の版(会話が1つだけ)の記録を引き継ぐ
   const old = (() => { try { return validTurns(JSON.parse(lsGet(LS.turns) || "[]")); } catch { return []; } })();
@@ -893,7 +965,8 @@ function loadConvs() {
 function saveTurns() {
   conv.updatedAt = Date.now();
   if (turns.length && !convs.includes(conv)) convs.push(conv);
-  convs = convs.filter((c) => c.turns.length).sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_CONVS);
+  if (!turns.length && hasUsage(conv) && !convs.includes(conv)) convs.push(conv);
+  convs = convs.filter((c) => c.turns.length || hasUsage(c)).sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_CONVS);
   lsSet(LS.current, conv.id);
   for (;;) {
     try {

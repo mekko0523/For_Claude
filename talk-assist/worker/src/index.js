@@ -17,7 +17,13 @@ const MAX_HISTORY = 30;              // Claude に渡す直近の発言数
 const MAX_TEXT = 1_000;              // 1発言の最大文字数
 const MAX_NOTE = 4_000;              // 自己紹介・覚えていることの最大文字数(Claude に渡す分)
 const MAX_STORED_NOTE = 20_000;      // KV に保存する最大文字数
-const MAX_MEMORY_TURNS = 300;        // メモ更新に渡す発言数の上限
+const MAX_MEMORY_TURNS = 300;
+// 料金(USD / 100万トークン)。使用量の表示に使う概算。キャッシュ書き込みは入力の1.25倍、読み込みは0.1倍
+const CLAUDE_PRICES = {
+  "claude-opus-5-5": { input: 4, output: 20 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+};        // メモ更新に渡す発言数の上限
 
 const SYSTEM_PROMPT = `You help a Japanese speaker who cannot speak English hold a live, face-to-face conversation in English.
 The app transcribes what the other person ("Them") says. The user reads one of your suggestions aloud as their reply ("Me").
@@ -177,6 +183,7 @@ async function suggest(request, env) {
       );
       stream.on("text", (text) => write(text));
       const final = await stream.finalMessage();
+      write(`\n${JSON.stringify({ kind: "usage", ...usageInfo(final, model) })}\n`);
       if (final.stop_reason === "refusal") write(`\n${JSON.stringify({ error: "refusal" })}\n`);
       else if (final.stop_reason === "max_tokens") write(`\n${JSON.stringify({ error: "max_tokens" })}\n`);
     } catch (err) {
@@ -225,11 +232,12 @@ async function updateMemory(request, env) {
       messages: [{ role: "user", content: input }],
       ...fallbackParams(model),
     });
-    if (msg.stop_reason === "refusal") return json({ error: "refusal" }, 502);
+    const usage = usageInfo(msg, model);
+    if (msg.stop_reason === "refusal") return json({ error: "refusal", usage }, 502);
     const memory = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
     if (!memory) return json({ error: "empty_memory" }, 502);
     await env.STORE?.put("memory", memory.slice(0, MAX_STORED_NOTE));
-    return json({ memory }, 200);
+    return json({ memory, usage }, 200);
   } catch (err) {
     return json({ error: errorCode(err), message: String(err?.message || err).slice(0, 300) }, 502);
   }
@@ -245,6 +253,19 @@ async function notes(request, env) {
   }
   const [profile, memory] = await Promise.all([env.STORE.get("profile"), env.STORE.get("memory")]);
   return json({ profile: profile || "", memory: memory || "" }, 200);
+}
+
+// 1回の呼び出しで使ったトークン数と料金の概算(断られて別のモデルが続けた場合は応答したモデルの単価で数える)
+function usageInfo(msg, requestedModel) {
+  const u = msg?.usage || {};
+  const model = msg?.model || requestedModel;
+  const price = CLAUDE_PRICES[model] || CLAUDE_PRICES[requestedModel] || CLAUDE_PRICES[DEFAULT_CLAUDE_MODEL];
+  const input = u.input_tokens || 0;
+  const cacheWrite = u.cache_creation_input_tokens || 0;
+  const cacheRead = u.cache_read_input_tokens || 0;
+  const output = u.output_tokens || 0;
+  const usd = (input * price.input + cacheWrite * price.input * 1.25 + cacheRead * price.input * 0.1 + output * price.output) / 1e6;
+  return { model, input: input + cacheWrite + cacheRead, output, usd };
 }
 
 // 安全上の判定で断られたとき、サーバー側で別のモデルに任せる(Haiku は非対応)

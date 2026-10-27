@@ -16,9 +16,9 @@
 </head>
 <body>
   <header class="bar">
-    <div class="status"><span id="dot" class="dot"></span><span id="statusText">停止中</span></div>
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">停止中</span><span id="usage" class="usage"></span></div>
     <div class="bar-actions">
-      <button id="notesBtn" class="icon-btn" type="button" aria-label="自己紹介と覚えていること">🧠</button>
+      <button id="notesBtn" class="icon-btn" type="button" aria-label="自己紹介と覚えていること">👤</button>
       <button id="historyBtn" class="icon-btn" type="button" aria-label="会話の記録">📜</button>
       <button id="newBtn" class="icon-btn" type="button" aria-label="新しい会話">🗒️</button>
       <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">⚙️</button>
@@ -65,7 +65,7 @@
         </select>
       </label>
       <label class="check"><input id="showJa" type="checkbox" checked> 日本語訳を表示する</label>
-      <p class="hint">合言葉と設定はこの端末にだけ保存されます。自己紹介メモと覚えていることは 🧠 から開けます（サーバーに保存されるので消えません）。</p>
+      <p class="hint">合言葉と設定はこの端末にだけ保存されます。自己紹介メモと覚えていることは 👤 から開けます（サーバーに保存されるので消えません）。</p>
       <div class="settings-actions">
         <button value="close" class="primary">閉じる</button>
       </div>
@@ -101,6 +101,7 @@
       </div>
       <div id="histList" class="hist-list"></div>
       <div id="histView" hidden>
+        <div id="histUsage" class="hist-usage"></div>
         <pre id="histText" class="hist-text"></pre>
         <div class="hist-actions">
           <button id="histCopy" class="chip" type="button">📋 コピー</button>
