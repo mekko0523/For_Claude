@@ -22,6 +22,9 @@ const SX_SPEED = {
   fastest: { endpoint: 500, pause: 250, force: 6000 },
 };
 const SX_FINALIZE_MIN_MS = 2500;         // 確定を送る最短間隔(送りすぎると切断されることがある)
+// iPhone がマイクを止めた(画面ロック・電話・Siri・他アプリの録音など)まま戻らなければ、無音に料金を払わないよう停止する
+const MIC_MUTED_STOP_MS = 30_000;
+let micMutedTimer = null;
 const SX_VAD_MIN_LEVEL = 0.03;           // 話し声とみなす最小の音量
 const PARAGRAPH_GAP_MS = 1_500;          // 差分の間隔がこれ以上空いたら改段落
 // 話が途切れず続くと1つの段落が際限なく伸び、届くたびに全文を描き直して重くなるため、文の終わりで段落を分ける
@@ -238,6 +241,7 @@ $("settingsBtn").addEventListener("click", renderDiagLog);
 settings.addEventListener("close", () => savePassphrase(passInput.value));
 
 document.addEventListener("visibilitychange", () => {
+  if (state !== "idle") diag(`画面: ${document.visibilityState === "visible" ? "表示" : "非表示(ロック・別アプリ)"}`);
   if (document.visibilityState === "visible" && state === "live") acquireWakeLock();
   if (document.visibilityState === "hidden") saveSession();
 });
@@ -517,6 +521,8 @@ function stop(reason, message) {
   dc = null; pc = null; micStream = null;
   stopStats();
   if (remoteAudio) { remoteAudio.srcObject = null; remoteAudio = null; }
+  clearTimeout(micMutedTimer);
+  micMutedTimer = null;
   diag(`停止: ${reason}${message ? ` / ${message}` : ""} (受信 ${eventCount} 件)`);
   releaseWakeLock();
   stopTicking();
@@ -525,6 +531,9 @@ function stop(reason, message) {
 
   if (reason === "silence") {
     showNotice(`無音が${fmtDuration(SILENCE_TIMEOUT_MS)}続いたため停止しました`);
+    statusEl.textContent = "自動停止";
+  } else if (reason === "muted") {
+    showNotice(`iPhone がマイクを止めたまま${MIC_MUTED_STOP_MS / 1000}秒たったため停止しました(画面ロック・電話・他のアプリの録音など)。「再開」で続けられます`, true);
     statusEl.textContent = "自動停止";
   } else if (reason === "max") {
     showNotice(`最長時間(${MAX_SESSION_MS / 60_000}分)に達したため停止しました`);
@@ -1242,11 +1251,30 @@ function fixTerms(text, lang) {
 function watchMicTrack(track) {
   $("micName").textContent = shortMicName(track?.label);
   diag(`マイク取得: ${track?.label || "(名前なし)"} muted=${track?.muted} state=${track?.readyState} ${JSON.stringify(track?.getSettings?.() || {})}`);
-  track?.addEventListener("mute", () => diag("マイクトラック mute(iOS がマイクを止めた可能性)"));
-  track?.addEventListener("unmute", () => diag("マイクトラック unmute"));
+  track?.addEventListener("mute", () => { diag("マイクトラック mute(iOS がマイクを止めた可能性)"); onMicMuted(); });
+  track?.addEventListener("unmute", () => { diag("マイクトラック unmute"); onMicUnmuted(); });
   track?.addEventListener("ended", () => diag("マイクトラック ended"));
   micCheckSince = Date.now();
   micMaxLevel = 0;
+}
+
+function onMicMuted() {
+  if (state !== "live") return;
+  // それまでに話された分は確定させて訳を出しておく
+  if (runEngine === "soniox" && sx.ws?.readyState === WebSocket.OPEN) {
+    try { sx.ws.send(JSON.stringify({ type: "finalize" })); } catch {}
+  }
+  showNotice(`iPhone がマイクを止めました(画面ロック・電話・Siri・他のアプリの録音など)。${MIC_MUTED_STOP_MS / 1000}秒以内に戻らなければ停止します`, true);
+  clearTimeout(micMutedTimer);
+  micMutedTimer = setTimeout(() => {
+    micMutedTimer = null;
+    if (state === "live") stop("muted");
+  }, MIC_MUTED_STOP_MS);
+}
+function onMicUnmuted() {
+  clearTimeout(micMutedTimer);
+  micMutedTimer = null;
+  if (state === "live" && noticeEl.textContent.startsWith("iPhone がマイクを止めました")) showNotice("マイクが戻りました");
 }
 
 function shortMicName(label) {
@@ -1344,7 +1372,10 @@ async function acquireWakeLock() {
   if (!("wakeLock" in navigator) || wakeLock) return;
   try {
     wakeLock = await navigator.wakeLock.request("screen");
-    wakeLock.addEventListener("release", () => { wakeLock = null; });
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+      if (state === "live") diag("画面スリープ防止(Wake Lock)が解除された");
+    });
     if (state === "idle") releaseWakeLock();
   } catch { wakeLock = null; }
 }
