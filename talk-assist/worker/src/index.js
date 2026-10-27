@@ -2,7 +2,8 @@
 //   - web/ の静的ファイル(画面)を配信する(wrangler.toml の [assets])
 //   - POST /api/soniox-key : Soniox の一時キーを発行(長期キーはブラウザに渡さない)
 //   - POST /api/suggest    : 相手の英語に対する返答候補を Claude で作り、1行1候補の JSON でストリーミングする
-//   - POST /api/memory     : 会話の記録から「覚えておくこと」メモを更新する(過去の発言・話題・話したいこと)
+//   - POST /api/memory     : 会話の記録から「覚えていること」メモを更新し、KV に保存する(過去の発言・話題・続きの話)
+//   - POST /api/notes      : 自己紹介メモ・覚えていることを KV から読む/保存する(端末やアプリの更新で消えないように)
 // 合言葉は X-Passphrase ヘッダーで受け取る。
 // Secret(値は GitHub Secrets → Actions 経由で登録。ここには書かない):
 //   ANTHROPIC_API_KEY, SONIOX_API_KEY, APP_PASSPHRASE
@@ -14,7 +15,8 @@ const DEFAULT_CLAUDE_MODEL = "claude-opus-5-5";
 const DEFAULT_CLAUDE_EFFORT = "low"; // 会話中に待たせないよう、考える量は少なめ
 const MAX_HISTORY = 30;              // Claude に渡す直近の発言数
 const MAX_TEXT = 1_000;              // 1発言の最大文字数
-const MAX_NOTE = 4_000;              // 自己紹介・覚えておくこと・話したいことの最大文字数
+const MAX_NOTE = 4_000;              // 自己紹介・覚えていることの最大文字数(Claude に渡す分)
+const MAX_STORED_NOTE = 20_000;      // KV に保存する最大文字数
 const MAX_MEMORY_TURNS = 300;        // メモ更新に渡す発言数の上限
 
 const SYSTEM_PROMPT = `You help a Japanese speaker who cannot speak English hold a live, face-to-face conversation in English.
@@ -33,8 +35,7 @@ Rules:
 - If the user gives an intent in Japanese ("言いたいこと"), all suggestions must express that intent in different ways.
 - "Memory" holds notes from the user's past conversations (facts they said about themselves, past topics, people they know).
   Use it so answers stay consistent with what the user has said before and feel personal; never contradict it.
-- "Topics I want to talk about": when there is a natural opening (a pause, a "what about you?", a topic change),
-  make the "other" option bring up one of them.
+  When there is a natural opening, the "other" option may bring up an open thread or follow-up from the memory.
 - "ja" is a short, natural Japanese translation so the user knows what they are saying.
 
 Output format: exactly one JSON object per line (JSON Lines), nothing else — no code fences, no commentary.
@@ -46,14 +47,21 @@ Then the suggestions:
 Suggestion kind is one of: "answer", "question", "other".
 Latency-sensitive; begin your visible answer immediately.`;
 
-// 場面が英会話教室のときに足す指示
-const LESSON_GUIDE = `This is a 1-on-1 English lesson; "Them" is the user's English teacher.
+// 場面ごとに足す指示
+const LESSON_GUIDE = `This is an English lesson at an English conversation school; "Them" is the user's English teacher.
 - The teacher may ask questions, correct the user's English, explain words, or give small tasks. Help the user take part actively.
 - Answers may be a little richer (one reason or example) but must stay easy to read aloud.
 - If the teacher corrects the user, include one option that repeats the corrected sentence.
 - If the teacher uses a difficult word or idiom, include an option asking about it (e.g. "What does 'X' mean?" / "Could you give me an example?").
 - Useful lesson phrases are welcome: asking the teacher to correct a sentence, to repeat, to speak slowly, or how to say something.
 - Use the memory for continuity across lessons (what was practiced before, the user's goals and weak points).`;
+
+const MEETING_GUIDE = `This is an internal company meeting held in English; "Them" is one or more colleagues (several voices may be merged).
+- Polite, concise business English; still short and easy to read aloud.
+- Cover what a participant typically needs: agree or disagree politely, give a short opinion or status update,
+  ask a clarifying question, or confirm decisions, owners and deadlines ("Just to confirm, ...").
+- Use the profile and memory for the user's role, projects, and colleagues' names.`;
+const MODE_GUIDES = { lesson: LESSON_GUIDE, meeting: MEETING_GUIDE };
 
 const MEMORY_PROMPT = `You maintain a compact memory notebook for a Japanese user who uses an app to hold English conversations.
 You get the current notebook and a new conversation transcript ("Me" = the user, "Them" = the other person).
@@ -92,6 +100,7 @@ export default {
     if (url.pathname === "/api/soniox-key") return sonioxKey(env);
     if (url.pathname === "/api/suggest") return suggest(request, env);
     if (url.pathname === "/api/memory") return updateMemory(request, env);
+    if (url.pathname === "/api/notes") return notes(request, env);
     return json({ error: "not_found" }, 404);
   },
 };
@@ -136,10 +145,9 @@ async function suggest(request, env) {
   if (!history.length && !body.intent) return json({ error: "empty_history" }, 400);
 
   const parts = [
-    body.lesson ? LESSON_GUIDE : "",
+    MODE_GUIDES[body.mode] || "",
     body.profile ? `User profile (written by the user, may be Japanese):\n${clean(body.profile, MAX_NOTE)}` : "",
     body.memory ? `Memory (from past conversations):\n${clean(body.memory, MAX_NOTE)}` : "",
-    body.topics ? `Topics I want to talk about:\n${clean(body.topics, MAX_NOTE)}` : "",
     body.scene ? `Scene: ${clean(body.scene)}` : "",
     `Conversation so far (latest last):\n${history.join("\n") || "(nothing yet)"}`,
     body.intent ? `言いたいこと (the user's intent, in Japanese): ${clean(body.intent)}` : "",
@@ -220,10 +228,23 @@ async function updateMemory(request, env) {
     if (msg.stop_reason === "refusal") return json({ error: "refusal" }, 502);
     const memory = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
     if (!memory) return json({ error: "empty_memory" }, 502);
+    await env.STORE?.put("memory", memory.slice(0, MAX_STORED_NOTE));
     return json({ memory }, 200);
   } catch (err) {
     return json({ error: errorCode(err), message: String(err?.message || err).slice(0, 300) }, 502);
   }
+}
+
+// 自己紹介メモ・覚えていること。{ save: { profile?, memory? } } なら保存してから、今の値を返す
+async function notes(request, env) {
+  if (!env.STORE) return json({ error: "store_not_configured" }, 500);
+  const body = await request.json().catch(() => ({}));
+  const save = body?.save && typeof body.save === "object" ? body.save : {};
+  for (const key of ["profile", "memory"]) {
+    if (typeof save[key] === "string") await env.STORE.put(key, save[key].slice(0, MAX_STORED_NOTE));
+  }
+  const [profile, memory] = await Promise.all([env.STORE.get("profile"), env.STORE.get("memory")]);
+  return json({ profile: profile || "", memory: memory || "" }, 200);
 }
 
 // 安全上の判定で断られたとき、サーバー側で別のモデルに任せる(Haiku は非対応)

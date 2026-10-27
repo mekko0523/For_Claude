@@ -52,6 +52,27 @@ jobs:
       - name: Bump Service Worker cache
         run: sed -i "s/const CACHE = \"talk-assist-[^\"]*\"/const CACHE = \"talk-assist-${GITHUB_SHA::8}\"/" talk-assist/web/sw.js
 
+      # 自己紹介メモ・覚えていることの保存先(KV)。名前で探し、なければ作って wrangler.toml に id を書き込む
+      - name: Ensure KV namespace
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          KV_TITLE: talk-assist-store
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          id=$(curl -fsS -H "$auth" "$api?per_page=100" | jq -r --arg t "$KV_TITLE" '.result[] | select(.title == $t) | .id' | head -n1)
+          if [ -z "$id" ]; then
+            id=$(curl -fsS -X POST -H "$auth" -H "Content-Type: application/json" -d "{\"title\":\"$KV_TITLE\"}" "$api" | jq -r '.result.id')
+            echo "KV を作成しました: $KV_TITLE"
+          fi
+          if ! [[ "$id" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::KV の id を取得できませんでした(Cloudflare の API トークンに Workers KV Storage の編集権限があるか確認してください)"
+            exit 1
+          fi
+          sed -i "s/^id = \"KV_NAMESPACE_ID\"/id = \"$id\"/" talk-assist/worker/wrangler.toml
+          grep -n '^id = ' talk-assist/worker/wrangler.toml
+
       - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v4

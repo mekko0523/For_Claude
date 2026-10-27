@@ -20,3 +20,9 @@ SONIOX_MODEL = "stt-rt-v5"
 #   SONIOX_API_KEY    : Soniox の API キー
 #   APP_PASSPHRASE    : 画面で入力する合言葉
 # ローカル開発では .dev.vars に書く(.gitignore 済み)。.dev.vars.example を参照。
+
+# 自己紹介メモ・覚えていることの保存先。id は GitHub Actions がデプロイ時に
+# 「talk-assist-store」という名前の KV を探して(なければ作って)書き込む
+[[kv_namespaces]]
+binding = "STORE"
+id = "KV_NAMESPACE_ID"

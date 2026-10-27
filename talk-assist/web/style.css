@@ -224,3 +224,55 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 }
 .hist-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .chip.danger { color: var(--danger); }
+
+/* 場面の切り替え(画面上部) */
+.scene-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid #222c36;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.scene-bar::-webkit-scrollbar { display: none; }
+.scene-chip {
+  flex: 0 0 auto;
+  border: 1px solid #33414f;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.scene-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #04121f; font-weight: 700; }
+
+/* 自分のメモ(タップで開く) */
+.fold { border-radius: 12px; background: var(--card); padding: 0 12px; }
+.fold summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 0;
+  font-size: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fold summary::-webkit-details-marker { display: none; }
+.fold summary { padding-left: 22px; position: relative; }
+.fold summary::before { content: "▸"; color: var(--muted); position: absolute; left: 2px; top: 12px; }
+.fold[open] summary::before { content: "▾"; }
+.fold-hint { font-size: 12px; color: var(--muted); }
+.fold textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 16px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid #33414f;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+  margin-bottom: 10px;
+}
+.fold .row { margin-bottom: 12px; }

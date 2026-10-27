@@ -18,11 +18,14 @@
   <header class="bar">
     <div class="status"><span id="dot" class="dot"></span><span id="statusText">停止中</span></div>
     <div class="bar-actions">
+      <button id="notesBtn" class="icon-btn" type="button" aria-label="自己紹介と覚えていること">🧠</button>
       <button id="historyBtn" class="icon-btn" type="button" aria-label="会話の記録">📜</button>
       <button id="newBtn" class="icon-btn" type="button" aria-label="新しい会話">🗒️</button>
       <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">⚙️</button>
     </div>
   </header>
+
+  <nav id="sceneBar" class="scene-bar" aria-label="場面"></nav>
 
   <div id="notice" class="notice" hidden></div>
 
@@ -54,33 +57,6 @@
       <label>合言葉
         <input id="passphrase" type="password" autocomplete="current-password">
       </label>
-      <label>場面
-        <select id="scenePreset">
-          <option value="">指定しない</option>
-          <option value="English lesson: 1-on-1 online or in-person lesson with an English teacher">英会話教室（先生とワンオンワン）</option>
-          <option value="Travel abroad (hotel, airport, sightseeing)">旅行（ホテル・空港・観光）</option>
-          <option value="Shopping or ordering at a restaurant or cafe">買い物・レストラン</option>
-          <option value="Business meeting or trade show with a client">商談・展示会</option>
-          <option value="Casual small talk with a new acquaintance">雑談・初対面</option>
-          <option value="Asking for help or directions">道案内・困りごと</option>
-        </select>
-      </label>
-      <label>場面の補足（任意）
-        <input id="sceneNote" type="text" placeholder="例：海外の農業展示会でブースに来たお客さんと話す">
-      </label>
-      <label>自己紹介メモ（返事の中身に使います）
-        <textarea id="profile" rows="5" placeholder="例：名前は田中。日本の農薬メーカーで営業。出張でアメリカに来ている。趣味は釣り。"></textarea>
-      </label>
-      <label>話したいこと（候補に話題として混ぜます）
-        <textarea id="topics" rows="3" placeholder="例：先週の釣りの話／来月の出張の準備／good と well の使い分けを聞きたい"></textarea>
-      </label>
-      <label>覚えていること（会話が終わるたびに自動で更新）
-        <textarea id="memory" rows="7" placeholder="過去の会話で話した内容・話題・続きの話がここにたまります。直接書き直してもかまいません。"></textarea>
-      </label>
-      <div class="row">
-        <button id="memoryBtn" class="chip" type="button">今の会話から更新</button>
-        <span id="memoryStatus" class="hint"></span>
-      </div>
       <label>話し終わりの判定
         <select id="endpointSel">
           <option value="700">早い（候補が早く出る）</option>
@@ -89,11 +65,32 @@
         </select>
       </label>
       <label class="check"><input id="showJa" type="checkbox" checked> 日本語訳を表示する</label>
-      <p class="hint">合言葉と設定はこの端末にだけ保存されます。</p>
+      <p class="hint">合言葉と設定はこの端末にだけ保存されます。自己紹介メモと覚えていることは 🧠 から開けます（サーバーに保存されるので消えません）。</p>
       <div class="settings-actions">
         <button value="close" class="primary">閉じる</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="notes">
+    <div class="settings-form">
+      <div class="dlg-head">
+        <h2>自分のメモ</h2>
+        <button id="notesClose" class="chip" type="button">閉じる</button>
+      </div>
+      <details id="profileBox" class="fold">
+        <summary>自己紹介メモ<span class="fold-hint">返事の中身に使います</span></summary>
+        <textarea id="profile" rows="7" placeholder="例：名前は田中。日本の農薬メーカーで営業。英会話を週1回習っている。趣味は釣り。"></textarea>
+      </details>
+      <details id="memoryBox" class="fold">
+        <summary>覚えていること<span class="fold-hint">会話が終わるたびに自動で更新</span></summary>
+        <textarea id="memory" rows="12" placeholder="過去の会話で話した内容・話題・続きの話がここにたまります。直接書き直してもかまいません。"></textarea>
+        <div class="row">
+          <button id="memoryBtn" class="chip" type="button">今の会話から更新</button>
+        </div>
+      </details>
+      <p id="notesStatus" class="hint"></p>
+    </div>
   </dialog>
 
   <dialog id="history">

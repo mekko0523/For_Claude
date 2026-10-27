@@ -9,16 +9,28 @@ const MAX_RECONNECTS = 5;               // 接続が切れたときに自動で�
 const MAX_TURNS = 300;                  // 1つの会話に残す発言数
 const MAX_CONVS = 60;                   // 端末に残す会話の数(古いものから消える)
 const MEMORY_MIN_NEW_TURNS = 4;         // 新しい発言がこれ以上あれば、停止時に「覚えていること」を更新する
-const LESSON_SCENE = "English lesson: 1-on-1 online or in-person lesson with an English teacher";
+// 場面(画面上部のボタンで切り替え)。mode があるものは Worker で専用の指示を足す
+const SCENES = [
+  { key: "", label: "指定なし", en: "" },
+  { key: "lesson", label: "英会話教室", en: "English lesson with a teacher at an English conversation school", mode: "lesson" },
+  { key: "meeting", label: "社内会議", en: "Internal company meeting with colleagues, held in English", mode: "meeting" },
+  { key: "business", label: "商談・展示会", en: "Business meeting or trade show with a client" },
+  { key: "travel", label: "旅行", en: "Travel abroad (hotel, airport, sightseeing)" },
+  { key: "shop", label: "買い物・食事", en: "Shopping or ordering at a restaurant or cafe" },
+  { key: "chat", label: "雑談", en: "Casual small talk with a new acquaintance" },
+  { key: "help", label: "道案内・困りごと", en: "Asking for help or directions" },
+];
+// 以前の版で保存した場面の英文 → 新しい場面
+const OLD_SCENES = { "English lesson: 1-on-1 online or in-person lesson with an English teacher": "lesson" };
 const HISTORY_FOR_CLAUDE = 30;          // 候補作りに使う直近の発言数
 // 自分の発言の見分け: 表示中の候補を読み上げたら「自分」とみなす
 const SELF_MATCH_DICE = 0.6;            // 候補との単語の一致度(Dice 係数)がこれ以上
 const SELF_MATCH_CONTAINED = 0.8;       // または、聞こえた単語のこの割合以上が候補に含まれる(3語以上)
 const PICKED_ECHO_MS = 30_000;          // 候補をタップしてからこの時間は、それを読み上げた声を二重に記録しない
 const LS = {
-  pass: "ta.passphrase", profile: "ta.profile", scenePreset: "ta.scenePreset", sceneNote: "ta.sceneNote",
+  pass: "ta.passphrase", profile: "ta.profile", scene: "ta.scene", oldScene: "ta.scenePreset",
   endpoint: "ta.endpoint", showJa: "ta.showJa", turns: "ta.turns",
-  convs: "ta.convs", current: "ta.currentConv", memory: "ta.memory", topics: "ta.topics",
+  convs: "ta.convs", current: "ta.currentConv", memory: "ta.memory",
 };
 
 // ===== DOM =====
@@ -37,16 +49,15 @@ const noticeEl = $("notice");
 const settings = $("settings");
 const passInput = $("passphrase");
 const profileInput = $("profile");
-const scenePreset = $("scenePreset");
-const sceneNote = $("sceneNote");
+const sceneBar = $("sceneBar");
 const endpointSel = $("endpointSel");
 const showJa = $("showJa");
 const intentForm = $("intentForm");
 const intentInput = $("intent");
-const topicsInput = $("topics");
 const memoryInput = $("memory");
 const memoryBtn = $("memoryBtn");
-const memoryStatus = $("memoryStatus");
+const notesDlg = $("notes");
+const notesStatus = $("notesStatus");
 const historyDlg = $("history");
 const histList = $("histList");
 const histView = $("histView");
@@ -70,6 +81,8 @@ let conv = convs.find((c) => c.id === lsGet(LS.current)) || newConv();
 let turns = conv.turns;
 let nextId = turns.reduce((m, t) => Math.max(m, t.id), 0) + 1;
 let memoryBusy = false;
+let notesDirty = false;          // 自己紹介メモ・覚えていることを書き換えて、まだサーバーに保存していない
+let notesTimer = null;
 let viewingConv = null;          // 記録画面で開いている会話
 let suggestions = [];            // 表示中の候補 [{ kind, en, ja }]
 let picked = null;               // タップした候補 { en, words: Set, at, covered: Set }
@@ -77,12 +90,12 @@ let suggestCtl = null;           // 候補作りの通信(新しい発言が来�
 
 // ===== 初期化 =====
 passInput.value = lsGet(LS.pass) || "";
+// 自己紹介メモと覚えていることはサーバーに保存する。端末の値は表示を速くするための控え
 profileInput.value = lsGet(LS.profile) || "";
-scenePreset.value = lsGet(LS.scenePreset) || "";
-sceneNote.value = lsGet(LS.sceneNote) || "";
+let sceneKey = lsGet(LS.scene) ?? migrateScene(lsGet(LS.oldScene));
+renderSceneBar();
 endpointSel.value = lsGet(LS.endpoint) || "1200";
 showJa.checked = lsGet(LS.showJa) !== "0";
-topicsInput.value = lsGet(LS.topics) || "";
 memoryInput.value = lsGet(LS.memory) || "";
 applyShowJa();
 renderLog();
@@ -97,6 +110,13 @@ $("histCopy").addEventListener("click", () => viewingConv && copyText(formatConv
 $("histContinue").addEventListener("click", () => viewingConv && continueConv(viewingConv));
 $("histDelete").addEventListener("click", () => viewingConv && deleteConv(viewingConv));
 memoryBtn.addEventListener("click", () => updateMemory(conv, { force: true }));
+$("notesBtn").addEventListener("click", () => { loadNotes(); notesDlg.showModal(); });
+$("notesClose").addEventListener("click", () => notesDlg.close());
+notesDlg.addEventListener("close", () => saveNotes());
+for (const box of [profileInput, memoryInput]) {
+  box.addEventListener("input", () => { notesDirty = true; clearTimeout(notesTimer); notesTimer = setTimeout(saveNotes, 1_500); });
+  box.addEventListener("blur", () => saveNotes());
+}
 regenBtn.addEventListener("click", () => requestSuggestions());
 meBtn.addEventListener("click", () => setMeMode(!meMode));
 intentForm.addEventListener("submit", (e) => {
@@ -111,6 +131,7 @@ showJa.addEventListener("change", applyShowJa);
 document.addEventListener("visibilitychange", onVisibility);
 
 if (!passInput.value) settings.showModal();
+else loadNotes();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
 // ===== 開始・停止 =====
@@ -376,8 +397,8 @@ async function requestSuggestions({ intent = "" } = {}) {
   let shown = 0;
   try {
     const res = await api("/api/suggest", {
-      history, intent, scene: sceneText(), lesson: scenePreset.value === LESSON_SCENE,
-      profile: profileInput.value.trim(), memory: memoryInput.value.trim(), topics: topicsInput.value.trim(),
+      history, intent, scene: sceneText(), mode: currentScene().mode || "",
+      profile: profileInput.value.trim(), memory: memoryInput.value.trim(),
     }, ctl.signal);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -633,8 +654,8 @@ async function copyText(text) {
 
 function sceneLabel(scene) {
   if (!scene) return "場面指定なし";
-  const opt = [...scenePreset.options].find((o) => o.value && scene.startsWith(o.value));
-  return opt ? opt.textContent : scene.slice(0, 30);
+  const sc = SCENES.find((x) => x.en && scene.startsWith(x.en)) || SCENES.find((x) => x.key === OLD_SCENES[scene]);
+  return sc ? sc.label : scene.slice(0, 30);
 }
 
 function fmtDate(ms) {
@@ -648,15 +669,16 @@ function fmtDate(ms) {
 async function updateMemory(c, { force = false } = {}) {
   const fresh = c.turns.filter((t) => t.id > (c.memUpTo || 0));
   if (memoryBusy || !fresh.length || (!force && fresh.length < MEMORY_MIN_NEW_TURNS)) {
-    if (force && !fresh.length) memoryStatus.textContent = "新しい発言はありません";
+    if (force && !fresh.length) notesStatus.textContent = "新しい発言はありません";
     return;
   }
   if (!passInput.value.trim()) return;
   memoryBusy = true;
   memoryBtn.disabled = true;
-  memoryStatus.textContent = "更新中…";
+  notesStatus.textContent = "覚えていることを更新中…";
   const upTo = fresh[fresh.length - 1].id;
   try {
+    await saveNotes(); // 手で書き直した内容を先にサーバーへ(サーバーはそれを元に更新する)
     const res = await api("/api/memory", {
       memory: memoryInput.value.trim(),
       turns: fresh.map((t) => ({ who: t.who, en: t.en })),
@@ -670,9 +692,9 @@ async function updateMemory(c, { force = false } = {}) {
     lsSet(LS.memory, data.memory);
     c.memUpTo = upTo;
     saveTurns();
-    memoryStatus.textContent = `${fmtDate(Date.now())} に更新しました`;
+    notesStatus.textContent = `覚えていることを ${fmtDate(Date.now())} に更新しました`;
   } catch (err) {
-    memoryStatus.textContent = err?.message || String(err);
+    notesStatus.textContent = err?.message || String(err);
   } finally {
     memoryBusy = false;
     memoryBtn.disabled = false;
@@ -721,17 +743,78 @@ function applyShowJa() {
 
 function saveSettings() {
   lsSet(LS.pass, passInput.value.trim());
-  lsSet(LS.profile, profileInput.value);
-  lsSet(LS.scenePreset, scenePreset.value);
-  lsSet(LS.sceneNote, sceneNote.value);
   lsSet(LS.endpoint, endpointSel.value);
   lsSet(LS.showJa, showJa.checked ? "1" : "0");
-  lsSet(LS.topics, topicsInput.value);
-  lsSet(LS.memory, memoryInput.value);
+  loadNotes();
 }
 
 function sceneText() {
-  return [scenePreset.value, sceneNote.value.trim()].filter(Boolean).join(". ");
+  return currentScene().en;
+}
+
+function currentScene() {
+  return SCENES.find((x) => x.key === sceneKey) || SCENES[0];
+}
+
+function migrateScene(old) {
+  if (!old) return "";
+  return OLD_SCENES[old] || SCENES.find((x) => x.en && x.en === old)?.key || "";
+}
+
+function renderSceneBar() {
+  sceneBar.replaceChildren(...SCENES.map((sc) => {
+    const b = el("button", "scene-chip", sc.label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(sc.key === sceneKey));
+    b.addEventListener("click", () => {
+      sceneKey = sc.key;
+      lsSet(LS.scene, sceneKey);
+      renderSceneBar();
+      // 会話の途中で場面を変えたら、今の会話の場面も変える
+      if (turns.length) { conv.scene = sceneText(); saveTurns(); }
+    });
+    return b;
+  }));
+  sceneBar.querySelector('[aria-pressed="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
+}
+
+// ===== 自己紹介メモ・覚えていること(サーバーに保存) =====
+async function loadNotes() {
+  if (!passInput.value.trim() || notesDirty) return;
+  try {
+    const res = await api("/api/notes", {});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(apiErrorMessage(res.status, data, "メモの読み込み"));
+    if (notesDirty) return;
+    // サーバーが空で端末にだけ残っているもの(以前の版の入力)は、サーバーへ移す
+    const migrate = {};
+    if (!data.profile && profileInput.value.trim()) migrate.profile = profileInput.value;
+    if (!data.memory && memoryInput.value.trim()) migrate.memory = memoryInput.value;
+    if (data.profile) profileInput.value = data.profile;
+    if (data.memory) memoryInput.value = data.memory;
+    lsSet(LS.profile, profileInput.value);
+    lsSet(LS.memory, memoryInput.value);
+    if (Object.keys(migrate).length) await api("/api/notes", { save: migrate });
+  } catch (err) {
+    notesStatus.textContent = err?.message || String(err);
+  }
+}
+
+async function saveNotes() {
+  clearTimeout(notesTimer);
+  lsSet(LS.profile, profileInput.value);
+  lsSet(LS.memory, memoryInput.value);
+  if (!notesDirty || !passInput.value.trim()) return;
+  notesDirty = false;
+  try {
+    const res = await api("/api/notes", { save: { profile: profileInput.value, memory: memoryInput.value } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(apiErrorMessage(res.status, data, "メモの保存"));
+    notesStatus.textContent = "保存しました";
+  } catch (err) {
+    notesDirty = true;
+    notesStatus.textContent = err?.message || String(err);
+  }
 }
 
 // iOS は画面を離れるとマイクが止まることがある。戻ってきたら確認する
