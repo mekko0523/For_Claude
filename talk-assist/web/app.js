@@ -6,7 +6,10 @@ const SONIOX_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 20_000;
 const SILENCE_STOP_MS = 5 * 60_000;     // 何も聞こえないままこの時間たったら自動停止(料金の節約)
 const MAX_RECONNECTS = 5;               // 接続が切れたときに自動でつなぎ直す回数
-const MAX_TURNS = 200;                  // 端末に残す発言数
+const MAX_TURNS = 300;                  // 1つの会話に残す発言数
+const MAX_CONVS = 60;                   // 端末に残す会話の数(古いものから消える)
+const MEMORY_MIN_NEW_TURNS = 4;         // 新しい発言がこれ以上あれば、停止時に「覚えていること」を更新する
+const LESSON_SCENE = "English lesson: 1-on-1 online or in-person lesson with an English teacher";
 const HISTORY_FOR_CLAUDE = 30;          // 候補作りに使う直近の発言数
 // 自分の発言の見分け: 表示中の候補を読み上げたら「自分」とみなす
 const SELF_MATCH_DICE = 0.6;            // 候補との単語の一致度(Dice 係数)がこれ以上
@@ -15,6 +18,7 @@ const PICKED_ECHO_MS = 30_000;          // 候補をタップしてからこの�
 const LS = {
   pass: "ta.passphrase", profile: "ta.profile", scenePreset: "ta.scenePreset", sceneNote: "ta.sceneNote",
   endpoint: "ta.endpoint", showJa: "ta.showJa", turns: "ta.turns",
+  convs: "ta.convs", current: "ta.currentConv", memory: "ta.memory", topics: "ta.topics",
 };
 
 // ===== DOM =====
@@ -39,6 +43,15 @@ const endpointSel = $("endpointSel");
 const showJa = $("showJa");
 const intentForm = $("intentForm");
 const intentInput = $("intent");
+const topicsInput = $("topics");
+const memoryInput = $("memory");
+const memoryBtn = $("memoryBtn");
+const memoryStatus = $("memoryStatus");
+const historyDlg = $("history");
+const histList = $("histList");
+const histView = $("histView");
+const histText = $("histText");
+const histTitle = $("histTitle");
 
 // ===== 状態 =====
 let state = "idle";              // idle | connecting | live
@@ -51,8 +64,13 @@ let lastHeardAt = 0;
 let tickTimer = null;
 let uttFinal = "";               // 話し中の発言の確定部分
 let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
-let turns = loadTurns();         // [{ id, who: "them" | "me", en, ja }]
+// 会話は端末に複数残す: [{ id, startedAt, updatedAt, scene, memUpTo, turns: [{ id, who: "them" | "me", en, ja }] }]
+let convs = loadConvs();
+let conv = convs.find((c) => c.id === lsGet(LS.current)) || newConv();
+let turns = conv.turns;
 let nextId = turns.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+let memoryBusy = false;
+let viewingConv = null;          // 記録画面で開いている会話
 let suggestions = [];            // 表示中の候補 [{ kind, en, ja }]
 let picked = null;               // タップした候補 { en, words: Set, at, covered: Set }
 let suggestCtl = null;           // 候補作りの通信(新しい発言が来たら取り消す)
@@ -64,16 +82,21 @@ scenePreset.value = lsGet(LS.scenePreset) || "";
 sceneNote.value = lsGet(LS.sceneNote) || "";
 endpointSel.value = lsGet(LS.endpoint) || "1200";
 showJa.checked = lsGet(LS.showJa) !== "0";
+topicsInput.value = lsGet(LS.topics) || "";
+memoryInput.value = lsGet(LS.memory) || "";
 applyShowJa();
-for (const t of turns) logEl.insertBefore(renderTurn(t), liveEl);
-updateEmpty();
-scrollToBottom(true);
-setCardsPlaceholder(turns.length ? "相手が話すと、ここに返事の候補が出ます" : "");
-regenBtn.disabled = !turns.length;
+renderLog();
 
 toggleBtn.addEventListener("click", () => (state === "idle" ? start() : stop()));
 $("settingsBtn").addEventListener("click", () => settings.showModal());
 $("newBtn").addEventListener("click", newConversation);
+$("historyBtn").addEventListener("click", openHistory);
+$("histClose").addEventListener("click", () => historyDlg.close());
+$("histBack").addEventListener("click", showHistoryList);
+$("histCopy").addEventListener("click", () => viewingConv && copyText(formatConv(viewingConv)));
+$("histContinue").addEventListener("click", () => viewingConv && continueConv(viewingConv));
+$("histDelete").addEventListener("click", () => viewingConv && deleteConv(viewingConv));
+memoryBtn.addEventListener("click", () => updateMemory(conv, { force: true }));
 regenBtn.addEventListener("click", () => requestSuggestions());
 meBtn.addEventListener("click", () => setMeMode(!meMode));
 intentForm.addEventListener("submit", (e) => {
@@ -140,6 +163,7 @@ function stop(message = "", isError = false) {
   setLive("");
   setState("idle");
   if (message) showNotice(message, isError);
+  updateMemory(conv);
 }
 
 function tick() {
@@ -351,7 +375,10 @@ async function requestSuggestions({ intent = "" } = {}) {
   }));
   let shown = 0;
   try {
-    const res = await api("/api/suggest", { history, intent, scene: sceneText(), profile: profileInput.value.trim() }, ctl.signal);
+    const res = await api("/api/suggest", {
+      history, intent, scene: sceneText(), lesson: scenePreset.value === LESSON_SCENE,
+      profile: profileInput.value.trim(), memory: memoryInput.value.trim(), topics: topicsInput.value.trim(),
+    }, ctl.signal);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(apiErrorMessage(res.status, data, "候補作り"));
@@ -450,6 +477,7 @@ function addTurn({ who, en, ja = "" }) {
     const old = turns.shift();
     logEl.querySelector(`[data-id="${old.id}"]`)?.remove();
   }
+  if (turns.length === 1) conv.scene = sceneText();
   saveTurns();
   logEl.insertBefore(renderTurn(turn), liveEl);
   updateEmpty();
@@ -477,7 +505,8 @@ function editTurn(t) {
     return;
   }
   if (!confirm("この発言を会話から消しますか？")) return;
-  turns = turns.filter((x) => x !== t);
+  const i = turns.indexOf(t);
+  if (i >= 0) turns.splice(i, 1);
   saveTurns();
   logEl.querySelector(`[data-id="${t.id}"]`)?.remove();
   updateEmpty();
@@ -491,14 +520,163 @@ function setLive(text) {
   if (show) { updateEmpty(); scrollToBottom(); }
 }
 
+// 新しい会話: 今の会話は記録に残し、「覚えていること」に反映してから空の会話にする
 function newConversation() {
-  if (turns.length && !confirm("会話の記録を消して、新しい会話を始めますか？")) return;
-  turns = [];
-  saveTurns();
-  logEl.querySelectorAll(".turn:not(.live)").forEach((n) => n.remove());
-  clearSuggestions("");
+  if (!turns.length) return;
+  if (!confirm("新しい会話を始めますか？（今の会話は 📜 記録 に残ります）")) return;
+  if (state !== "idle") stop();
+  updateMemory(conv, { force: true });
+  switchConv(newConv());
   showNotice("");
+}
+
+function switchConv(c) {
+  conv = c;
+  turns = c.turns;
+  nextId = turns.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+  picked = null;
+  lsSet(LS.current, c.id);
+  renderLog();
+}
+
+function renderLog() {
+  logEl.querySelectorAll(".turn:not(.live)").forEach((n) => n.remove());
+  for (const t of turns) logEl.insertBefore(renderTurn(t), liveEl);
   updateEmpty();
+  scrollToBottom(true);
+  clearSuggestions(turns.length ? "相手が話すと、ここに返事の候補が出ます" : "");
+}
+
+// ===== 会話の記録 =====
+function newConv() {
+  const now = Date.now();
+  return { id: `c${now.toString(36)}`, startedAt: now, updatedAt: now, scene: "", memUpTo: 0, turns: [] };
+}
+
+function openHistory() {
+  showHistoryList();
+  historyDlg.showModal();
+}
+
+function showHistoryList() {
+  viewingConv = null;
+  histView.hidden = true;
+  histList.hidden = false;
+  histTitle.textContent = "会話の記録";
+  const list = [conv, ...convs.filter((c) => c !== conv)].filter((c) => c.turns.length);
+  if (!list.length) {
+    histList.replaceChildren(el("p", "hint", "まだ記録はありません"));
+    return;
+  }
+  histList.replaceChildren(...list.map((c) => {
+    const item = el("button", `hist-item${c === conv ? " current" : ""}`);
+    item.type = "button";
+    item.append(
+      el("div", "meta", `${fmtDate(c.startedAt)}${c === conv ? "（今の会話）" : ""} ・ ${sceneLabel(c.scene)} ・ ${c.turns.length}発言`),
+      el("div", "first", c.turns[0].en),
+    );
+    item.addEventListener("click", () => showHistoryConv(c));
+    return item;
+  }));
+}
+
+function showHistoryConv(c) {
+  viewingConv = c;
+  histList.hidden = true;
+  histView.hidden = false;
+  histTitle.textContent = fmtDate(c.startedAt);
+  histText.textContent = formatConv(c);
+  $("histContinue").hidden = c === conv;
+}
+
+function continueConv(c) {
+  if (state !== "idle") stop();
+  else updateMemory(conv);
+  switchConv(c);
+  historyDlg.close();
+}
+
+function deleteConv(c) {
+  if (!confirm("この会話の記録を消しますか？（「覚えていること」はそのまま残ります）")) return;
+  convs = convs.filter((x) => x !== c);
+  if (c === conv) {
+    if (state !== "idle") stop();
+    switchConv(newConv());
+  }
+  saveTurns();
+  showHistoryList();
+}
+
+function formatConv(c) {
+  const lines = [`会話カンペ ${fmtDate(c.startedAt)}${c.scene ? `（${sceneLabel(c.scene)}）` : ""}`, ""];
+  for (const t of c.turns) {
+    lines.push(`${t.who === "me" ? "自分" : "相手"}: ${t.en}`);
+    if (t.ja) lines.push(`　（${t.ja}）`);
+  }
+  return lines.join("\n");
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // クリップボードが使えないときは選択状態にして、手でコピーしてもらう
+    const range = document.createRange();
+    range.selectNodeContents(histText);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    alert("自動でコピーできませんでした。選択された文字を長押ししてコピーしてください");
+    return;
+  }
+  alert("コピーしました");
+}
+
+function sceneLabel(scene) {
+  if (!scene) return "場面指定なし";
+  const opt = [...scenePreset.options].find((o) => o.value && scene.startsWith(o.value));
+  return opt ? opt.textContent : scene.slice(0, 30);
+}
+
+function fmtDate(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// ===== 覚えていること(過去の会話のメモ) =====
+// 会話のうち、まだメモに反映していない発言だけを Claude に渡して、メモを更新する
+async function updateMemory(c, { force = false } = {}) {
+  const fresh = c.turns.filter((t) => t.id > (c.memUpTo || 0));
+  if (memoryBusy || !fresh.length || (!force && fresh.length < MEMORY_MIN_NEW_TURNS)) {
+    if (force && !fresh.length) memoryStatus.textContent = "新しい発言はありません";
+    return;
+  }
+  if (!passInput.value.trim()) return;
+  memoryBusy = true;
+  memoryBtn.disabled = true;
+  memoryStatus.textContent = "更新中…";
+  const upTo = fresh[fresh.length - 1].id;
+  try {
+    const res = await api("/api/memory", {
+      memory: memoryInput.value.trim(),
+      turns: fresh.map((t) => ({ who: t.who, en: t.en })),
+      profile: profileInput.value.trim(),
+      scene: c.scene || sceneText(),
+      date: fmtDate(c.startedAt),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.memory) throw new Error(apiErrorMessage(res.status, data, "「覚えていること」の更新"));
+    memoryInput.value = data.memory;
+    lsSet(LS.memory, data.memory);
+    c.memUpTo = upTo;
+    saveTurns();
+    memoryStatus.textContent = `${fmtDate(Date.now())} に更新しました`;
+  } catch (err) {
+    memoryStatus.textContent = err?.message || String(err);
+  } finally {
+    memoryBusy = false;
+    memoryBtn.disabled = false;
+  }
 }
 
 function updateEmpty() {
@@ -548,6 +726,8 @@ function saveSettings() {
   lsSet(LS.sceneNote, sceneNote.value);
   lsSet(LS.endpoint, endpointSel.value);
   lsSet(LS.showJa, showJa.checked ? "1" : "0");
+  lsSet(LS.topics, topicsInput.value);
+  lsSet(LS.memory, memoryInput.value);
 }
 
 function sceneText() {
@@ -604,12 +784,43 @@ function el(tag, cls, text) {
   return n;
 }
 
-function loadTurns() {
-  try {
-    const arr = JSON.parse(lsGet(LS.turns) || "[]");
-    return Array.isArray(arr) ? arr.filter((t) => t && (t.who === "them" || t.who === "me") && typeof t.en === "string") : [];
-  } catch { return []; }
+function validTurns(arr) {
+  return Array.isArray(arr) ? arr.filter((t) => t && (t.who === "them" || t.who === "me") && typeof t.en === "string") : [];
 }
-function saveTurns() { lsSet(LS.turns, JSON.stringify(turns.slice(-MAX_TURNS))); }
+
+function loadConvs() {
+  let list = [];
+  try {
+    const arr = JSON.parse(lsGet(LS.convs) || "[]");
+    if (Array.isArray(arr)) list = arr.filter((c) => c && typeof c.id === "string").map((c) => ({ ...c, turns: validTurns(c.turns) }));
+  } catch {}
+  // 以前の版(会話が1つだけ)の記録を引き継ぐ
+  const old = (() => { try { return validTurns(JSON.parse(lsGet(LS.turns) || "[]")); } catch { return []; } })();
+  if (old.length && !list.length) {
+    const c = newConv();
+    c.turns = old;
+    list.push(c);
+    lsSet(LS.current, c.id);
+  }
+  try { localStorage.removeItem(LS.turns); } catch {}
+  return list;
+}
+
+// 今の会話を含めて保存する(空の会話は残さない。入りきらなければ古い会話から消す)
+function saveTurns() {
+  conv.updatedAt = Date.now();
+  if (turns.length && !convs.includes(conv)) convs.push(conv);
+  convs = convs.filter((c) => c.turns.length).sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_CONVS);
+  lsSet(LS.current, conv.id);
+  for (;;) {
+    try {
+      localStorage.setItem(LS.convs, JSON.stringify(convs));
+      return;
+    } catch {
+      if (convs.length <= 1) return;
+      convs.shift();
+    }
+  }
+}
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }

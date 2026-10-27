@@ -18,6 +18,7 @@
   <header class="bar">
     <div class="status"><span id="dot" class="dot"></span><span id="statusText">停止中</span></div>
     <div class="bar-actions">
+      <button id="historyBtn" class="icon-btn" type="button" aria-label="会話の記録">📜</button>
       <button id="newBtn" class="icon-btn" type="button" aria-label="新しい会話">🗒️</button>
       <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">⚙️</button>
     </div>
@@ -56,6 +57,7 @@
       <label>場面
         <select id="scenePreset">
           <option value="">指定しない</option>
+          <option value="English lesson: 1-on-1 online or in-person lesson with an English teacher">英会話教室（先生とワンオンワン）</option>
           <option value="Travel abroad (hotel, airport, sightseeing)">旅行（ホテル・空港・観光）</option>
           <option value="Shopping or ordering at a restaurant or cafe">買い物・レストラン</option>
           <option value="Business meeting or trade show with a client">商談・展示会</option>
@@ -69,6 +71,16 @@
       <label>自己紹介メモ（返事の中身に使います）
         <textarea id="profile" rows="5" placeholder="例：名前は田中。日本の農薬メーカーで営業。出張でアメリカに来ている。趣味は釣り。"></textarea>
       </label>
+      <label>話したいこと（候補に話題として混ぜます）
+        <textarea id="topics" rows="3" placeholder="例：先週の釣りの話／来月の出張の準備／good と well の使い分けを聞きたい"></textarea>
+      </label>
+      <label>覚えていること（会話が終わるたびに自動で更新）
+        <textarea id="memory" rows="7" placeholder="過去の会話で話した内容・話題・続きの話がここにたまります。直接書き直してもかまいません。"></textarea>
+      </label>
+      <div class="row">
+        <button id="memoryBtn" class="chip" type="button">今の会話から更新</button>
+        <span id="memoryStatus" class="hint"></span>
+      </div>
       <label>話し終わりの判定
         <select id="endpointSel">
           <option value="700">早い（候補が早く出る）</option>
@@ -82,6 +94,25 @@
         <button value="close" class="primary">閉じる</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="history">
+    <div class="settings-form">
+      <div class="dlg-head">
+        <h2 id="histTitle">会話の記録</h2>
+        <button id="histClose" class="chip" type="button">閉じる</button>
+      </div>
+      <div id="histList" class="hist-list"></div>
+      <div id="histView" hidden>
+        <pre id="histText" class="hist-text"></pre>
+        <div class="hist-actions">
+          <button id="histCopy" class="chip" type="button">📋 コピー</button>
+          <button id="histContinue" class="chip" type="button">▶ この会話を続ける</button>
+          <button id="histDelete" class="chip danger" type="button">🗑 削除</button>
+          <button id="histBack" class="chip" type="button">← 一覧</button>
+        </div>
+      </div>
+    </div>
   </dialog>
 
   <script src="app.js"></script>
