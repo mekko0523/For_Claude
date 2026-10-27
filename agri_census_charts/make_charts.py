@@ -39,15 +39,15 @@ def load(path):
 
 
 def plot(crop, data, out):
-    area = [data[y][0] for y in YEARS]
+    area = [data[y][0] / 1000 for y in YEARS]  # 千ha
     avg = [data[y][0] / data[y][1] for y in YEARS]
     x = range(len(YEARS))
 
     fig, ax = plt.subplots(figsize=(9, 5.4), dpi=200)
     ax2 = ax.twinx()
 
-    bars = ax.bar(x, area, width=0.55, color=BAR_COLOR[crop], label="作付面積（ha・左軸）", zorder=2)
-    ax.bar_label(bars, labels=[f"{v / 10000:,.1f}万" for v in area], padding=3, fontsize=9, color=MUTED)
+    bars = ax.bar(x, area, width=0.55, color=BAR_COLOR[crop], label="作付面積（千ha・左軸）", zorder=2)
+    ax.bar_label(bars, labels=[f"{v:,.1f}" for v in area], padding=3, fontsize=9, color=MUTED)
     ax2.plot(x, avg, color=LINE_COLOR, linewidth=2.2, marker="o", markersize=7,
              markeredgecolor="white", markeredgewidth=1.5, label="1経営体当たり平均作付面積（ha/経営体・右軸）", zorder=3)
     for i, v in enumerate(avg):
@@ -55,7 +55,7 @@ def plot(crop, data, out):
                      ha="center", fontsize=10, color=INK, fontweight="bold")
 
     ax.set_xticks(list(x), [f"{y}年" for y in YEARS])
-    ax.set_ylabel("作付面積（ha）", color=INK)
+    ax.set_ylabel("作付面積（千ha）", color=INK)
     ax2.set_ylabel("平均作付面積（ha／経営体）", color=INK)
     ax.set_ylim(0, max(area) * 1.18)
     ax2.set_ylim(0, max(avg) * 1.25)
