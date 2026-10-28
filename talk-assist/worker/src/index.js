@@ -40,7 +40,10 @@ Rules:
 - Fit the conversation so far and the user's profile/scene. Never invent personal facts that contradict the profile.
   If an answer needs a fact you don't know (a time, a number, a name), offer a plausible concrete choice rather than a placeholder.
 - The transcript comes from speech recognition and may contain errors or cut-off sentences; infer the most likely meaning.
-- If the user gives an intent in Japanese ("言いたいこと"), all suggestions must express that intent in different ways.
+- If the user gives "言いたいこと" (what they want to say), it may be a full sentence, a short phrase, or just one or two words,
+  in Japanese or English (e.g. "釣り", "来週", "price", "もう一回"). Work out from the conversation, especially Them's latest words,
+  how the user most likely wants to use it, and make all 4 suggestions natural replies that include that idea —
+  covering different plausible readings (e.g. an answer, a question, a comment) rather than 4 rewordings of one sentence.
 - "Memory" holds notes from the user's past conversations (facts they said about themselves, past topics, people they know).
   Use it so answers stay consistent with what the user has said before and feel personal; never contradict it.
   When there is a natural opening, the "other" option may bring up an open thread or follow-up from the memory.
@@ -158,7 +161,7 @@ async function suggest(request, env) {
     body.memory ? `Memory (from past conversations):\n${clean(body.memory, MAX_NOTE)}` : "",
     body.scene ? `Scene: ${clean(body.scene)}` : "",
     `Conversation so far (latest last):\n${history.join("\n") || "(nothing yet)"}`,
-    body.intent ? `言いたいこと (the user's intent, in Japanese): ${clean(body.intent)}` : "",
+    body.intent ? `言いたいこと (what the user wants to say; may be just a word): ${clean(body.intent)}` : "",
     "Write the suggestions now.",
   ].filter(Boolean);
 

@@ -7,11 +7,10 @@ const CONNECT_TIMEOUT_MS = 20_000;
 const SILENCE_STOP_MS = 5 * 60_000;     // 何も聞こえないままこの時間たったら自動停止(料金の節約)
 const MAX_RECONNECTS = 5;               // 接続が切れたときに自動でつなぎ直す回数
 const MAX_TURNS = 300;                  // 1つの会話に残す発言数
-const MAX_CONVS = 60;
+const MAX_CONVS = 60;                   // 端末に残す会話の数(古いものから消える)
 // 使用量の表示(概算)。Soniox は送った音声の長さで課金される。Claude の料金は Worker が計算して返す
 const SONIOX_USD_PER_HOUR = 0.12;
 const PCM_BYTES_PER_SEC = SONIOX_SAMPLE_RATE * 2; // 16kHz・16bit・モノラル
-const USD_JPY = 150;                   // 端末に残す会話の数(古いものから消える)
 const MEMORY_MIN_NEW_TURNS = 4;         // 新しい発言がこれ以上あれば、停止時に「覚えていること」を更新する
 // 場面(画面上部のボタンで切り替え)。mode があるものは Worker で専用の指示を足す
 const SCENES = [
@@ -371,6 +370,7 @@ function endUtterance() {
   if (!/[a-z0-9]/i.test(text)) return;
 
   if (meMode) {
+    intentInput.value = "";
     lateJaTarget = addTurn({ who: "me", en: text, ja });
     return;
   }
@@ -384,6 +384,7 @@ function endUtterance() {
   // 表示中の候補を読み上げた
   const match = bestSuggestion(words);
   if (match) {
+    intentInput.value = "";
     addTurn({ who: "me", en: match.en, ja: match.ja });
     clearSuggestions("相手の返事を待っています…");
     return;
@@ -421,7 +422,8 @@ function containedRatio(a, b) {
 }
 
 // ===== 返答候補(Claude) =====
-async function requestSuggestions({ intent = "" } = {}) {
+// 言いたいことの欄に何か入っていれば、相手が話したときの候補作りにも使う
+async function requestSuggestions({ intent = intentInput.value.trim() } = {}) {
   if (!turns.length && !intent) return;
   if (!passInput.value.trim()) { settings.showModal(); return; }
   suggestCtl?.abort();
@@ -507,13 +509,12 @@ function handleSuggestionLine(line) {
   if (typeof obj.en !== "string" || !obj.en.trim()) return false;
   const s = { kind: obj.kind, en: obj.en.trim(), ja: typeof obj.ja === "string" ? obj.ja : "" };
   suggestions.push(s);
-  const card = el("button", "card");
+  const card = el("button", `card ${["question", "other"].includes(s.kind) ? s.kind : "answer"}`);
   card.type = "button";
-  card.append(
-    el("div", "kind", { answer: "返事", question: "質問", other: "ほかに" }[s.kind] || ""),
-    el("div", "en", s.en),
-    el("div", "ja", s.ja),
-  );
+  // 種類は左の色と和訳の頭の小さな文字で示す(縦の幅を節約して4つを1画面に収める)
+  const ja = el("div", "ja");
+  ja.append(el("span", "kind", { answer: "返事", question: "質問", other: "ほか" }[s.kind] || "返事"), document.createTextNode(s.ja));
+  card.append(el("div", "en", s.en), ja);
   card.addEventListener("click", () => pickSuggestion(s, card));
   const firstLoading = cardsEl.querySelector(".loading");
   cardsEl.insertBefore(card, firstLoading);
@@ -523,6 +524,7 @@ function handleSuggestionLine(line) {
 // 候補をタップ = これを言う。会話に記録して、読み上げた声を二重に記録しないようにする
 function pickSuggestion(s, card) {
   card.classList.add("picked");
+  intentInput.value = ""; // 返事をしたら、言いたいことの欄は次の言葉のために空ける
   addTurn({ who: "me", en: s.en, ja: s.ja });
   picked = { en: s.en, words: toWords(s.en), at: Date.now(), covered: new Set() };
   suggestions = [];
@@ -638,9 +640,9 @@ function addClaudeUsage(c, u) {
 function sonioxSec(c) { return usageOf(c).sonioxBytes / PCM_BYTES_PER_SEC; }
 function sonioxUsd(c) { return (sonioxSec(c) / 3600) * SONIOX_USD_PER_HOUR; }
 function totalUsd(c) { return usageOf(c).claudeUsd + sonioxUsd(c); }
+// 金額はドルで表示する(Haiku の1回分のような小さな額も見えるよう、1セント未満は小数4桁)
 function fmtMoney(usd) {
-  const yen = usd * USD_JPY;
-  return `$${usd.toFixed(usd < 0.1 ? 3 : 2)}（約${yen < 10 ? yen.toFixed(1) : Math.round(yen)}円）`;
+  return `$${usd.toFixed(usd < 0.01 ? 4 : usd < 1 ? 3 : 2)}`;
 }
 function fmtDuration(sec) {
   const m = Math.floor(sec / 60);
@@ -648,10 +650,8 @@ function fmtDuration(sec) {
   return m ? `${m}分${s}秒` : `${s}秒`;
 }
 function renderUsage() {
-  // 画面上部は狭いので円だけ(内訳は 📜 で会話を開くと見られる)
-  const yen = totalUsd(conv) * USD_JPY;
-  usageEl.textContent = hasUsage(conv) ? `約${yen < 10 ? yen.toFixed(1) : Math.round(yen)}円` : "";
-  usageEl.title = hasUsage(conv) ? fmtMoney(totalUsd(conv)) : "";
+  // Claude と Soniox の合計(内訳は 📜 で会話を開くと見られる)
+  usageEl.textContent = hasUsage(conv) ? fmtMoney(totalUsd(conv)) : "";
 }
 function renderUsageDetail(c) {
   const u = usageOf(c);
@@ -663,7 +663,7 @@ function renderUsageDetail(c) {
   };
   line("Claude", `${u.claudeCalls}回 ・ 入力 ${u.claudeIn.toLocaleString()} / 出力 ${u.claudeOut.toLocaleString()} トークン ・ ${fmtMoney(u.claudeUsd)}`);
   line("Soniox", `${fmtDuration(sonioxSec(c))} ・ ${fmtMoney(sonioxUsd(c))}`);
-  line("合計", `${fmtMoney(totalUsd(c))}（概算）`);
+  line("合計（Claude＋Soniox）", `${fmtMoney(totalUsd(c))}（概算）`);
 }
 
 function renderLog() {
@@ -832,7 +832,7 @@ function setState(s) {
 function setMeMode(on) {
   meMode = on;
   meBtn.setAttribute("aria-pressed", String(on));
-  meBtn.textContent = on ? "🙋 自分が話し中…" : "🙋 自分が話す";
+  meBtn.lastElementChild.textContent = on ? "話し中" : "自分";
   // 話し終わる前に戻したときは、その時点までを自分の発言として区切る
   if (!on && uttFinal.trim()) {
     meMode = true;

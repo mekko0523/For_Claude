@@ -40,15 +40,16 @@
       <button id="regenBtn" class="chip" type="button" disabled>🔄 別の候補</button>
     </div>
     <div id="cards" class="cards"></div>
-    <form id="intentForm" class="intent">
-      <input id="intent" type="text" enterkeyhint="send" autocomplete="off" placeholder="言いたいことを日本語で（例：もう少しゆっくり）">
-      <button type="submit" class="chip">英語に</button>
-    </form>
   </section>
 
+  <!-- 下部は1行: 自分が話す / 言いたいこと(単語だけでも可) / 英語にする / 開始・停止 -->
   <footer class="controls">
-    <button id="meBtn" class="me-btn" type="button" aria-pressed="false">🙋 自分が話す</button>
-    <button id="toggleBtn" class="primary" type="button">▶ 開始</button>
+    <button id="meBtn" class="me-btn" type="button" aria-pressed="false" aria-label="自分が話す">🙋<span>自分</span></button>
+    <form id="intentForm" class="intent">
+      <input id="intent" type="text" enterkeyhint="send" autocomplete="off" placeholder="言いたいこと・単語">
+      <button type="submit" class="send-btn" aria-label="英語にする">➤</button>
+    </form>
+    <button id="toggleBtn" class="go" type="button">▶ 開始</button>
   </footer>
 
   <dialog id="settings">
