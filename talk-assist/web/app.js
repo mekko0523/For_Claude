@@ -34,10 +34,20 @@ const RECENT_SUGGESTION_MS = 60_000;    // 入れ替わった前の候補も、�
 // 自分か相手かの判定: 点数が ME_SCORE 以上なら自分
 //   候補とほぼ同じ +3 / 一部だけ読んだ +1.5、Soniox の話者番号が自分 +2.5 / 相手 -2、声の大きさが自分に近い +1 / 相手に近い -1
 const ME_SCORE = 2;
+// 相手のターンの終わり: 相手の発言のあと、この間だれも話さなければ新しい候補を出す(設定で変えられる)。
+// 質問で終わっていれば少し早めに出す。待っているあいだに裏で候補を作っておく
+const DEFAULT_TURN_WAIT_MS = 2500;
+const QUESTION_WAIT_RATIO = 0.6;
+const SONIOX_ENDPOINT_MS = 1000;        // Soniox が発言の区切り(<end>)を出すまでの最大の待ち
+const MERGE_GAP_MS = 6000;              // 相手の発言がこの間隔以内に続いたら1つの吹き出しにまとめる
+// 相づち・つなぎの言葉だけの発言では候補を作らない
+const FILLER_WORDS = new Set("yeah yes yep yup ya yah mm mmm hmm hm mhm mmhm uh huh uhhuh um uhm umm er ah oh ooh okay ok alright right sure so well no nope really nice good great cool wow exactly understood i see indeed true totally".split(" "));
+const MAX_DIAG = 3000;                  // 1つの会話に残す診断ログの数
+const DIAG_KEEP_CONVS = 5;              // 診断ログを残す会話の数(新しいものから)
 const LEVEL_MIN_GAP_DB = 3;             // 自分と相手の声の大きさの平均がこれ以上離れていれば、大きさも判定に使う
 const LS = {
   pass: "ta.passphrase", profile: "ta.profile", scene: "ta.scene", oldScene: "ta.scenePreset",
-  endpoint: "ta.endpoint", showJa: "ta.showJa", turns: "ta.turns", model: "ta.model",
+  turnWait: "ta.turnWait", showJa: "ta.showJa", turns: "ta.turns", model: "ta.model",
   convs: "ta.convs", current: "ta.currentConv", memory: "ta.memory", levels: "ta.voiceLevels",
 };
 
@@ -58,7 +68,7 @@ const settings = $("settings");
 const passInput = $("passphrase");
 const profileInput = $("profile");
 const sceneBar = $("sceneBar");
-const endpointSel = $("endpointSel");
+const turnWaitSel = $("turnWaitSel");
 const showJa = $("showJa");
 const modelSel = $("modelSel");
 const intentForm = $("intentForm");
@@ -89,6 +99,9 @@ let uttJa = "";                  // 話し中の発言の和訳(確定部分)
 let uttStarted = false;          // 前の発言の区切りのあと、次の発言の原文が届き始めたか
 let lateJaTarget = null;         // 区切りのあとに遅れて届いた和訳を足す発言
 let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
+let calibrating = false;         // 開始直後: 最初の発言を自分の声として覚える
+// 相手のターン: 相手の話が終わったら(間 = 設定の時間)候補を出す。待つあいだに裏で作っておく
+const turn = { need: false, question: false, timer: null, job: null };
 // 会話は端末に複数残す: [{ id, startedAt, updatedAt, scene, memUpTo, turns: [{ id, who: "them" | "me", en, ja }] }]
 let convs = loadConvs();
 let conv = convs.find((c) => c.id === lsGet(LS.current)) || newConv();
@@ -109,7 +122,7 @@ passInput.value = lsGet(LS.pass) || "";
 profileInput.value = lsGet(LS.profile) || "";
 let sceneKey = lsGet(LS.scene) ?? migrateScene(lsGet(LS.oldScene));
 renderSceneBar();
-endpointSel.value = lsGet(LS.endpoint) || "1200";
+turnWaitSel.value = lsGet(LS.turnWait) || String(DEFAULT_TURN_WAIT_MS);
 showJa.checked = lsGet(LS.showJa) !== "0";
 modelSel.value = lsGet(LS.model) === "opus" ? "opus" : "haiku";
 memoryInput.value = lsGet(LS.memory) || "";
@@ -125,6 +138,7 @@ $("histBack").addEventListener("click", showHistoryList);
 $("histCopy").addEventListener("click", () => viewingConv && copyText(formatConv(viewingConv)));
 $("histContinue").addEventListener("click", () => viewingConv && continueConv(viewingConv));
 $("histDelete").addEventListener("click", () => viewingConv && deleteConv(viewingConv));
+$("histDiag").addEventListener("click", () => viewingConv && sendDiag(viewingConv));
 memoryBtn.addEventListener("click", () => updateMemory(conv, { force: true }));
 $("notesBtn").addEventListener("click", () => { loadNotes(); notesDlg.showModal(); });
 $("notesClose").addEventListener("click", () => notesDlg.close());
@@ -174,6 +188,8 @@ async function start() {
     });
     await connect(gen);
     if (gen !== generation) return;
+    diag("start", { model: modelSel.value, turnWaitMs: Number(turnWaitSel.value), scene: sceneKey, levels: spk.lvl, ua: navigator.userAgent });
+    startCalibration();
     acquireWakeLock();
     lastHeardAt = Date.now();
     tickTimer = setInterval(tick, 1_000);
@@ -187,6 +203,10 @@ async function start() {
 function stop(message = "", isError = false) {
   generation++;
   if (uttFinal.trim()) endUtterance();
+  if (calibrating) endCalibration(null);
+  cancelTurn();
+  turn.need = false;
+  if (state !== "idle") diag("stop", { message, votes: spk.votes, levels: spk.lvl });
   closeSocket();
   if (audio) {
     try { audio.node?.disconnect(); } catch {}
@@ -286,7 +306,7 @@ async function connect(gen) {
         // 話者識別: 声の違いで発言ごとに話者番号を付けてもらい、自分か相手かの判定に使う
         enable_speaker_diarization: true,
         enable_endpoint_detection: true,
-        max_endpoint_delay_ms: Number(endpointSel.value) || 1200,
+        max_endpoint_delay_ms: SONIOX_ENDPOINT_MS,
         context: {
           general: [
             { key: "setting", value: "Live conversation in English, in person or online" },
@@ -313,7 +333,12 @@ async function connect(gen) {
     setState("connecting");
     setTimeout(() => {
       if (gen !== generation) return;
-      connect(gen).then(() => { if (gen === generation) setState("live"); })
+      diag("reconnect", { code: e.code, votes: spk.votes });
+      connect(gen).then(() => {
+        if (gen !== generation) return;
+        setState("live");
+        showNotice("接続し直しました。自分の声を覚え直すには「🙋自分」を押して英語でひとこと話してください");
+      })
         .catch((err) => { if (gen === generation) stop(err?.message || String(err), true); });
     }, 800);
   };
@@ -353,6 +378,7 @@ function handleSoniox(raw) {
     }
     lastHeardAt = Date.now();
     uttStarted = true;
+    clearTimeout(turn.timer); // だれかが話している間は、候補を出さずに待つ
     if (t.is_final) {
       // 話者が「自分」⇄「相手」に替わったら、間がなくてもそこで発言を区切る
       if (speakerChanged(t.speaker)) endUtterance();
@@ -387,39 +413,112 @@ function endUtterance() {
   setLive("");
   if (!/[a-z0-9]/i.test(text)) return;
   const words = toWords(text);
+  const filler = isFiller(text);
   const extra = { spk: feat.label, db: feat.db, conn: spk.conn };
+  const d = { text, spk: feat.counts, share: round2(feat.share), db: feat.db == null ? null : round1(feat.db), filler };
 
-  if (meMode) {
-    learnSpeaker(feat, "me", 3);
-    intentInput.value = "";
-    lateJaTarget = addTurn({ who: "me", en: text, ja, ...extra });
+  // 開始直後の最初の発言・「🙋自分」を押している間: 自分の発言として記録し、自分の声として覚える
+  if (meMode || calibrating) {
+    const how = calibrating ? "calibration" : "meButton";
+    if (calibrating) endCalibration(feat);
+    else learnSpeaker(feat, "me", 3);
+    diag("utt", { ...d, who: "me", how });
+    meSpoke(text, ja, extra, filler);
     return;
   }
   // 使った候補を読み上げた続きの声(すでに記録済み)
-  if (picked && Date.now() - picked.at < PICKED_ECHO_MS && speakerRole(feat) !== "them" && containedRatio(words, picked.words) >= 0.7) {
+  if (picked && Date.now() - picked.at < PICKED_ECHO_MS && speakerRole(feat) !== "them" && speakerRole(feat) !== "other" && containedRatio(words, picked.words) >= 0.7) {
     learnSpeaker(feat, "me", 3);
     for (const w of words) picked.covered.add(w);
     if (picked.covered.size >= picked.words.size * 0.7) picked = null;
+    diag("utt", { ...d, who: "me", how: "echoOfUsedSuggestion" });
+    rearmTurn();
     return;
   }
-  const { who, match, score, textScore } = classify(words, feat);
-  if (who === "me") {
+  const c = classify(words, feat);
+  diag("utt", { ...d, who: c.who, role: c.role, score: { text: c.textScore, spk: c.spkScore, lvl: c.lvlScore, total: c.score }, match: c.match?.en });
+  if (c.who === "me") {
     // 候補どおりに読んだときは確実な手がかりとして強めに学ぶ
-    learnSpeaker(feat, "me", textScore >= 3 ? 3 : 1);
-    intentInput.value = "";
-    if (match && textScore >= 1.5) useSuggestion(match, words);
-    if (match && textScore >= 3) {
-      addTurn({ who: "me", en: match.en, ja: match.ja, ...extra }); // 候補どおり: 聞き取りの誤りがない候補の文で記録
-    } else {
-      lateJaTarget = addTurn({ who: "me", en: text, ja, ...extra }); // 一部だけ・自分の言葉: 聞こえたとおりに記録
-    }
-    clearSuggestions("相手の返事を待っています…");
+    learnSpeaker(feat, "me", c.textScore >= 3 ? 3 : 1);
+    if (c.match && c.textScore >= 1.5) useSuggestion(c.match, words);
+    if (c.match && c.textScore >= 3) meSpoke(c.match.en, c.match.ja, extra, false, true); // 候補どおり: 候補の文で記録
+    else meSpoke(text, ja, extra, filler); // 一部だけ・自分の言葉: 聞こえたとおりに記録
     return;
   }
-  // 相手: 候補と関係のない発言は相手の声として学ぶ(はっきりしないときは弱めに)
-  if (textScore === 0) learnSpeaker(feat, "them", score <= -1 ? 2 : 1);
-  lateJaTarget = addTurn({ who: "them", en: text, ja, ...extra });
-  requestSuggestions();
+  // 相手: 話者番号で相手とわかっているときだけ、相手の声として学ぶ(わからないものを相手として覚えると、自分の声まで相手になる)
+  if (c.role === "them" || c.role === "other") learnSpeaker(feat, "them", 1);
+  themSpoke(text, ja, extra, filler);
+}
+
+// 自分の発言。相づちだけなら記録せず、相手のターンもそのまま続ける
+function meSpoke(en, ja, extra, filler, fromSuggestion = false) {
+  if (filler) {
+    rearmTurn();
+    return;
+  }
+  intentInput.value = "";
+  const t = addTurn({ who: "me", en, ja: ja || "", ...extra });
+  if (!fromSuggestion) lateJaTarget = t;
+  turn.need = false;
+  cancelTurn();
+  clearSuggestions("相手の返事を待っています…");
+}
+
+// 相手の発言。続けて話していれば前の吹き出しにまとめ、相手のターンの終わりを待ってから候補を出す
+function themSpoke(en, ja, extra, filler) {
+  const last = turns[turns.length - 1];
+  const afterMe = !last || last.who === "me";
+  let t;
+  if (last && last.who === "them" && last.conn === extra.conn && (!last.spk || !extra.spk || last.spk === extra.spk) && Date.now() - (last.at || 0) < MERGE_GAP_MS) {
+    last.en = `${last.en} ${en}`;
+    last.ja = [last.ja, ja].filter(Boolean).join(" ");
+    last.at = Date.now();
+    saveTurns();
+    logEl.querySelector(`[data-id="${last.id}"]`)?.replaceWith(renderTurn(last));
+    scrollToBottom();
+    t = last;
+  } else {
+    t = addTurn({ who: "them", en, ja, ...extra });
+  }
+  lateJaTarget = t;
+  // 相づちだけなら候補は作らない(ただし自分の発言への返事なら、短くても作る)
+  if (!filler || afterMe) {
+    turn.need = true;
+    turn.question = /\?\s*$/.test(t.en);
+    startTurnJob();
+  }
+  rearmTurn();
+}
+
+// 相手のターンの終わりを待つタイマーをかけ直す(だれかが話し始めたら handleSoniox で止まる)
+function rearmTurn() {
+  clearTimeout(turn.timer);
+  if (!turn.need) return;
+  const wait = (Number(turnWaitSel.value) || DEFAULT_TURN_WAIT_MS) * (turn.question ? QUESTION_WAIT_RATIO : 1);
+  turn.timer = setTimeout(() => {
+    turn.need = false;
+    if (!turn.job || turn.job.aborted) startTurnJob();
+    revealJob(turn.job);
+  }, wait);
+}
+
+// 裏で候補を作り始める(相手がまだ話すかもしれないので、表示はターンの終わりまで待つ)
+function startTurnJob() {
+  if (turn.job && !turn.job.revealed) turn.job.abort();
+  turn.job = requestSuggestions({ deferred: true, reason: "turnEnd" });
+}
+
+function cancelTurn() {
+  clearTimeout(turn.timer);
+  if (turn.job && !turn.job.revealed) turn.job.abort();
+  turn.job = null;
+}
+
+function isFiller(text) {
+  if (/\?/.test(text) && toWords(text).size >= 3) return false;
+  const words = text.toLowerCase().replace(/[’`]/g, "'").replace(/[^a-z' ]+/g, " ").split(/\s+/).filter(Boolean);
+  const content = words.filter((w) => !FILLER_WORDS.has(w.replace(/'/g, "")));
+  return content.length === 0;
 }
 
 // 文字の一致・話者番号・声の大きさを合わせて点数にする
@@ -427,10 +526,12 @@ function classify(words, feat) {
   const { match, strength } = bestSuggestion(words);
   const textScore = strength === 2 ? 3 : strength === 1 ? 1.5 : 0;
   const role = speakerRole(feat);
-  const spkScore = role === "me" ? 2.5 : role === "them" ? -2 : role === "other" ? -1 : 0;
+  // 相手ではない声: 1対1なら自分とみなす。会議では相手が何人もいるので弱い手がかりにとどめる
+  const notThem = currentScene().mode === "meeting" ? 1 : 2;
+  const spkScore = role === "me" ? 2.5 : role === "them" || role === "other" ? -2 : role === "notThem" ? notThem : 0;
   const lvlScore = levelVote(feat.db);
   const score = textScore + spkScore + lvlScore;
-  return { who: score >= ME_SCORE ? "me" : "them", match, score, textScore };
+  return { who: score >= ME_SCORE ? "me" : "them", match, score, textScore, spkScore, lvlScore, role };
 }
 
 // 表示中の候補(と少し前の候補)のうち、聞こえた英語にいちばん近いもの。strength 2 = ほぼそのまま、1 = 一部だけ・言い換え
@@ -454,6 +555,86 @@ function bestSuggestion(words) {
 function useSuggestion(s, heardWords = new Set()) {
   picked = { en: s.en, words: toWords(s.en), at: Date.now(), covered: new Set(heardWords) };
   recentSuggestions = recentSuggestions.filter((r) => r.s !== s);
+}
+
+// ===== 開始直後に自分の声を覚える =====
+// 話者番号は接続ごとに振り直されるので、最初の発言を「自分」として覚えるのがいちばん確実
+function startCalibration() {
+  calibrating = true;
+  meBtn.setAttribute("aria-pressed", "true");
+  meBtn.lastElementChild.textContent = "話し中";
+  showNotice("🎙 最初に自分の声を覚えます。英語でひとこと話してください（例：Hello, can you hear me?）。相手が先に話したら「🙋」を押して取り消してください");
+}
+
+// feat が null なら取り消し。前回までの声の大きさの記録と食い違うとき(相手の声らしい)は覚えない
+function endCalibration(feat) {
+  calibrating = false;
+  meBtn.setAttribute("aria-pressed", String(meMode));
+  meBtn.lastElementChild.textContent = meMode ? "話し中" : "自分";
+  if (!feat) { diag("calibration", { result: "cancelled" }); return; }
+  if (levelVote(feat.db) < 0) {
+    diag("calibration", { result: "rejectedByLevel", db: feat.db, levels: spk.lvl });
+    showNotice("今の声は相手の声のようでした。自分の声を覚えるには「🙋自分」を押して英語でひとこと話してください");
+    return;
+  }
+  learnSpeaker(feat, "me", 5);
+  diag("calibration", { result: "ok", label: feat.label, share: round2(feat.share), db: feat.db });
+  showNotice("");
+}
+
+// ===== 診断ログ(会話ごとに端末に保存し、📜 から送れる) =====
+function diag(ev, data = {}) {
+  const c = conv;
+  if (!c) return;
+  (c.diag ||= []).push({ t: round1((Date.now() - c.startedAt) / 1000), ev, ...data });
+  if (c.diag.length > MAX_DIAG) c.diag.splice(0, c.diag.length - MAX_DIAG);
+}
+function round1(x) { return Math.round(x * 10) / 10; }
+function round2(x) { return Math.round(x * 100) / 100; }
+
+function formatDiag(c) {
+  return [
+    `# ハヤサポEnglish 診断ログ`,
+    `会話の開始: ${fmtDate(c.startedAt)} / 場面: ${sceneLabel(c.scene)} / 発言数: ${c.turns.length}`,
+    `設定: model=${modelSel.value} turnWaitMs=${turnWaitSel.value} sonioxEndpointMs=${SONIOX_ENDPOINT_MS} showJa=${showJa.checked}`,
+    `声の大きさの学習: ${JSON.stringify(spk.lvl)}`,
+    `端末: ${navigator.userAgent}`,
+    "",
+    "## 会話",
+    formatConv(c),
+    "",
+    "## できごと（t = 会話の開始からの秒数）",
+    ...(c.diag || []).map((x) => JSON.stringify(x)),
+  ].join("\n");
+}
+
+// Worker に預けて短い URL をもらい、クリップボードにコピーする(Claude Code に貼り付けて読んでもらう)。
+// iPhone の Safari はボタンを押した直後にしかコピーできないので、押した時点でコピーを始め、URL が届いたら中身を渡す
+function sendDiag(c) {
+  const text = formatDiag(c);
+  const upload = api("/api/diag", { text })
+    .then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) throw new Error(apiErrorMessage(res.status, data, "診断ログの送信"));
+      return `ハヤサポEnglish の診断ログです: ${data.url}`;
+    });
+  let copying;
+  try {
+    copying = navigator.clipboard.write([new ClipboardItem({ "text/plain": upload.then((m) => new Blob([m], { type: "text/plain" })) })]);
+  } catch {
+    copying = upload.then((m) => navigator.clipboard.writeText(m));
+  }
+  copying
+    .then(() => alert("診断ログを送りました。URL をコピーしたので、Claude Code に貼り付けてください"))
+    .catch(async () => {
+      try {
+        const m = await upload;
+        prompt("コピーできませんでした。下の URL を長押ししてコピーしてください", m.replace(/^.*: /, ""));
+      } catch (err) {
+        alert(`${err?.message || err}\n代わりに全文をコピーします`);
+        copyText(text);
+      }
+    });
 }
 
 // ===== 話者の見分け(Soniox の話者番号と声の大きさ) =====
@@ -503,8 +684,9 @@ function utteranceFeatures() {
       db = loud.reduce((a, b) => a + b, 0) / loud.length;
     }
   }
+  const counts = utt.counts;
   utt = { counts: {}, startMs: null, endMs: null, words: 0 };
-  return { label, share: total ? top / total : 0, db };
+  return { label, share: total ? top / total : 0, db, counts };
 }
 
 // 話者番号の役割: 自分 / 相手 / 自分ではない別の番号(会議で相手が複数のとき) / 不明
@@ -514,10 +696,14 @@ function votedRole(label) {
   if (v && v.them >= 2 && v.them >= 2 * v.me) return "them";
   return null;
 }
+// 投票のない番号: 自分の番号がわかっていれば「別の人」、相手の番号だけわかっていれば「相手ではない人」(1対1なら自分らしい)
 function roleOfLabel(label) {
   const r = votedRole(label);
   if (r || !label) return r;
-  return Object.keys(spk.votes).some((k) => k !== label && votedRole(k) === "me") ? "other" : null;
+  const others = Object.keys(spk.votes).filter((k) => k !== label).map(votedRole);
+  if (others.includes("me")) return "other";
+  if (others.includes("them")) return "notThem";
+  return null;
 }
 function speakerRole(feat) {
   return feat.label && feat.share >= 0.6 ? roleOfLabel(feat.label) : null;
@@ -536,12 +722,12 @@ function speakerChanged(label) {
   return a && b && isMe(a) !== isMe(b);
 }
 
-// 判定の結果から学ぶ。undo を指定すると、前に反対側へ入れた票を1つ取り消す(間違いの修正)
-function learnSpeaker(feat, who, weight, { undo } = {}) {
+// 判定の結果から学ぶ。reset を指定すると、その話者番号に反対側で入れた票を消す(間違いの修正)
+function learnSpeaker(feat, who, weight, { reset } = {}) {
   if (feat.label && (feat.share ?? 1) >= 0.6) {
     const v = (spk.votes[feat.label] ||= { me: 0, them: 0 });
     v[who] += weight;
-    if (undo) v[undo] = Math.max(0, v[undo] - 2);
+    if (reset) v[reset] = 0;
   }
   if (typeof feat.db === "number") {
     const st = spk.lvl[who];
@@ -594,31 +780,34 @@ function containedRatio(a, b) {
 }
 
 // ===== 返答候補(Claude) =====
-// 言いたいことの欄に何か入っていれば、相手が話したときの候補作りにも使う
-async function requestSuggestions({ intent = intentInput.value.trim() } = {}) {
-  if (!turns.length && !intent) return;
-  if (!passInput.value.trim()) { settings.showModal(); return; }
-  suggestCtl?.abort();
+// 言いたいことの欄に何か入っていれば、相手が話したときの候補作りにも使う。
+// deferred: 裏で作るだけで、revealJob() まで表示しない(今の候補はそのまま見せておく)
+function requestSuggestions({ intent = intentInput.value.trim(), deferred = false, reason = "manual" } = {}) {
+  if (!turns.length && !intent) return null;
+  if (!passInput.value.trim()) { settings.showModal(); return null; }
+  if (!deferred) suggestCtl?.abort(); // 表示中の作成は取り消す
   const ctl = new AbortController();
-  suggestCtl = ctl;
-  rememberSuggestions();
-  suggestions = [];
-  picked = null;
-  cardsEl.replaceChildren(...[0, 1, 2].map(() => el("div", "loading")));
-  sgTitle.textContent = intent ? `「${intent}」の言い方` : "返答候補";
-  regenBtn.disabled = true;
+  const job = {
+    ctl, intent, reason, revealed: false, aborted: false, lines: [], shown: 0,
+    startedAt: performance.now(), title: intent ? `「${intent}」の言い方` : "返答候補",
+    abort() { this.aborted = true; ctl.abort(); diag("suggest", { reason, aborted: true, revealed: this.revealed }); },
+  };
+  if (!deferred) {
+    if (turn.job && turn.job !== job && !turn.job.revealed) turn.job.abort();
+    turn.job = null;
+    revealJob(job);
+  }
+  runJob(job);
+  return job;
+}
 
-  const history = turns.slice(-HISTORY_FOR_CLAUDE).map((t) => ({
-    id: t.id, who: t.who, en: t.en,
-  }));
-  let shown = 0;
-  const startedAt = performance.now();
-  const title = sgTitle.textContent;
+async function runJob(job) {
+  const history = turns.slice(-HISTORY_FOR_CLAUDE).map((t) => ({ id: t.id, who: t.who, en: t.en }));
   try {
     const res = await api("/api/suggest", {
-      history, intent, scene: sceneText(), mode: currentScene().mode || "",
+      history, intent: job.intent, scene: sceneText(), mode: currentScene().mode || "",
       profile: profileInput.value.trim(), memory: memoryInput.value.trim(), model: modelSel.value,
-    }, ctl.signal);
+    }, job.ctl.signal);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(apiErrorMessage(res.status, data, "候補作り"));
@@ -633,26 +822,56 @@ async function requestSuggestions({ intent = intentInput.value.trim() } = {}) {
       while ((nl = buf.indexOf("\n")) >= 0 || (done && buf.trim())) {
         const line = (nl >= 0 ? buf.slice(0, nl) : buf).trim();
         buf = nl >= 0 ? buf.slice(nl + 1) : "";
-        if (ctl !== suggestCtl) return;
-        if (handleSuggestionLine(line) && ++shown === 1) {
-          // 最初の候補が出るまでの時間(モデルの速さの比較用)
-          const sec = ((performance.now() - startedAt) / 1000).toFixed(1);
-          sgTitle.textContent = `${title} ・ ${sec}秒（${modelSel.value === "opus" ? "Opus" : "Haiku"}）`;
-        }
+        if (job.aborted) return;
+        if (job.revealed) showJobLine(job, line);
+        else job.lines.push(line);
       }
       if (done) break;
     }
+    job.done = true;
+    diag("suggest", { reason: job.reason, model: modelSel.value, genMs: Math.round(performance.now() - job.startedAt), revealed: job.revealed });
   } catch (err) {
-    if (ctl.signal.aborted || ctl !== suggestCtl) return;
-    showNotice(err?.message || String(err), true);
+    if (job.aborted || job.ctl.signal.aborted) return;
+    job.error = err?.message || String(err);
+    diag("error", { where: "suggest", message: job.error });
+    if (job.revealed) showNotice(job.error, true);
   } finally {
-    if (ctl === suggestCtl) {
-      suggestCtl = null;
-      cardsEl.querySelectorAll(".loading").forEach((n) => n.remove());
-      if (!shown) setCardsPlaceholder("候補を作れませんでした。「別の候補」で作り直せます");
-      regenBtn.disabled = !turns.length;
-    }
+    if (job.revealed && !job.aborted) finishJob(job);
   }
+}
+
+// 作っておいた候補を表示する(まだ作っている途中なら、届いた分から順に出す)
+function revealJob(job) {
+  if (!job || job.revealed || job.aborted) return;
+  job.revealed = true;
+  job.revealedAt = performance.now();
+  suggestCtl = job.ctl;
+  rememberSuggestions();
+  suggestions = [];
+  picked = null;
+  cardsEl.replaceChildren(...[0, 1, 2].map(() => el("div", "loading")));
+  sgTitle.textContent = job.title;
+  regenBtn.disabled = true;
+  for (const line of job.lines.splice(0)) showJobLine(job, line);
+  if (job.error) showNotice(job.error, true);
+  if (job.done || job.error) finishJob(job);
+}
+
+function showJobLine(job, line) {
+  if (handleSuggestionLine(line) && ++job.shown === 1) {
+    // 相手の発言が終わってから(手動のときは押してから)最初の候補が出るまでの時間
+    const sec = ((performance.now() - job.startedAt) / 1000).toFixed(1);
+    sgTitle.textContent = `${job.title} ・ ${sec}秒（${modelSel.value === "opus" ? "Opus" : "Haiku"}）`;
+  }
+}
+
+function finishJob(job) {
+  if (suggestCtl !== job.ctl) return;
+  suggestCtl = null;
+  cardsEl.querySelectorAll(".loading").forEach((n) => n.remove());
+  if (!job.shown) setCardsPlaceholder("候補を作れませんでした。「別の候補」で作り直せます");
+  regenBtn.disabled = !turns.length;
+  diag("reveal", { reason: job.reason, cards: job.shown, waitedMs: Math.round(job.revealedAt - job.startedAt) });
 }
 
 // 1行 = 1つの JSON。和訳なら発言に付け、候補ならカードを足す。カードを足したら true
@@ -697,6 +916,7 @@ function handleSuggestionLine(line) {
 // 候補をタップ = これを言う。会話に記録して、読み上げた声を二重に記録しないようにする
 function pickSuggestion(s, card) {
   card.classList.add("picked");
+  diag("pick", { en: s.en });
   intentInput.value = ""; // 返事をしたら、言いたいことの欄は次の言葉のために空ける
   addTurn({ who: "me", en: s.en, ja: s.ja });
   useSuggestion(s);
@@ -707,6 +927,7 @@ function pickSuggestion(s, card) {
 function clearSuggestions(text) {
   suggestCtl?.abort();
   suggestCtl = null;
+  cancelTurn();
   rememberSuggestions();
   suggestions = [];
   sgTitle.textContent = "返答候補";
@@ -721,18 +942,18 @@ function setCardsPlaceholder(text) {
 // ===== 会話ログ =====
 // spk / db / conn は自分か相手かを見分けた手がかり(間違いを直したときの学び直しに使う)
 function addTurn({ who, en, ja = "", spk: label = null, db = null, conn = null }) {
-  const turn = { id: nextId++, who, en, ja, ...(label ? { spk: label } : {}), ...(db != null ? { db: Math.round(db * 10) / 10 } : {}), ...(conn ? { conn } : {}) };
-  turns.push(turn);
+  const t = { id: nextId++, at: Date.now(), who, en, ja, ...(label ? { spk: label } : {}), ...(db != null ? { db: Math.round(db * 10) / 10 } : {}), ...(conn ? { conn } : {}) };
+  turns.push(t);
   if (turns.length > MAX_TURNS) {
     const old = turns.shift();
     logEl.querySelector(`[data-id="${old.id}"]`)?.remove();
   }
   if (turns.length === 1) conv.scene = sceneText();
   saveTurns();
-  logEl.insertBefore(renderTurn(turn), liveEl);
+  logEl.insertBefore(renderTurn(t), liveEl);
   updateEmpty();
   scrollToBottom();
-  return turn;
+  return t;
 }
 
 function renderTurn(t) {
@@ -749,11 +970,23 @@ function editTurn(t) {
   if (t.who === "them") {
     if (!confirm("この発言を「自分」の発言に直しますか？")) return;
     // 間違えた分を学び直す(同じ接続中の発言なら話者番号も使える)
-    learnSpeaker({ label: t.conn === spk.conn ? t.spk : null, share: 1, db: t.db }, "me", 3, { undo: "them" });
+    learnSpeaker({ label: t.conn === spk.conn ? t.spk : null, share: 1, db: t.db }, "me", 3, { reset: "them" });
+    diag("correct", { id: t.id, to: "me", en: t.en, spk: t.spk, db: t.db });
     t.who = "me";
     saveTurns();
     logEl.querySelector(`[data-id="${t.id}"]`)?.replaceWith(renderTurn(t));
     if (turns[turns.length - 1] === t) clearSuggestions("相手の返事を待っています…");
+    return;
+  }
+  if (confirm("この発言を「相手」の発言に直しますか？\n（キャンセルすると、消すかどうかを選べます）")) {
+    // 自分の声として覚えた分を取り消して、相手の声として覚え直す(開始直後に相手が先に話したときなど)
+    learnSpeaker({ label: t.conn === spk.conn ? t.spk : null, share: 1, db: t.db }, "them", 3, { reset: "me" });
+    diag("correct", { id: t.id, to: "them", en: t.en, spk: t.spk, db: t.db });
+    showNotice("相手の声として覚え直しました。自分の声も覚え直すには「🙋自分」を押して英語でひとこと話してください");
+    t.who = "them";
+    saveTurns();
+    logEl.querySelector(`[data-id="${t.id}"]`)?.replaceWith(renderTurn(t));
+    if (turns[turns.length - 1] === t) requestSuggestions();
     return;
   }
   if (!confirm("この発言を会話から消しますか？")) return;
@@ -1007,6 +1240,12 @@ function setState(s) {
 }
 
 function setMeMode(on) {
+  // 開始直後の「自分の声を覚える」途中で押したら、覚えるのをやめる(相手が先に話したときなど)
+  if (calibrating) {
+    endCalibration(null);
+    showNotice("");
+    return;
+  }
   meMode = on;
   meBtn.setAttribute("aria-pressed", String(on));
   meBtn.lastElementChild.textContent = on ? "話し中" : "自分";
@@ -1030,7 +1269,7 @@ function applyShowJa() {
 
 function saveSettings() {
   lsSet(LS.pass, passInput.value.trim());
-  lsSet(LS.endpoint, endpointSel.value);
+  lsSet(LS.turnWait, turnWaitSel.value);
   lsSet(LS.showJa, showJa.checked ? "1" : "0");
   lsSet(LS.model, modelSel.value);
   loadNotes();
@@ -1183,6 +1422,7 @@ function saveTurns() {
   if (turns.length && !convs.includes(conv)) convs.push(conv);
   if (!turns.length && hasUsage(conv) && !convs.includes(conv)) convs.push(conv);
   convs = convs.filter((c) => c.turns.length || hasUsage(c)).sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_CONVS);
+  convs.slice(0, -DIAG_KEEP_CONVS).forEach((c) => { if (c !== conv) delete c.diag; }); // 診断ログは新しい会話の分だけ残す
   lsSet(LS.current, conv.id);
   for (;;) {
     try {

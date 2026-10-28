@@ -64,11 +64,12 @@
           <option value="opus">Claude Opus 5.5（高品質・遅い・高い）</option>
         </select>
       </label>
-      <label>話し終わりの判定
-        <select id="endpointSel">
-          <option value="700">早い（候補が早く出る）</option>
-          <option value="1200" selected>ふつう</option>
-          <option value="2000">ゆっくり（途中で切れにくい）</option>
+      <label>相手の話が終わったとみなす間
+        <select id="turnWaitSel">
+          <option value="1000">短め（1秒）</option>
+          <option value="1500">ふつう（1.5秒）</option>
+          <option value="2500" selected>長め（2.5秒）</option>
+          <option value="4000">とても長め（4秒）</option>
         </select>
       </label>
       <label class="check"><input id="showJa" type="checkbox" checked> 日本語訳を表示する</label>
@@ -113,6 +114,7 @@
         <div class="hist-actions">
           <button id="histCopy" class="chip" type="button">📋 コピー</button>
           <button id="histContinue" class="chip" type="button">▶ この会話を続ける</button>
+          <button id="histDiag" class="chip" type="button">🩺 診断ログを送る</button>
           <button id="histDelete" class="chip danger" type="button">🗑 削除</button>
           <button id="histBack" class="chip" type="button">← 一覧</button>
         </div>

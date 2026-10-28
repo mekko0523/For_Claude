@@ -3,6 +3,8 @@
 //   - POST /api/soniox-key : Soniox の一時キーを発行(長期キーはブラウザに渡さない)
 //   - POST /api/suggest    : 相手の英語に対する返答候補を Claude で作り、1行1候補の JSON でストリーミングする
 //   - POST /api/memory     : 会話の記録から「覚えていること」メモを更新し、KV に保存する(過去の発言・話題・続きの話)
+//   - POST /api/diag       : 診断ログを預かり、読むための URL を返す(14日で消える)
+//   - GET  /api/diag/<id>  : 診断ログを読む(合言葉なし。id は推測できない乱数)
 //   - POST /api/notes      : 自己紹介メモ・覚えていることを KV から読む/保存する(端末やアプリの更新で消えないように)
 // 合言葉は X-Passphrase ヘッダーで受け取る。
 // Secret(値は GitHub Secrets → Actions 経由で登録。ここには書かない):
@@ -99,6 +101,9 @@ export default {
       // 静的ファイルにないパスはトップページへ
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
     }
+    // 診断ログは URL を Claude Code に渡して読んでもらうので、GET は合言葉なしで読める
+    const diagId = url.pathname.match(/^\/api\/diag\/([0-9a-f]{32})$/)?.[1];
+    if (diagId && request.method === "GET") return readDiag(diagId, env);
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
     // 画面と同じオリジン以外からの呼び出しは断る(他サイトから API を使わせない)
     const origin = request.headers.get("Origin");
@@ -112,6 +117,7 @@ export default {
     if (url.pathname === "/api/suggest") return suggest(request, env);
     if (url.pathname === "/api/memory") return updateMemory(request, env);
     if (url.pathname === "/api/notes") return notes(request, env);
+    if (url.pathname === "/api/diag") return saveDiag(request, env, url);
     return json({ error: "not_found" }, 404);
   },
 };
@@ -278,6 +284,26 @@ function usageInfo(msg, requestedModel) {
 
 function pickModel(body, env) {
   return MODELS[body?.model] || env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL;
+}
+
+const DIAG_MAX_CHARS = 1_500_000;
+const DIAG_TTL_SEC = 14 * 24 * 3600;
+
+async function saveDiag(request, env, url) {
+  if (!env.STORE) return json({ error: "store_not_configured" }, 500);
+  const body = await request.json().catch(() => ({}));
+  const text = typeof body.text === "string" ? body.text : "";
+  if (!text.trim()) return json({ error: "empty_diag" }, 400);
+  if (text.length > DIAG_MAX_CHARS) return json({ error: "diag_too_large" }, 413);
+  const id = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  await env.STORE.put(`diag:${id}`, text, { expirationTtl: DIAG_TTL_SEC });
+  return json({ id, url: `${url.origin}/api/diag/${id}` }, 200);
+}
+
+async function readDiag(id, env) {
+  const text = env.STORE ? await env.STORE.get(`diag:${id}`) : null;
+  if (!text) return new Response("Not found (expired or wrong id)", { status: 404 });
+  return new Response(text, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 // 安全上の判定で断られたとき、サーバー側で別のモデルに任せる(Haiku は非対応)
