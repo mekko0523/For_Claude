@@ -33,7 +33,7 @@ const SELF_MATCH_CONTAINED = 0.8;       // または、聞こえた単語のこ�
 const PICKED_ECHO_MS = 30_000;          // 候補をタップしてからこの時間は、それを読み上げた声を二重に記録しない
 const LS = {
   pass: "ta.passphrase", profile: "ta.profile", scene: "ta.scene", oldScene: "ta.scenePreset",
-  endpoint: "ta.endpoint", showJa: "ta.showJa", turns: "ta.turns",
+  endpoint: "ta.endpoint", showJa: "ta.showJa", turns: "ta.turns", model: "ta.model",
   convs: "ta.convs", current: "ta.currentConv", memory: "ta.memory",
 };
 
@@ -56,6 +56,7 @@ const profileInput = $("profile");
 const sceneBar = $("sceneBar");
 const endpointSel = $("endpointSel");
 const showJa = $("showJa");
+const modelSel = $("modelSel");
 const intentForm = $("intentForm");
 const intentInput = $("intent");
 const memoryInput = $("memory");
@@ -80,6 +81,9 @@ let reconnects = 0;
 let lastHeardAt = 0;
 let tickTimer = null;
 let uttFinal = "";               // 話し中の発言の確定部分
+let uttJa = "";                  // 話し中の発言の和訳(確定部分)
+let uttStarted = false;          // 前の発言の区切りのあと、次の発言の原文が届き始めたか
+let lateJaTarget = null;         // 区切りのあとに遅れて届いた和訳を足す発言
 let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
 // 会話は端末に複数残す: [{ id, startedAt, updatedAt, scene, memUpTo, turns: [{ id, who: "them" | "me", en, ja }] }]
 let convs = loadConvs();
@@ -102,6 +106,7 @@ let sceneKey = lsGet(LS.scene) ?? migrateScene(lsGet(LS.oldScene));
 renderSceneBar();
 endpointSel.value = lsGet(LS.endpoint) || "1200";
 showJa.checked = lsGet(LS.showJa) !== "0";
+modelSel.value = lsGet(LS.model) === "opus" ? "opus" : "haiku";
 memoryInput.value = lsGet(LS.memory) || "";
 applyShowJa();
 renderLog();
@@ -269,6 +274,8 @@ async function connect(gen) {
         sample_rate: SONIOX_SAMPLE_RATE,
         num_channels: 1,
         language_hints: ["en"],
+        // 相手の発言の和訳は Soniox が話しながら出す(候補作りの AI は候補だけを書くので速い)
+        translation: { type: "one_way", target_language: "ja" },
         enable_endpoint_detection: true,
         max_endpoint_delay_ms: Number(endpointSel.value) || 1200,
         context: {
@@ -320,28 +327,51 @@ function handleSoniox(raw) {
     return;
   }
   let prov = "";
+  let provJa = "";
+  let lateJa = "";
   for (const t of msg.tokens || []) {
     if (t.text === "<end>" || t.text === "<fin>") {
       if (t.is_final) endUtterance();
       continue;
     }
-    if (t.translation_status === "translation") continue;
+    if (t.translation_status === "translation") {
+      // 和訳は原文より少し遅れて届く。次の発言が始まる前に届いた分は、直前の発言の和訳
+      if (!t.is_final) provJa += t.text;
+      else if (!uttStarted && lateJaTarget) lateJa += t.text;
+      else uttJa += t.text;
+      continue;
+    }
     lastHeardAt = Date.now();
+    uttStarted = true;
     if (t.is_final) uttFinal += t.text;
     else prov += t.text;
   }
-  setLive(uttFinal + prov);
+  if (lateJa) appendLateJa(lateJa);
+  setLive(uttFinal + prov, uttJa + provJa);
+}
+
+// 記録済みの発言に、遅れて届いた和訳を足す(自分の発言の和訳は候補のものを使うので捨てる)
+function appendLateJa(text) {
+  const t = lateJaTarget;
+  if (!t || t.who !== "them") return;
+  t.ja = (t.ja + text).replace(/^\s+/, "");
+  logEl.querySelector(`[data-id="${t.id}"]`)?.replaceWith(renderTurn(t));
+  saveTurns();
 }
 
 // 1つの発言が終わった: 自分の発言か相手の発言かを見分けて記録する
 function endUtterance() {
   const text = uttFinal.replace(/\s+/g, " ").trim();
+  const ja = uttJa.trim();
   uttFinal = "";
+  uttJa = "";
+  uttStarted = false;
+  lateJaTarget = { who: "none" }; // 遅れて届いた和訳を次の発言に混ぜないための捨て先(相手の発言なら下で差し替え)
   setLive("");
   if (!/[a-z0-9]/i.test(text)) return;
 
   if (meMode) {
-    addTurn({ who: "me", en: text });
+    lateJaTarget = addTurn({ who: "me", en: text, ja });
     return;
   }
   const words = toWords(text);
@@ -358,7 +388,7 @@ function endUtterance() {
     clearSuggestions("相手の返事を待っています…");
     return;
   }
-  addTurn({ who: "them", en: text });
+  lateJaTarget = addTurn({ who: "them", en: text, ja });
   requestSuggestions();
 }
 
@@ -404,13 +434,15 @@ async function requestSuggestions({ intent = "" } = {}) {
   regenBtn.disabled = true;
 
   const history = turns.slice(-HISTORY_FOR_CLAUDE).map((t) => ({
-    id: t.id, who: t.who, en: t.en, translate: t.who === "them" && !t.ja,
+    id: t.id, who: t.who, en: t.en,
   }));
   let shown = 0;
+  const startedAt = performance.now();
+  const title = sgTitle.textContent;
   try {
     const res = await api("/api/suggest", {
       history, intent, scene: sceneText(), mode: currentScene().mode || "",
-      profile: profileInput.value.trim(), memory: memoryInput.value.trim(),
+      profile: profileInput.value.trim(), memory: memoryInput.value.trim(), model: modelSel.value,
     }, ctl.signal);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -427,7 +459,11 @@ async function requestSuggestions({ intent = "" } = {}) {
         const line = (nl >= 0 ? buf.slice(0, nl) : buf).trim();
         buf = nl >= 0 ? buf.slice(nl + 1) : "";
         if (ctl !== suggestCtl) return;
-        if (handleSuggestionLine(line)) shown++;
+        if (handleSuggestionLine(line) && ++shown === 1) {
+          // 最初の候補が出るまでの時間(モデルの速さの比較用)
+          const sec = ((performance.now() - startedAt) / 1000).toFixed(1);
+          sgTitle.textContent = `${title} ・ ${sec}秒（${modelSel.value === "opus" ? "Opus" : "Haiku"}）`;
+        }
       }
       if (done) break;
     }
@@ -550,10 +586,11 @@ function editTurn(t) {
   if (turns[turns.length - 1]?.who === "them") requestSuggestions();
 }
 
-function setLive(text) {
+function setLive(text, ja = "") {
   const show = text.trim();
   liveEl.hidden = !show;
   liveEl.firstElementChild.textContent = show;
+  liveEl.lastElementChild.textContent = show ? ja.trim() : "";
   if (show) { updateEmpty(); scrollToBottom(); }
 }
 
@@ -756,6 +793,7 @@ async function updateMemory(c, { force = false } = {}) {
       profile: profileInput.value.trim(),
       scene: c.scene || sceneText(),
       date: fmtDate(c.startedAt),
+      model: modelSel.value,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.memory) throw new Error(apiErrorMessage(res.status, data, "「覚えていること」の更新"));
@@ -817,6 +855,7 @@ function saveSettings() {
   lsSet(LS.pass, passInput.value.trim());
   lsSet(LS.endpoint, endpointSel.value);
   lsSet(LS.showJa, showJa.checked ? "1" : "0");
+  lsSet(LS.model, modelSel.value);
   loadNotes();
 }
 

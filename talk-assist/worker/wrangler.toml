@@ -8,9 +8,9 @@ directory = "../web"
 binding = "ASSETS"
 
 [vars]
-# 返答候補を作る Claude のモデルと考える量(low / medium / high)
-# 速さを優先するなら CLAUDE_MODEL = "claude-haiku-5-5"
-CLAUDE_MODEL = "claude-opus-5-5"
+# 返答候補を作る Claude の既定のモデルと考える量(low / medium / high)
+# 画面の設定で Haiku 5.5 / Opus 5.5 を選ぶと、そちらが優先される
+CLAUDE_MODEL = "claude-haiku-5-5"
 CLAUDE_EFFORT = "low"
 # Soniox のリアルタイム音声認識モデル
 SONIOX_MODEL = "stt-rt-v5"

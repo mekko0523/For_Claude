@@ -11,8 +11,10 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const SONIOX_TEMP_KEY_URL = "https://api.soniox.com/v1/auth/temporary-api-key";
 const DEFAULT_SONIOX_MODEL = "stt-rt-v5";
-const DEFAULT_CLAUDE_MODEL = "claude-opus-5-5";
+const DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5";
 const DEFAULT_CLAUDE_EFFORT = "low"; // 会話中に待たせないよう、考える量は少なめ
+// 画面の設定で選べるモデル(これ以外は受け付けない)
+const MODELS = { haiku: "claude-haiku-5-5", opus: "claude-opus-5-5" };
 const MAX_HISTORY = 30;              // Claude に渡す直近の発言数
 const MAX_TEXT = 1_000;              // 1発言の最大文字数
 const MAX_NOTE = 4_000;              // 自己紹介・覚えていることの最大文字数(Claude に渡す分)
@@ -160,8 +162,10 @@ async function suggest(request, env) {
     "Write the suggestions now.",
   ].filter(Boolean);
 
-  const model = env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL;
+  const model = pickModel(body, env);
   const fallback = fallbackParams(model);
+  // Haiku は考える処理を切って、すぐに書き始めさせる(Opus 5.5 は切れないので考える量を少なくするだけ)
+  const thinking = /haiku/.test(model) ? { thinking: { type: "disabled" } } : {};
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const encoder = new TextEncoder();
   const { readable, writable } = new TransformStream();
@@ -177,6 +181,7 @@ async function suggest(request, env) {
           output_config: { effort: env.CLAUDE_EFFORT || DEFAULT_CLAUDE_EFFORT },
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: parts.join("\n\n") }],
+          ...thinking,
           ...fallback,
         },
         { signal: request.signal },
@@ -221,7 +226,7 @@ async function updateMemory(request, env) {
     `New conversation:\n${turns.join("\n")}`,
   ].filter(Boolean).join("\n\n");
 
-  const model = env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL;
+  const model = pickModel(body, env);
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   try {
     const msg = await client.beta.messages.create({
@@ -266,6 +271,10 @@ function usageInfo(msg, requestedModel) {
   const output = u.output_tokens || 0;
   const usd = (input * price.input + cacheWrite * price.input * 1.25 + cacheRead * price.input * 0.1 + output * price.output) / 1e6;
   return { model, input: input + cacheWrite + cacheRead, output, usd };
+}
+
+function pickModel(body, env) {
+  return MODELS[body?.model] || env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL;
 }
 
 // 安全上の判定で断られたとき、サーバー側で別のモデルに任せる(Haiku は非対応)

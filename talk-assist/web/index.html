@@ -31,7 +31,7 @@
 
   <main id="log" class="log" aria-live="polite">
     <p id="empty" class="empty">「開始」を押して、相手に話してもらってください。<br>聞こえた英語と、あなたが読み上げる返事の候補がここに出ます。</p>
-    <div id="live" class="turn them live" hidden><div class="en"></div></div>
+    <div id="live" class="turn them live" hidden><div class="en"></div><div class="ja"></div></div>
   </main>
 
   <section class="suggest" aria-label="返答候補">
@@ -56,6 +56,12 @@
       <h2>設定</h2>
       <label>合言葉
         <input id="passphrase" type="password" autocomplete="current-password">
+      </label>
+      <label>候補を作るAI
+        <select id="modelSel">
+          <option value="haiku" selected>Claude Haiku 5.5（速い・安い）</option>
+          <option value="opus">Claude Opus 5.5（高品質・遅い・高い）</option>
+        </select>
       </label>
       <label>話し終わりの判定
         <select id="endpointSel">
