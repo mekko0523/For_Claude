@@ -32,6 +32,12 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   overflow: hidden;
 }
+/* ホーム画面から開いたとき、100dvh だと上のステータスバーの分だけ下に隙間が空くので画面全体を使う */
+@media (display-mode: standalone) {
+  body { height: 100vh; }
+}
+/* 縦の幅が足りないときに縮んでよいのは会話ログだけ(場面のボタンなどは潰さない) */
+body > :not(.log) { flex-shrink: 0; }
 
 button { font: inherit; color: inherit; cursor: pointer; }
 button:disabled { opacity: .4; cursor: default; }
@@ -177,7 +183,7 @@ button:disabled { opacity: .4; cursor: default; }
   font-size: 18px;
   background: var(--card);
 }
-.me-btn span { font-size: 10px; color: var(--muted); }
+.me-btn span { font-size: 10px; color: var(--muted); margin-top: 2px; }
 .me-btn[aria-pressed="true"] { background: var(--me); border-color: var(--me); }
 .me-btn[aria-pressed="true"] span { color: #fff; }
 
@@ -246,7 +252,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding: 5px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid #222c36;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -257,8 +263,9 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
   border: 1px solid #33414f;
   background: var(--card);
   border-radius: 999px;
-  padding: 3px 11px;
-  font-size: 13px;
+  min-height: 36px;
+  padding: 6px 15px;
+  font-size: 15px;
   white-space: nowrap;
 }
 .scene-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #04121f; font-weight: 700; }
