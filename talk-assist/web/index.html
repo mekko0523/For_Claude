@@ -36,8 +36,8 @@
 
   <section class="suggest" aria-label="返答候補">
     <div class="sg-head">
-      <span id="sgTitle">返答候補</span>
-      <button id="regenBtn" class="chip" type="button" disabled>🔄 別の候補</button>
+      <span id="sgTitle">返答案</span>
+      <button id="regenBtn" class="reply-btn" type="button">💬 返答案を出す</button>
     </div>
     <div id="cards" class="cards"></div>
   </section>
@@ -64,7 +64,8 @@
           <option value="opus">Claude Opus 5.5（高品質・遅い・高い）</option>
         </select>
       </label>
-      <label>相手の話が終わったとみなす間
+      <label class="check"><input id="autoSuggest" type="checkbox"> 相手の話が終わったら自動で返答案を出す</label>
+      <label>（自動のとき）相手の話が終わったとみなす間
         <select id="turnWaitSel">
           <option value="1000">短め（1秒）</option>
           <option value="1500">ふつう（1.5秒）</option>

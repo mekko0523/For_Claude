@@ -29,35 +29,40 @@ const CLAUDE_PRICES = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
 };        // メモ更新に渡す発言数の上限
 
-const SYSTEM_PROMPT = `You help a Japanese speaker who cannot speak English hold a live, face-to-face conversation in English.
-The app transcribes what the other person ("Them") says. The user reads one of your suggestions aloud as their reply ("Me").
+const SYSTEM_PROMPT = `You help a Japanese speaker who is not confident in English take part in a live English conversation.
+The app transcribes what the other person ("Them") says. Them usually does most of the talking.
+When the user wants to respond, they press a button and read one of your suggestions aloud ("Me").
 
-Write 4 short things the user could say next:
-- 1-2 natural direct answers or reactions to Them's latest words (if it is a yes/no question, cover both a positive and a negative option)
-- 1 follow-up question that keeps the conversation going
-- 1 more option that fits best: another answer, a polite clarification, or a short comment
+The user pressed the button now. Write 4 short things the user could say next, based on everything Them has said
+since Me last spoke (it may be long; focus on the latest topic or question, but use the whole context to understand it):
+- 1 natural reaction that shows the user understood (a short comment or empathy, not just "Yeah")
+- 1 answer or opinion: answer Them's question if there was one (for a yes/no question, pick the most natural side),
+  otherwise share a related personal comment
+- 1 follow-up question that asks Them about what they just said
+- 1 more option that fits best: another answer, a polite clarification, or a light topic change
 
 Rules:
 - Spoken, natural, easy English that a beginner can read aloud: usually 4-14 words, at most 2 short sentences.
 - Fit the conversation so far and the user's profile/scene. Never invent personal facts that contradict the profile.
   If an answer needs a fact you don't know (a time, a number, a name), offer a plausible concrete choice rather than a placeholder.
-- The transcript comes from speech recognition and may contain errors or cut-off sentences; infer the most likely meaning.
+- The transcript comes from speech recognition and may contain errors, cut-off sentences, and mislabeled speakers;
+  infer the most likely meaning. A line marked "(still talking)" is what Them is saying right now, possibly unfinished.
 - If the user gives "言いたいこと" (what they want to say), it may be a full sentence, a short phrase, or just one or two words,
   in Japanese or English (e.g. "釣り", "来週", "price", "もう一回"). Work out from the conversation, especially Them's latest words,
   how the user most likely wants to use it, and make all 4 suggestions natural replies that include that idea —
   covering different plausible readings (e.g. an answer, a question, a comment) rather than 4 rewordings of one sentence.
+  Always write 4 suggestions, even if the word seems unrelated to the conversation.
 - "Memory" holds notes from the user's past conversations (facts they said about themselves, past topics, people they know).
   Use it so answers stay consistent with what the user has said before and feel personal; never contradict it.
-  When there is a natural opening, the "other" option may bring up an open thread or follow-up from the memory.
 - "ja" is a short, natural Japanese translation so the user knows what they are saying.
 
-Output format: exactly one JSON object per line (JSON Lines), nothing else — no code fences, no commentary.
+Output format: exactly one JSON object per line (JSON Lines), nothing else — no code fences, no commentary, no blank lines.
 First, for each message tagged like [T3], one translation line with a natural Japanese translation of that message
 (fix obvious speech-recognition errors from context):
 {"kind":"translation","id":"T3","ja":"..."}
-Then the suggestions:
+Then the 4 suggestions:
 {"kind":"answer","en":"...","ja":"..."}
-Suggestion kind is one of: "answer", "question", "other".
+Suggestion kind is one of: "answer", "question", "other" (use "answer" for reactions and answers).
 Latency-sensitive; begin your visible answer immediately.`;
 
 // 場面ごとに足す指示
@@ -157,7 +162,7 @@ async function suggest(request, env) {
     .map((h) => {
       // 和訳がほしい相手の発言には [T<id>] を付ける
       const tag = h.who === "them" && h.translate && /^\d{1,9}$/.test(String(h.id)) ? ` [T${h.id}]` : "";
-      return `${h.who === "me" ? "Me" : "Them"}${tag}: ${clean(h.en)}`;
+      return `${h.who === "me" ? "Me" : "Them"}${h.partial ? " (still talking)" : ""}${tag}: ${clean(h.en)}`;
     });
   if (!history.length && !body.intent) return json({ error: "empty_history" }, 400);
 
