@@ -42,6 +42,11 @@ const SONIOX_ENDPOINT_MS = 1000;        // Soniox が発言の区切り(<end>)�
 const MERGE_GAP_MS = 6000;              // 相手の発言がこの間隔以内に続いたら1つの吹き出しにまとめる
 // 相づち・つなぎの言葉だけの発言では候補を作らない
 const FILLER_WORDS = new Set("yeah yes yep yup ya yah mm mmm hmm hm mhm mmhm uh huh uhhuh um uhm umm er ah oh ooh okay ok alright right sure so well no nope really nice good great cool wow exactly understood i see indeed true totally".split(" "));
+// 先読み: 相手の話が少し途切れたら、裏でそこまでの返答案を作っておく(💬 を押したらすぐ出せるように)。
+// 作りすぎて Claude の1分あたりの上限に当たらないよう、間隔をあけ、上限に当たったらしばらく休む
+const PREFETCH_PAUSE_MS = 1200;
+const PREFETCH_MIN_INTERVAL_MS = 8000;
+const PREFETCH_BACKOFF_MS = 60_000;
 const LISTENING_TEXT = "相手の話を聞いています。返事をしたいときに 💬 を押してください";
 const MAX_DIAG = 3000;                  // 1つの会話に残す診断ログの数
 const DIAG_KEEP_CONVS = 5;              // 診断ログを残す会話の数(新しいものから)
@@ -99,7 +104,8 @@ let tickTimer = null;
 let uttFinal = "";               // 話し中の発言の確定部分
 let uttJa = "";                  // 話し中の発言の和訳(確定部分)
 let uttStarted = false;          // 前の発言の区切りのあと、次の発言の原文が届き始めたか
-let liveText = "";               // 話している途中の英語(💬 を押したときは、これも返答案作りに使う)
+let liveText = "";
+const prefetch = { job: null, key: "", timer: null, lastAt: 0, blockedUntil: 0 };               // 話している途中の英語(💬 を押したときは、これも返答案作りに使う)
 let lateJaTarget = null;         // 区切りのあとに遅れて届いた和訳を足す発言
 let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
 let calibrating = false;         // 開始直後: 最初の発言を自分の声として覚える
@@ -210,6 +216,7 @@ function stop(message = "", isError = false) {
   if (uttFinal.trim()) endUtterance();
   if (calibrating) endCalibration(null);
   cancelTurn();
+  dropPrefetch();
   turn.need = false;
   if (state !== "idle") diag("stop", { message, votes: spk.votes, levels: spk.lvl });
   closeSocket();
@@ -384,6 +391,7 @@ function handleSoniox(raw) {
     lastHeardAt = Date.now();
     uttStarted = true;
     clearTimeout(turn.timer); // だれかが話している間は、候補を出さずに待つ
+    clearTimeout(prefetch.timer);
     if (t.is_final) {
       // 話者が「自分」⇄「相手」に替わったら、間がなくてもそこで発言を区切る
       if (speakerChanged(t.speaker)) endUtterance();
@@ -471,6 +479,7 @@ function meSpoke(en, ja, extra, filler, fromSuggestion = false) {
   if (!fromSuggestion) lateJaTarget = t;
   turn.need = false;
   cancelTurn();
+  dropPrefetch();
   clearSuggestions(LISTENING_TEXT);
 }
 
@@ -495,6 +504,7 @@ function themSpoke(en, ja, extra, filler) {
   if (!filler || afterMe) {
     turn.need = true;
     turn.question = /\?\s*$/.test(t.en);
+    schedulePrefetch();
   }
   rearmTurn();
 }
@@ -782,24 +792,86 @@ function containedRatio(a, b) {
 
 // ===== 返答候補(Claude) =====
 // 言いたいことの欄に何か入っていれば、それも使う。相手が話している途中なら、途中までの英語も含める
-function requestSuggestions({ intent = intentInput.value.trim(), reason = "manual" } = {}) {
+// hidden: 先読み(裏で作るだけで表示しない。表示中の返答案もそのまま)
+function requestSuggestions({ intent = intentInput.value.trim(), reason = "manual", hidden = false } = {}) {
   if (!turns.length && !intent && !liveText) {
-    setCardsPlaceholder("まだ会話がありません。相手が話してから 💬 を押してください");
+    if (!hidden) setCardsPlaceholder("まだ会話がありません。相手が話してから 💬 を押してください");
     return null;
   }
-  if (!passInput.value.trim()) { settings.showModal(); return null; }
-  suggestCtl?.abort(); // 作っている途中の返答案は取り消す
+  if (!passInput.value.trim()) { if (!hidden) settings.showModal(); return null; }
+  // 先読みしてあり、そのあと相手が新しく話していなければ、それをすぐ出す
+  if (!hidden && !intent && usablePrefetch()) {
+    const job = prefetch.job;
+    prefetch.job = null;
+    suggestCtl?.abort();
+    job.reason = `${reason}+prefetch`;
+    job.startedAt = performance.now();
+    clearTimeout(turn.timer);
+    turn.need = false;
+    diag("prefetchHit", { readyMs: job.done ? Math.round(job.doneAt - job.createdAt) : null });
+    revealJob(job);
+    return job;
+  }
+  if (!hidden) {
+    dropPrefetch();
+    suggestCtl?.abort(); // 作っている途中の返答案は取り消す
+  }
   const ctl = new AbortController();
   const job = {
     ctl, intent, reason, revealed: false, aborted: false, lines: [], shown: 0, raw: "", live: liveText,
-    startedAt: performance.now(), title: intent ? `「${intent}」の言い方` : "返答案",
+    startedAt: performance.now(), createdAt: performance.now(), title: intent ? `「${intent}」の言い方` : "返答案",
     abort() { this.aborted = true; ctl.abort(); diag("suggest", { reason, aborted: true, revealed: this.revealed }); },
   };
-  clearTimeout(turn.timer);
-  turn.need = false;
-  revealJob(job);
+  if (!hidden) {
+    clearTimeout(turn.timer);
+    turn.need = false;
+    revealJob(job);
+  }
   runJob(job);
   return job;
+}
+
+// ===== 先読み =====
+// 相手の話の区切り: 少し間があいたら(だれかが話し始めたら handleSoniox で止まる)、そこまでの返答案を裏で作る
+function schedulePrefetch() {
+  clearTimeout(prefetch.timer);
+  const now = Date.now();
+  if (now < prefetch.blockedUntil || document.visibilityState !== "visible") return;
+  const wait = Math.max(PREFETCH_PAUSE_MS, prefetch.lastAt + PREFETCH_MIN_INTERVAL_MS - now);
+  prefetch.timer = setTimeout(runPrefetch, wait);
+}
+
+function runPrefetch() {
+  if (state !== "live" || liveText || Date.now() < prefetch.blockedUntil) return;
+  const key = historyKey();
+  if (prefetch.job && prefetch.key === key && !prefetch.job.aborted && !prefetch.job.error) return; // 作り直す必要なし
+  dropPrefetch();
+  const job = requestSuggestions({ reason: "prefetch", hidden: true, intent: "" });
+  if (!job) return;
+  prefetch.job = job;
+  prefetch.key = key;
+  prefetch.lastAt = Date.now();
+}
+
+// 先読みした時点から会話が進んでいない(相手が話している途中でもない)ときだけ使える
+function usablePrefetch() {
+  const j = prefetch.job;
+  return j && !j.aborted && !j.error && !j.revealed && prefetch.key === historyKey() && (!liveText || isFiller(liveText));
+}
+
+function dropPrefetch() {
+  clearTimeout(prefetch.timer);
+  if (prefetch.job && !prefetch.job.revealed) {
+    prefetch.job.aborted = true;
+    prefetch.job.ctl.abort();
+  }
+  prefetch.job = null;
+}
+
+// 返答案作りに使う会話の中身が変わったかどうかの目印
+function historyKey() {
+  const t = turns[turns.length - 1];
+  return t ? `${t.id}:${t.who}:${t.en.length}` : "";
 }
 
 async function runJob(job) {
@@ -826,11 +898,14 @@ async function runJob(job) {
         buf = nl >= 0 ? buf.slice(nl + 1) : "";
         if (job.aborted) return;
         if (job.revealed) showJobLine(job, line);
+        else if (line.includes('"kind":"usage"')) handleSuggestionLine(line, job); // 料金は表示前でも数える
+        else if (line.includes('"error"')) hiddenJobError(job, line);
         else job.lines.push(line);
       }
       if (done) break;
     }
     job.done = true;
+    job.doneAt = performance.now();
     diag("suggest", { reason: job.reason, model: modelSel.value, genMs: Math.round(performance.now() - job.startedAt), revealed: job.revealed });
   } catch (err) {
     if (job.aborted || job.ctl.signal.aborted) return;
@@ -840,6 +915,15 @@ async function runJob(job) {
   } finally {
     if (job.revealed && !job.aborted) finishJob(job);
   }
+}
+
+// 先読みのエラーは画面に出さずに記録だけする。上限に当たったら先読みをしばらく休む
+function hiddenJobError(job, line) {
+  let obj = {};
+  try { obj = JSON.parse(line.replace(/,\s*$/, "")); } catch {}
+  job.error = obj.error || "unknown";
+  if (obj.error === "rate_limited") prefetch.blockedUntil = Date.now() + PREFETCH_BACKOFF_MS;
+  diag("error", { where: job.reason, error: job.error, message: String(obj.message || "").slice(0, 300) });
 }
 
 // 作っておいた候補を表示する(まだ作っている途中なら、届いた分から順に出す)
@@ -863,7 +947,9 @@ function showJobLine(job, line) {
   if (handleSuggestionLine(line, job) && ++job.shown === 1) {
     if (noticeEl.classList.contains("error")) showNotice(""); // 前の失敗のお知らせは消す
     // 相手の発言が終わってから(手動のときは押してから)最初の候補が出るまでの時間
-    const sec = ((performance.now() - job.startedAt) / 1000).toFixed(1);
+    const ms = performance.now() - job.startedAt;
+    const sec = (ms / 1000).toFixed(1);
+    diag("firstCard", { reason: job.reason, ms: Math.round(ms) });
     sgTitle.textContent = `${job.title} ・ ${sec}秒（${modelSel.value === "opus" ? "Opus" : "Haiku"}）`;
   }
 }
@@ -898,6 +984,7 @@ function handleSuggestionLine(line, job) {
       : obj.error === "anthropic_auth" ? "Claude の API キーが無効です（GitHub Secret の ANTHROPIC_API_KEY を確認してください）"
       : `返答案作りでエラー: ${obj.message || obj.error}`;
     if (job) job.error = msg;
+    if (obj.error === "rate_limited") prefetch.blockedUntil = Date.now() + PREFETCH_BACKOFF_MS;
     diag("error", { where: "suggestStream", error: obj.error, message: String(obj.message || "").slice(0, 300) });
     showNotice(msg, true);
     return false;

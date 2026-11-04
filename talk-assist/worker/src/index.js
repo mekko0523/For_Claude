@@ -42,7 +42,8 @@ since Me last spoke (it may be long; focus on the latest topic or question, but 
 - 1 more option that fits best: another answer, a polite clarification, or a light topic change
 
 Rules:
-- Spoken, natural, easy English that a beginner can read aloud: usually 4-14 words, at most 2 short sentences.
+- Keep each suggestion short: one spoken sentence of about 3-10 words (at most 2 very short sentences),
+  natural and easy for a beginner to read aloud.
 - Fit the conversation so far and the user's profile/scene. Never invent personal facts that contradict the profile.
   If an answer needs a fact you don't know (a time, a number, a name), offer a plausible concrete choice rather than a placeholder.
 - The transcript comes from speech recognition and may contain errors, cut-off sentences, and mislabeled speakers;
@@ -166,11 +167,19 @@ async function suggest(request, env) {
     });
   if (!history.length && !body.intent) return json({ error: "empty_history" }, 400);
 
-  const parts = [
+  // 会話中ほとんど変わらない部分(場面の指示・自己紹介・覚えていること)は system に入れてキャッシュさせ、毎回の読み込みを速くする
+  const stable = [
     MODE_GUIDES[body.mode] || "",
+    body.scene ? `Scene: ${clean(body.scene)}` : "",
     body.profile ? `User profile (written by the user, may be Japanese):\n${clean(body.profile, MAX_NOTE)}` : "",
     body.memory ? `Memory (from past conversations):\n${clean(body.memory, MAX_NOTE)}` : "",
-    body.scene ? `Scene: ${clean(body.scene)}` : "",
+  ].filter(Boolean).join("\n\n");
+  const system = [
+    { type: "text", text: SYSTEM_PROMPT },
+    ...(stable ? [{ type: "text", text: stable }] : []),
+  ];
+  system[system.length - 1].cache_control = { type: "ephemeral" };
+  const parts = [
     `Conversation so far (latest last):\n${history.join("\n") || "(nothing yet)"}`,
     body.intent ? `言いたいこと (what the user wants to say; may be just a word): ${clean(body.intent)}` : "",
     "Write the suggestions now.",
@@ -193,7 +202,7 @@ async function suggest(request, env) {
           model,
           max_tokens: 4_000,
           output_config: { effort: env.CLAUDE_EFFORT || DEFAULT_CLAUDE_EFFORT },
-          system: SYSTEM_PROMPT,
+          system,
           messages: [{ role: "user", content: parts.join("\n\n") }],
           ...thinking,
           ...fallback,
