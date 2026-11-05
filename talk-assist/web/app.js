@@ -26,6 +26,8 @@ const SCENES = [
 // 以前の版で保存した場面の英文 → 新しい場面
 const OLD_SCENES = { "English lesson: 1-on-1 online or in-person lesson with an English teacher": "lesson" };
 const HISTORY_FOR_CLAUDE = 30;          // 候補作りに使う直近の発言数
+const HISTORY_MAX_CHARS = 3000;         // その合計の文字数の上限(長い話は新しい方から。短いほど速く返ってくる)
+const CARD_LOCK_MS = 20_000;            // 💬 / ➤ を押してからこの間は、自分の声で返答案を消したり取り消したりしない
 // 自分の発言の見分け: 表示中の候補を読み上げたら「自分」とみなす
 const SELF_MATCH_DICE = 0.6;            // 候補との単語の一致度(Dice 係数)がこれ以上
 const SELF_MATCH_CONTAINED = 0.8;       // または、聞こえた単語のこの割合以上が候補に含まれる(3語以上)
@@ -105,6 +107,7 @@ let uttFinal = "";               // 話し中の発言の確定部分
 let uttJa = "";                  // 話し中の発言の和訳(確定部分)
 let uttStarted = false;          // 前の発言の区切りのあと、次の発言の原文が届き始めたか
 let liveText = "";
+let cardLockUntil = 0;           // 押して出した返答案を守る期限(待っている間の「えーっと」などで消さない)
 const prefetch = { job: null, key: "", timer: null, lastAt: 0, blockedUntil: 0 };               // 話している途中の英語(💬 を押したときは、これも返答案作りに使う)
 let lateJaTarget = null;         // 区切りのあとに遅れて届いた和訳を足す発言
 let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
@@ -474,12 +477,17 @@ function meSpoke(en, ja, extra, filler, fromSuggestion = false) {
     rearmTurn();
     return;
   }
-  intentInput.value = "";
   const t = addTurn({ who: "me", en, ja: ja || "", ...extra });
   if (!fromSuggestion) lateJaTarget = t;
   turn.need = false;
   cancelTurn();
   dropPrefetch();
+  // 押して出した(出している途中の)返答案は、候補を使ったとき以外は消さない(言いたいことの欄もそのまま)
+  if (!fromSuggestion && Date.now() < cardLockUntil) {
+    diag("keepCards", { en });
+    return;
+  }
+  intentInput.value = "";
   clearSuggestions(LISTENING_TEXT);
 }
 
@@ -800,6 +808,10 @@ function requestSuggestions({ intent = intentInput.value.trim(), reason = "manua
   }
   if (!passInput.value.trim()) { if (!hidden) settings.showModal(); return null; }
   // 先読みしてあり、そのあと相手が新しく話していなければ、それをすぐ出す
+  if (!hidden) {
+    cardLockUntil = Date.now() + CARD_LOCK_MS;
+    diag("press", { reason, intent: intent || undefined, live: liveText ? liveText.slice(-80) : undefined });
+  }
   if (!hidden && !intent && usablePrefetch()) {
     const job = prefetch.job;
     prefetch.job = null;
@@ -829,6 +841,19 @@ function requestSuggestions({ intent = intentInput.value.trim(), reason = "manua
   }
   runJob(job);
   return job;
+}
+
+// 直近の発言を、新しい方から文字数の上限まで(はみ出す古い長い発言は後ろだけ残す)
+function recentHistory() {
+  const out = [];
+  let budget = HISTORY_MAX_CHARS;
+  for (const t of turns.slice(-HISTORY_FOR_CLAUDE).reverse()) {
+    if (budget <= 0) break;
+    const en = t.en.length > budget ? `… ${t.en.slice(-budget)}` : t.en;
+    out.unshift({ id: t.id, who: t.who, en });
+    budget -= en.length;
+  }
+  return out;
 }
 
 // ===== 先読み =====
@@ -875,7 +900,7 @@ function historyKey() {
 }
 
 async function runJob(job) {
-  const history = turns.slice(-HISTORY_FOR_CLAUDE).map((t) => ({ id: t.id, who: t.who, en: t.en }));
+  const history = recentHistory();
   if (job.live) history.push({ id: 0, who: "them", en: `${job.live} …`, partial: true }); // 相手が話している途中
   try {
     const res = await api("/api/suggest", {
@@ -908,7 +933,10 @@ async function runJob(job) {
     job.doneAt = performance.now();
     diag("suggest", { reason: job.reason, model: modelSel.value, genMs: Math.round(performance.now() - job.startedAt), revealed: job.revealed });
   } catch (err) {
-    if (job.aborted || job.ctl.signal.aborted) return;
+    if (job.aborted || job.ctl.signal.aborted) {
+      if (job.revealed) diag("cancelled", { reason: job.reason, afterMs: Math.round(performance.now() - job.startedAt), shown: job.shown });
+      return;
+    }
     job.error = err?.message || String(err);
     diag("error", { where: "suggest", message: job.error });
     if (job.revealed) showNotice(job.error, true);
@@ -991,6 +1019,7 @@ function handleSuggestionLine(line, job) {
   }
   if (obj.kind === "usage") {
     addClaudeUsage(conv, obj);
+    diag("usage", { reason: job?.reason, in: obj.input, cacheRead: obj.cacheRead, out: obj.output, ttftMs: obj.ttftMs, totalMs: obj.totalMs });
     return false;
   }
   if (obj.kind === "translation") {
@@ -1022,6 +1051,7 @@ function handleSuggestionLine(line, job) {
 // 候補をタップ = これを言う。会話に記録して、読み上げた声を二重に記録しないようにする
 function pickSuggestion(s, card) {
   card.classList.add("picked");
+  cardLockUntil = 0;
   diag("pick", { en: s.en });
   intentInput.value = ""; // 返事をしたら、言いたいことの欄は次の言葉のために空ける
   addTurn({ who: "me", en: s.en, ja: s.ja });

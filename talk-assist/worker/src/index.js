@@ -209,9 +209,15 @@ async function suggest(request, env) {
         },
         { signal: request.signal },
       );
-      stream.on("text", (text) => write(text));
+      // 遅いときの原因を調べられるよう、最初の文字が出るまでの時間と全体の時間も返す
+      const t0 = Date.now();
+      let ttftMs = null;
+      stream.on("text", (text) => {
+        if (ttftMs == null) ttftMs = Date.now() - t0;
+        write(text);
+      });
       const final = await stream.finalMessage();
-      write(`\n${JSON.stringify({ kind: "usage", ...usageInfo(final, model) })}\n`);
+      write(`\n${JSON.stringify({ kind: "usage", ...usageInfo(final, model), ttftMs, totalMs: Date.now() - t0 })}\n`);
       if (final.stop_reason === "refusal") write(`\n${JSON.stringify({ error: "refusal" })}\n`);
       else if (final.stop_reason === "max_tokens") write(`\n${JSON.stringify({ error: "max_tokens" })}\n`);
     } catch (err) {
@@ -293,7 +299,7 @@ function usageInfo(msg, requestedModel) {
   const cacheRead = u.cache_read_input_tokens || 0;
   const output = u.output_tokens || 0;
   const usd = (input * price.input + cacheWrite * price.input * 1.25 + cacheRead * price.input * 0.1 + output * price.output) / 1e6;
-  return { model, input: input + cacheWrite + cacheRead, output, usd };
+  return { model, input: input + cacheWrite + cacheRead, cacheRead, output, usd };
 }
 
 function pickModel(body, env) {
