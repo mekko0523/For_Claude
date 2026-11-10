@@ -27,6 +27,12 @@ const SCENES = [
 const OLD_SCENES = { "English lesson: 1-on-1 online or in-person lesson with an English teacher": "lesson" };
 const HISTORY_FOR_CLAUDE = 30;          // 候補作りに使う直近の発言数
 const HISTORY_MAX_CHARS = 3000;         // その合計の文字数の上限(長い話は新しい方から。短いほど速く返ってくる)
+// 💬 を押したときは、直前の約30秒に聞こえた内容をもとに返答案を作る(それより前は背景として少しだけ渡す)
+const RECENT_WINDOW_MS = 30_000;
+const RECENT_MIN_CHARS = 150;           // 30秒の中身がこれより少なければ、直前の発言をさかのぼって足す
+const BACKGROUND_CHARS = 800;
+const HEARD_KEEP_MS = 10 * 60_000;
+const PREFETCH_MAX_AGE_MS = 20_000;     // 先読みがこれより古ければ使わない(30秒の範囲がずれるため)
 const CARD_LOCK_MS = 20_000;            // 💬 / ➤ を押してからこの間は、自分の声で返答案を消したり取り消したりしない
 // 自分の発言の見分け: 表示中の候補を読み上げたら「自分」とみなす
 const SELF_MATCH_DICE = 0.6;            // 候補との単語の一致度(Dice 係数)がこれ以上
@@ -67,7 +73,6 @@ const emptyEl = $("empty");
 const cardsEl = $("cards");
 const sgTitle = $("sgTitle");
 const regenBtn = $("regenBtn");
-const meBtn = $("meBtn");
 const toggleBtn = $("toggleBtn");
 const dotEl = $("dot");
 const statusText = $("statusText");
@@ -107,10 +112,10 @@ let uttFinal = "";               // 話し中の発言の確定部分
 let uttJa = "";                  // 話し中の発言の和訳(確定部分)
 let uttStarted = false;          // 前の発言の区切りのあと、次の発言の原文が届き始めたか
 let liveText = "";
+let heard = [];                  // 聞こえた発言と時刻 [{ at, who, en }](直前30秒を取り出すため。相づちも含む)
 let cardLockUntil = 0;           // 押して出した返答案を守る期限(待っている間の「えーっと」などで消さない)
 const prefetch = { job: null, key: "", timer: null, lastAt: 0, blockedUntil: 0 };               // 話している途中の英語(💬 を押したときは、これも返答案作りに使う)
 let lateJaTarget = null;         // 区切りのあとに遅れて届いた和訳を足す発言
-let meMode = false;              // 「自分が話す」ボタンが押されている間は、聞こえた声を自分の発言にする
 let calibrating = false;         // 開始直後: 最初の発言を自分の声として覚える
 // 相手のターン: 相手の話が終わったら(間 = 設定の時間)候補を出す。待つあいだに裏で作っておく
 const turn = { need: false, question: false, timer: null, job: null };
@@ -162,7 +167,6 @@ for (const box of [profileInput, memoryInput]) {
 }
 // 💬: ここまでの話(相手が話している途中ならその分も)を踏まえた返答案を作る
 regenBtn.addEventListener("click", () => requestSuggestions({ reason: "button" }));
-meBtn.addEventListener("click", () => setMeMode(!meMode));
 intentForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const intent = intentInput.value.trim();
@@ -352,7 +356,7 @@ async function connect(gen) {
       connect(gen).then(() => {
         if (gen !== generation) return;
         setState("live");
-        showNotice("接続し直しました。自分の声を覚え直すには「🙋自分」を押して英語でひとこと話してください");
+        showNotice("");
       })
         .catch((err) => { if (gen === generation) stop(err?.message || String(err), true); });
     }, 800);
@@ -435,21 +439,18 @@ function endUtterance() {
   const extra = { spk: feat.label, db: feat.db, conn: spk.conn };
   const d = { text, spk: feat.counts, share: round2(feat.share), db: feat.db == null ? null : round1(feat.db), filler };
 
-  // 開始直後の最初の発言・「🙋自分」を押している間: 自分の発言として記録し、自分の声として覚える
-  if (meMode || calibrating) {
-    const how = calibrating ? "calibration" : "meButton";
-    if (calibrating) endCalibration(feat);
-    else {
-      learnSpeaker(feat, "me", 3);
-      setMeMode(false); // 「🙋自分」は1回の発言ごと(押したままにして相手の声まで自分になるのを防ぐ)
-    }
-    diag("utt", { ...d, who: "me", how });
+  // 開始直後の最初の発言: 自分の発言として記録し、自分の声として覚える
+  if (calibrating) {
+    endCalibration(feat);
+    diag("utt", { ...d, who: "me", how: "calibration" });
+    noteHeard("me", text);
     meSpoke(text, ja, extra, filler);
     return;
   }
   // 使った候補を読み上げた続きの声(すでに記録済み)
   if (picked && Date.now() - picked.at < PICKED_ECHO_MS && speakerRole(feat) !== "them" && speakerRole(feat) !== "other" && containedRatio(words, picked.words) >= 0.7) {
     learnSpeaker(feat, "me", 3);
+    noteHeard("me", text);
     for (const w of words) picked.covered.add(w);
     if (picked.covered.size >= picked.words.size * 0.7) picked = null;
     diag("utt", { ...d, who: "me", how: "echoOfUsedSuggestion" });
@@ -457,6 +458,7 @@ function endUtterance() {
     return;
   }
   const c = classify(words, feat);
+  noteHeard(c.who, text);
   diag("utt", { ...d, who: c.who, role: c.role, score: { text: c.textScore, spk: c.spkScore, lvl: c.lvlScore, total: c.score }, match: c.match?.en });
   if (c.who === "me") {
     // 候補どおりに読んだときは確実な手がかりとして強めに学ぶ
@@ -580,20 +582,16 @@ function useSuggestion(s, heardWords = new Set()) {
 // 話者番号は接続ごとに振り直されるので、最初の発言を「自分」として覚えるのがいちばん確実
 function startCalibration() {
   calibrating = true;
-  meBtn.setAttribute("aria-pressed", "true");
-  meBtn.lastElementChild.textContent = "話し中";
-  showNotice("🎙 最初に自分の声を覚えます。英語でひとこと話してください（例：Hello, can you hear me?）。相手が先に話したら「🙋」を押して取り消してください");
+  showNotice("🎙 最初に自分の声を覚えます。英語でひとこと話してください（例：Hello, can you hear me?）。相手が先に話してしまったら、その吹き出しをタップして「相手」に直してください");
 }
 
 // feat が null なら取り消し。前回までの声の大きさの記録と食い違うとき(相手の声らしい)は覚えない
 function endCalibration(feat) {
   calibrating = false;
-  meBtn.setAttribute("aria-pressed", String(meMode));
-  meBtn.lastElementChild.textContent = meMode ? "話し中" : "自分";
   if (!feat) { diag("calibration", { result: "cancelled" }); return; }
   if (levelVote(feat.db) < 0) {
     diag("calibration", { result: "rejectedByLevel", db: feat.db, levels: spk.lvl });
-    showNotice("今の声は相手の声のようでした。自分の声を覚えるには「🙋自分」を押して英語でひとこと話してください");
+    showNotice("");
     return;
   }
   learnSpeaker(feat, "me", 5);
@@ -801,7 +799,7 @@ function containedRatio(a, b) {
 // ===== 返答候補(Claude) =====
 // 言いたいことの欄に何か入っていれば、それも使う。相手が話している途中なら、途中までの英語も含める
 // hidden: 先読み(裏で作るだけで表示しない。表示中の返答案もそのまま)
-function requestSuggestions({ intent = intentInput.value.trim(), reason = "manual", hidden = false } = {}) {
+function requestSuggestions({ intent = intentInput.value.trim(), reason = "manual", hidden = false, retry = false } = {}) {
   if (!turns.length && !intent && !liveText) {
     if (!hidden) setCardsPlaceholder("まだ会話がありません。相手が話してから 💬 を押してください");
     return null;
@@ -830,7 +828,7 @@ function requestSuggestions({ intent = intentInput.value.trim(), reason = "manua
   }
   const ctl = new AbortController();
   const job = {
-    ctl, intent, reason, revealed: false, aborted: false, lines: [], shown: 0, raw: "", live: liveText,
+    ctl, intent, reason, retry, revealed: false, aborted: false, lines: [], shown: 0, raw: "", live: liveText,
     startedAt: performance.now(), createdAt: performance.now(), title: intent ? `「${intent}」の言い方` : "返答案",
     abort() { this.aborted = true; ctl.abort(); diag("suggest", { reason, aborted: true, revealed: this.revealed }); },
   };
@@ -854,6 +852,35 @@ function recentHistory() {
     budget -= en.length;
   }
   return out;
+}
+
+function noteHeard(who, en) {
+  const now = Date.now();
+  heard.push({ at: now, who, en });
+  while (heard.length && now - heard[0].at > HEARD_KEEP_MS) heard.shift();
+}
+
+// 直前の約30秒(少なすぎればさかのぼって数発言)と、それより前の背景(短く)
+function recentWindow() {
+  const now = Date.now();
+  if (!heard.length) {
+    // 再読み込み後など聞こえた記録がないときは、保存してある会話の最後の方を使う
+    const h = recentHistory().map(({ who, en }) => ({ who, en }));
+    return { recent: h.slice(-4), background: h.slice(0, -4) };
+  }
+  let start = heard.findIndex((h) => now - h.at <= RECENT_WINDOW_MS);
+  if (start < 0) start = heard.length;
+  let chars = heard.slice(start).reduce((a, h) => a + h.en.length, 0);
+  while (start > 0 && chars < RECENT_MIN_CHARS) chars += heard[--start].en.length;
+  const recent = heard.slice(start).map(({ who, en }) => ({ who, en }));
+  const background = [];
+  let budget = BACKGROUND_CHARS;
+  for (let i = start - 1; i >= 0 && budget > 0; i--) {
+    const en = heard[i].en.length > budget ? `… ${heard[i].en.slice(-budget)}` : heard[i].en;
+    background.unshift({ who: heard[i].who, en });
+    budget -= en.length;
+  }
+  return { recent, background };
 }
 
 // ===== 先読み =====
@@ -881,7 +908,8 @@ function runPrefetch() {
 // 先読みした時点から会話が進んでいない(相手が話している途中でもない)ときだけ使える
 function usablePrefetch() {
   const j = prefetch.job;
-  return j && !j.aborted && !j.error && !j.revealed && prefetch.key === historyKey() && (!liveText || isFiller(liveText));
+  return j && !j.aborted && !j.error && !j.revealed && prefetch.key === historyKey() && (!liveText || isFiller(liveText))
+    && performance.now() - j.createdAt < PREFETCH_MAX_AGE_MS;
 }
 
 function dropPrefetch() {
@@ -895,16 +923,16 @@ function dropPrefetch() {
 
 // 返答案作りに使う会話の中身が変わったかどうかの目印
 function historyKey() {
-  const t = turns[turns.length - 1];
-  return t ? `${t.id}:${t.who}:${t.en.length}` : "";
+  const h = heard[heard.length - 1];
+  return h ? `${heard.length}:${h.at}` : "";
 }
 
 async function runJob(job) {
-  const history = recentHistory();
-  if (job.live) history.push({ id: 0, who: "them", en: `${job.live} …`, partial: true }); // 相手が話している途中
+  const { recent, background } = recentWindow();
+  if (job.live) recent.push({ who: "them", en: `${job.live} …`, partial: true }); // 相手が話している途中
   try {
     const res = await api("/api/suggest", {
-      history, intent: job.intent, scene: sceneText(), mode: currentScene().mode || "",
+      recent, background, intent: job.intent, scene: sceneText(), mode: currentScene().mode || "",
       profile: profileInput.value.trim(), memory: memoryInput.value.trim(), model: modelSel.value,
     }, job.ctl.signal);
     if (!res.ok) {
@@ -986,6 +1014,13 @@ function finishJob(job) {
   if (suggestCtl !== job.ctl) return;
   suggestCtl = null;
   cardsEl.querySelectorAll(".loading").forEach((n) => n.remove());
+  if (!job.shown && !job.error && !job.retry) {
+    // 返答案が1つも届かなかった(形の崩れなど)ときは、1回だけ自動で作り直す
+    diag("noCards", { reason: job.reason, raw: job.raw.slice(0, 600), retrying: true });
+    suggestCtl = null;
+    requestSuggestions({ intent: job.intent, reason: `${job.reason}+retry`, retry: true });
+    return;
+  }
   if (!job.shown) {
     setCardsPlaceholder("返答案を作れませんでした。もう一度 💬 を押してください");
     diag("noCards", { reason: job.reason, error: job.error || null, raw: job.raw.slice(0, 600) });
@@ -1022,17 +1057,7 @@ function handleSuggestionLine(line, job) {
     diag("usage", { reason: job?.reason, in: obj.input, cacheRead: obj.cacheRead, out: obj.output, ttftMs: obj.ttftMs, totalMs: obj.totalMs });
     return false;
   }
-  if (obj.kind === "translation") {
-    const id = Number(String(obj.id || "").replace(/^T/, ""));
-    const turn = turns.find((t) => t.id === id);
-    if (turn && typeof obj.ja === "string") {
-      turn.ja = obj.ja;
-      saveTurns();
-      const node = logEl.querySelector(`[data-id="${id}"]`);
-      if (node) node.replaceWith(renderTurn(turn));
-    }
-    return false;
-  }
+  if (obj.kind === "translation") return false; // 和訳は Soniox が出すので、AI が書いてしまった和訳は使わない
   if (typeof obj.en !== "string" || !obj.en.trim()) return false;
   const s = { kind: obj.kind, en: obj.en.trim(), ja: typeof obj.ja === "string" ? obj.ja : "" };
   suggestions.push(s);
@@ -1118,7 +1143,7 @@ function editTurn(t) {
     // 自分の声として覚えた分を取り消して、相手の声として覚え直す(開始直後に相手が先に話したときなど)
     learnSpeaker({ label: t.conn === spk.conn ? t.spk : null, share: 1, db: t.db }, "them", 3, { reset: "me" });
     diag("correct", { id: t.id, to: "them", en: t.en, spk: t.spk, db: t.db });
-    showNotice("相手の声として覚え直しました。自分の声も覚え直すには「🙋自分」を押して英語でひとこと話してください");
+    showNotice("");
     t.who = "them";
     saveTurns();
     logEl.querySelector(`[data-id="${t.id}"]`)?.replaceWith(renderTurn(t));
@@ -1373,24 +1398,6 @@ function setState(s) {
   statusText.textContent = { idle: "停止中", connecting: "接続中…", live: "聞き取り中" }[s];
   toggleBtn.textContent = s === "idle" ? "▶ 開始" : "■ 停止";
   toggleBtn.classList.toggle("stop", s !== "idle");
-}
-
-function setMeMode(on) {
-  // 開始直後の「自分の声を覚える」途中で押したら、覚えるのをやめる(相手が先に話したときなど)
-  if (calibrating) {
-    endCalibration(null);
-    showNotice("");
-    return;
-  }
-  meMode = on;
-  meBtn.setAttribute("aria-pressed", String(on));
-  meBtn.lastElementChild.textContent = on ? "話し中" : "自分";
-  // 話し終わる前に戻したときは、その時点までを自分の発言として区切る
-  if (!on && uttFinal.trim()) {
-    meMode = true;
-    endUtterance();
-    meMode = false;
-  }
 }
 
 function showNotice(text, isError = false) {

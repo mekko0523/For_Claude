@@ -33,8 +33,8 @@ const SYSTEM_PROMPT = `You help a Japanese speaker who is not confident in Engli
 The app transcribes what the other person ("Them") says. Them usually does most of the talking.
 When the user wants to respond, they press a button and read one of your suggestions aloud ("Me").
 
-The user pressed the button now. Write 4 short things the user could say next, based on everything Them has said
-since Me last spoke (it may be long; focus on the latest topic or question, but use the whole context to understand it):
+The user pressed the button now. Write 4 short things the user could say next, based mainly on the
+"Last ~30 seconds" part (respond to the latest topic or question in it). Use "Earlier" only to understand that part:
 - 1 natural reaction that shows the user understood (a short comment or empathy, not just "Yeah")
 - 1 answer or opinion: answer Them's question if there was one (for a yes/no question, pick the most natural side),
   otherwise share a related personal comment
@@ -52,18 +52,16 @@ Rules:
   in Japanese or English (e.g. "釣り", "来週", "price", "もう一回"). Work out from the conversation, especially Them's latest words,
   how the user most likely wants to use it, and make all 4 suggestions natural replies that include that idea —
   covering different plausible readings (e.g. an answer, a question, a comment) rather than 4 rewordings of one sentence.
-  Always write 4 suggestions, even if the word seems unrelated to the conversation.
+  It may also be a request such as "〜を英語で" (how to say something in English): then make suggestions that say it
+  naturally in this conversation. Always write 4 suggestions, even if the word seems unrelated to the conversation.
 - "Memory" holds notes from the user's past conversations (facts they said about themselves, past topics, people they know).
   Use it so answers stay consistent with what the user has said before and feel personal; never contradict it.
 - "ja" is a short, natural Japanese translation so the user knows what they are saying.
 
-Output format: exactly one JSON object per line (JSON Lines), nothing else — no code fences, no commentary, no blank lines.
-First, for each message tagged like [T3], one translation line with a natural Japanese translation of that message
-(fix obvious speech-recognition errors from context):
-{"kind":"translation","id":"T3","ja":"..."}
-Then the 4 suggestions:
+Output format: exactly 4 lines, one JSON object per line (JSON Lines), and nothing else —
+no translations of the conversation, no code fences, no commentary, no blank lines:
 {"kind":"answer","en":"...","ja":"..."}
-Suggestion kind is one of: "answer", "question", "other" (use "answer" for reactions and answers).
+kind is one of: "answer", "question", "other" (use "answer" for reactions and answers).
 Latency-sensitive; begin your visible answer immediately.`;
 
 // 場面ごとに足す指示
@@ -157,15 +155,14 @@ async function suggest(request, env) {
   } catch {
     return json({ error: "invalid_json" }, 400);
   }
-  const history = (Array.isArray(body.history) ? body.history : [])
+  // recent: 💬 を押す直前の約30秒(これに返事する) / background: それより前(理解の助けにだけ使う)
+  const lines = (arr) => (Array.isArray(arr) ? arr : [])
     .filter((h) => (h?.who === "them" || h?.who === "me") && typeof h.en === "string" && h.en.trim())
     .slice(-MAX_HISTORY)
-    .map((h) => {
-      // 和訳がほしい相手の発言には [T<id>] を付ける
-      const tag = h.who === "them" && h.translate && /^\d{1,9}$/.test(String(h.id)) ? ` [T${h.id}]` : "";
-      return `${h.who === "me" ? "Me" : "Them"}${h.partial ? " (still talking)" : ""}${tag}: ${clean(h.en)}`;
-    });
-  if (!history.length && !body.intent) return json({ error: "empty_history" }, 400);
+    .map((h) => `${h.who === "me" ? "Me" : "Them"}${h.partial ? " (still talking)" : ""}: ${clean(h.en)}`);
+  const recent = lines(body.recent);
+  const background = lines(body.background);
+  if (!recent.length && !background.length && !body.intent) return json({ error: "empty_history" }, 400);
 
   // 会話中ほとんど変わらない部分(場面の指示・自己紹介・覚えていること)は system に入れてキャッシュさせ、毎回の読み込みを速くする
   const stable = [
@@ -180,7 +177,8 @@ async function suggest(request, env) {
   ];
   system[system.length - 1].cache_control = { type: "ephemeral" };
   const parts = [
-    `Conversation so far (latest last):\n${history.join("\n") || "(nothing yet)"}`,
+    background.length ? `Earlier (background only, to understand the context):\n${background.join("\n")}` : "",
+    `Last ~30 seconds — respond to this (latest last):\n${recent.join("\n") || "(nothing yet)"}`,
     body.intent ? `言いたいこと (what the user wants to say; may be just a word): ${clean(body.intent)}` : "",
     "Write the suggestions now.",
   ].filter(Boolean);
@@ -200,7 +198,7 @@ async function suggest(request, env) {
       const stream = client.beta.messages.stream(
         {
           model,
-          max_tokens: 4_000,
+          max_tokens: 800, // 返答案4つは200トークンほど。余計なものを書き続けて遅くならないよう上限を低めに
           output_config: { effort: env.CLAUDE_EFFORT || DEFAULT_CLAUDE_EFFORT },
           system,
           messages: [{ role: "user", content: parts.join("\n\n") }],
