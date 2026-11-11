@@ -101,7 +101,7 @@ button:disabled { opacity: .4; cursor: default; }
   border-top: 1px solid #222c36;
 }
 .sg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; font-size: 12px; color: var(--muted); min-height: 34px; }
-#sgTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sgTitle { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.35; color: var(--text); }
 .cards { display: flex; flex-direction: column; gap: 5px; min-height: 40px; }
 .card {
   display: block;

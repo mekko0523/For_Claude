@@ -40,7 +40,7 @@ const SELF_MATCH_CONTAINED = 0.8;       // または、聞こえた単語のこ�
 const PICKED_ECHO_MS = 30_000;          // 候補を使ってからこの時間は、それを読み上げた続きの声を二重に記録しない
 const RECENT_SUGGESTION_MS = 60_000;    // 入れ替わった前の候補も、この時間は「読み上げた」判定に使う
 // 自分か相手かの判定: 点数が ME_SCORE 以上なら自分
-//   候補とほぼ同じ +3 / 一部だけ読んだ +1.5、Soniox の話者番号が自分 +2.5 / 相手 -2、声の大きさが自分に近い +1 / 相手に近い -1
+//   候補とほぼ同じ +3 / 一部だけ読んだ +1.5、Soniox の話者番号が自分 +2.5 / 相手 -2
 const ME_SCORE = 2;
 // 相手のターンの終わり: 相手の発言のあと、この間だれも話さなければ新しい候補を出す(設定で変えられる)。
 // 質問で終わっていれば少し早めに出す。待っているあいだに裏で候補を作っておく
@@ -58,7 +58,6 @@ const PREFETCH_BACKOFF_MS = 60_000;
 const LISTENING_TEXT = "相手の話を聞いています。返事をしたいときに 💬 を押してください";
 const MAX_DIAG = 3000;                  // 1つの会話に残す診断ログの数
 const DIAG_KEEP_CONVS = 5;              // 診断ログを残す会話の数(新しいものから)
-const LEVEL_MIN_GAP_DB = 3;             // 自分と相手の声の大きさの平均がこれ以上離れていれば、大きさも判定に使う
 const LS = {
   pass: "ta.passphrase", profile: "ta.profile", scene: "ta.scene", oldScene: "ta.scenePreset",
   turnWait: "ta.turnWait", showJa: "ta.showJa", auto: "ta.autoSuggest", turns: "ta.turns", model: "ta.model",
@@ -142,7 +141,7 @@ renderSceneBar();
 turnWaitSel.value = lsGet(LS.turnWait) || String(DEFAULT_TURN_WAIT_MS);
 autoSuggest.checked = lsGet(LS.auto) === "1";
 showJa.checked = lsGet(LS.showJa) !== "0";
-modelSel.value = lsGet(LS.model) === "opus" ? "opus" : "haiku";
+modelSel.value = ["opus", "sonnet"].includes(lsGet(LS.model)) ? lsGet(LS.model) : "haiku";
 memoryInput.value = lsGet(LS.memory) || "";
 applyShowJa();
 renderLog();
@@ -206,7 +205,7 @@ async function start() {
     });
     await connect(gen);
     if (gen !== generation) return;
-    diag("start", { model: modelSel.value, turnWaitMs: Number(turnWaitSel.value), scene: sceneKey, levels: spk.lvl, ua: navigator.userAgent });
+    diag("start", { model: modelSel.value, turnWaitMs: Number(turnWaitSel.value), scene: sceneKey, ua: navigator.userAgent });
     startCalibration();
     acquireWakeLock();
     lastHeardAt = Date.now();
@@ -225,7 +224,7 @@ function stop(message = "", isError = false) {
   cancelTurn();
   dropPrefetch();
   turn.need = false;
-  if (state !== "idle") diag("stop", { message, votes: spk.votes, levels: spk.lvl });
+  if (state !== "idle") diag("stop", { message, votes: spk.votes });
   closeSocket();
   if (audio) {
     try { audio.node?.disconnect(); } catch {}
@@ -459,7 +458,7 @@ function endUtterance() {
   }
   const c = classify(words, feat);
   noteHeard(c.who, text);
-  diag("utt", { ...d, who: c.who, role: c.role, score: { text: c.textScore, spk: c.spkScore, lvl: c.lvlScore, total: c.score }, match: c.match?.en });
+  diag("utt", { ...d, who: c.who, role: c.role, score: { text: c.textScore, spk: c.spkScore, total: c.score }, match: c.match?.en });
   if (c.who === "me") {
     // 候補どおりに読んだときは確実な手がかりとして強めに学ぶ
     learnSpeaker(feat, "me", c.textScore >= 3 ? 3 : 1);
@@ -542,7 +541,7 @@ function isFiller(text) {
   return content.length === 0;
 }
 
-// 文字の一致・話者番号・声の大きさを合わせて点数にする
+// 文字の一致と話者番号を合わせて点数にする
 function classify(words, feat) {
   const { match, strength } = bestSuggestion(words);
   const textScore = strength === 2 ? 3 : strength === 1 ? 1.5 : 0;
@@ -550,9 +549,8 @@ function classify(words, feat) {
   // 相手ではない声: 1対1なら自分とみなす。会議では相手が何人もいるので弱い手がかりにとどめる
   const notThem = currentScene().mode === "meeting" ? 1 : 2;
   const spkScore = role === "me" ? 2.5 : role === "them" || role === "other" ? -2 : role === "notThem" ? notThem : 0;
-  const lvlScore = levelVote(feat.db);
-  const score = textScore + spkScore + lvlScore;
-  return { who: score >= ME_SCORE ? "me" : "them", match, score, textScore, spkScore, lvlScore, role };
+  const score = textScore + spkScore;
+  return { who: score >= ME_SCORE ? "me" : "them", match, score, textScore, spkScore, role };
 }
 
 // 表示中の候補(と少し前の候補)のうち、聞こえた英語にいちばん近いもの。strength 2 = ほぼそのまま、1 = 一部だけ・言い換え
@@ -585,15 +583,10 @@ function startCalibration() {
   showNotice("🎙 最初に自分の声を覚えます。英語でひとこと話してください（例：Hello, can you hear me?）。相手が先に話してしまったら、その吹き出しをタップして「相手」に直してください");
 }
 
-// feat が null なら取り消し。前回までの声の大きさの記録と食い違うとき(相手の声らしい)は覚えない
+// feat が null なら取り消し
 function endCalibration(feat) {
   calibrating = false;
   if (!feat) { diag("calibration", { result: "cancelled" }); return; }
-  if (levelVote(feat.db) < 0) {
-    diag("calibration", { result: "rejectedByLevel", db: feat.db, levels: spk.lvl });
-    showNotice("");
-    return;
-  }
   learnSpeaker(feat, "me", 5);
   diag("calibration", { result: "ok", label: feat.label, share: round2(feat.share), db: feat.db });
   showNotice("");
@@ -614,7 +607,6 @@ function formatDiag(c) {
     `# ハヤサポEnglish 診断ログ`,
     `会話の開始: ${fmtDate(c.startedAt)} / 場面: ${sceneLabel(c.scene)} / 発言数: ${c.turns.length}`,
     `設定: model=${modelSel.value} turnWaitMs=${turnWaitSel.value} sonioxEndpointMs=${SONIOX_ENDPOINT_MS} showJa=${showJa.checked}`,
-    `声の大きさの学習: ${JSON.stringify(spk.lvl)}`,
     `端末: ${navigator.userAgent}`,
     "",
     "## 会話",
@@ -654,15 +646,13 @@ function sendDiag(c) {
     });
 }
 
-// ===== 話者の見分け(Soniox の話者番号と声の大きさ) =====
+// ===== 話者の見分け(Soniox の話者番号) =====
 // 話者番号は接続ごとに振り直されるので、接続のたびに「どの番号が自分か」を学び直す。
-// 声の大きさ(机に置いた iPhone と、自分の口・相手の声が出るスピーカーとの距離の差)は端末に保存して次回も使う
 const spk = {
   conn: 0,            // 接続の通し番号(発言に記録して、学び直しのときに同じ接続か確かめる)
   votes: {},          // 話者番号ごとの票 { "1": { me, them } }
   levels: [],         // 0.1秒ごとの音量 [{ ms, db }](今の接続の音声の時刻)
   sentMs: 0,          // 今の接続で送った音声の長さ
-  lvl: loadLevels(),  // 自分/相手の声の大きさの平均 { me: { mean, n }, them: { mean, n } }(dB)
 };
 let utt = { counts: {}, startMs: null, endMs: null, words: 0 }; // 話し中の発言の話者番号の内訳と時刻
 
@@ -687,7 +677,7 @@ function noteToken(t) {
   if (/\s/.test(t.text) || !utt.words) utt.words++;
 }
 
-// 話し中の発言の主な話者番号と、その発言のあいだの声の大きさ(大きいほうの半分の平均)
+// 話し中の発言の主な話者番号と、その発言のあいだの声の大きさ(大きいほうの半分の平均。診断ログ用)
 function utteranceFeatures() {
   const total = Object.values(utt.counts).reduce((a, b) => a + b, 0);
   let label = null;
@@ -746,29 +736,11 @@ function learnSpeaker(feat, who, weight, { reset } = {}) {
     v[who] += weight;
     if (reset) v[reset] = 0;
   }
-  if (typeof feat.db === "number") {
-    const st = spk.lvl[who];
-    const n = Math.min(st.n, 19); // 最近の20回ほどを重視する(置き場所が変わっても追従する)
-    st.mean = (st.mean * n + feat.db) / (n + 1);
-    st.n = n + 1;
-    lsSet(LS.levels, JSON.stringify(spk.lvl));
-  }
 }
 
-// 声の大きさが自分と相手のどちらの平均に近いか(+1 自分 / -1 相手 / 0 わからない)
-function levelVote(db) {
-  const { me, them } = spk.lvl;
-  if (typeof db !== "number" || me.n < 2 || them.n < 2 || Math.abs(me.mean - them.mean) < LEVEL_MIN_GAP_DB) return 0;
-  return Math.abs(db - me.mean) < Math.abs(db - them.mean) ? 1 : -1;
-}
-
-function loadLevels() {
-  const empty = { me: { mean: 0, n: 0 }, them: { mean: 0, n: 0 } };
-  try {
-    const v = JSON.parse(lsGet(LS.levels) || "null");
-    return v?.me && v?.them ? v : empty;
-  } catch { return empty; }
-}
+// 声の大きさは判定に使わない(iPhone が音量を自動で揃えるため当てにならず、誤って覚えると判定全体が狂った)。
+// 以前の版で端末に保存した大きさの記録は消す
+try { localStorage.removeItem(LS.levels); } catch {}
 
 // 入れ替わる前の候補も、少しのあいだ「読み上げた」判定に使う
 function rememberSuggestions() {
@@ -868,19 +840,36 @@ function recentWindow() {
     const h = recentHistory().map(({ who, en }) => ({ who, en }));
     return { recent: h.slice(-4), background: h.slice(0, -4) };
   }
+  const meaningful = (h) => (isFiller(h.en) ? 0 : h.en.length);
   let start = heard.findIndex((h) => now - h.at <= RECENT_WINDOW_MS);
   if (start < 0) start = heard.length;
-  let chars = heard.slice(start).reduce((a, h) => a + h.en.length, 0);
-  while (start > 0 && chars < RECENT_MIN_CHARS) chars += heard[--start].en.length;
-  const recent = heard.slice(start).map(({ who, en }) => ({ who, en }));
+  let chars = heard.slice(start).reduce((a, h) => a + meaningful(h), 0);
+  while (start > 0 && chars < RECENT_MIN_CHARS) chars += meaningful(heard[--start]);
+  const recent = tidyLines(heard.slice(start));
   const background = [];
   let budget = BACKGROUND_CHARS;
-  for (let i = start - 1; i >= 0 && budget > 0; i--) {
-    const en = heard[i].en.length > budget ? `… ${heard[i].en.slice(-budget)}` : heard[i].en;
-    background.unshift({ who: heard[i].who, en });
+  for (const h of tidyLines(heard.slice(0, start)).reverse()) {
+    if (budget <= 0) break;
+    const en = h.en.length > budget ? `… ${h.en.slice(-budget)}` : h.en;
+    background.unshift({ who: h.who, en });
     budget -= en.length;
   }
   return { recent, background };
+}
+
+// AI に渡す前に整える: 相づちだけの発言(Mm-hmm, Yeah など)は落とし、同じ人の細切れの発言は1文につなげる。
+// 相づちが間に入ると、相手の話が細切れになって流れが読み取れなくなるため
+function tidyLines(list) {
+  const out = [];
+  for (const h of list) {
+    if (isFiller(h.en)) continue;
+    const en = h.en.replace(/^[—–-]+\s*/, "").replace(/\s*[—–]+$/, "").trim();
+    if (!en) continue;
+    const last = out[out.length - 1];
+    if (last && last.who === h.who) last.en = `${last.en} ${en}`;
+    else out.push({ who: h.who, en });
+  }
+  return out;
 }
 
 // ===== 先読み =====
@@ -1006,7 +995,8 @@ function showJobLine(job, line) {
     const ms = performance.now() - job.startedAt;
     const sec = (ms / 1000).toFixed(1);
     diag("firstCard", { reason: job.reason, ms: Math.round(ms) });
-    sgTitle.textContent = `${job.title} ・ ${sec}秒（${modelSel.value === "opus" ? "Opus" : "Haiku"}）`;
+    const modelName = { opus: "Opus", sonnet: "Sonnet" }[modelSel.value] || "Haiku";
+    sgTitle.textContent = `${job.gist ? `🗣 ${job.gist}` : job.title} ・ ${sec}秒（${modelName}）`;
   }
 }
 
@@ -1058,6 +1048,14 @@ function handleSuggestionLine(line, job) {
     return false;
   }
   if (obj.kind === "translation") return false; // 和訳は Soniox が出すので、AI が書いてしまった和訳は使わない
+  if (obj.kind === "gist") {
+    // 相手が直前に話していたことの要約(日本語1行)。返答案の上に出す
+    if (job && typeof obj.ja === "string" && obj.ja.trim()) {
+      job.gist = obj.ja.trim();
+      sgTitle.textContent = `🗣 ${job.gist}`;
+    }
+    return false;
+  }
   if (typeof obj.en !== "string" || !obj.en.trim()) return false;
   const s = { kind: obj.kind, en: obj.en.trim(), ja: typeof obj.ja === "string" ? obj.ja : "" };
   suggestions.push(s);

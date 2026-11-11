@@ -16,7 +16,7 @@ const DEFAULT_SONIOX_MODEL = "stt-rt-v5";
 const DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5";
 const DEFAULT_CLAUDE_EFFORT = "low"; // 会話中に待たせないよう、考える量は少なめ
 // 画面の設定で選べるモデル(これ以外は受け付けない)
-const MODELS = { haiku: "claude-haiku-5-5", opus: "claude-opus-5-5" };
+const MODELS = { haiku: "claude-haiku-5-5", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
 const MAX_HISTORY = 30;              // Claude に渡す直近の発言数
 const MAX_TEXT = 1_000;              // 1発言の最大文字数
 const MAX_NOTE = 4_000;              // 自己紹介・覚えていることの最大文字数(Claude に渡す分)
@@ -33,17 +33,21 @@ const SYSTEM_PROMPT = `You help a Japanese speaker who is not confident in Engli
 The app transcribes what the other person ("Them") says. Them usually does most of the talking.
 When the user wants to respond, they press a button and read one of your suggestions aloud ("Me").
 
-The user pressed the button now. Write 4 short things the user could say next, based mainly on the
-"Last ~30 seconds" part (respond to the latest topic or question in it). Use "Earlier" only to understand that part:
-- 1 natural reaction that shows the user understood (a short comment or empathy, not just "Yeah")
+The user pressed the button now. First work out what Them has been saying in the "Last ~30 seconds" part
+(the topic, their point or opinion, and any question to the user); use "Earlier" only to understand it.
+Then write 4 short things the user could say next that respond to exactly that:
+- 1 natural reaction that shows the user understood Them's point (agree, empathize, or react to a specific detail)
 - 1 answer or opinion: answer Them's question if there was one (for a yes/no question, pick the most natural side),
   otherwise share a related personal comment
-- 1 follow-up question that asks Them about what they just said
+- 1 follow-up question about something specific Them just said
 - 1 more option that fits best: another answer, a polite clarification, or a light topic change
 
 Rules:
 - Keep each suggestion short: one spoken sentence of about 3-10 words (at most 2 very short sentences),
   natural and easy for a beginner to read aloud.
+- Be specific, not generic: refer to the actual things, names or ideas Them just mentioned (e.g. "Mario Kart on Steam
+  would sell a lot" rather than "That's interesting"). A suggestion that could fit any conversation is a bad suggestion.
+- "Me" lines are what the user already said; build on them and do not repeat them.
 - Fit the conversation so far and the user's profile/scene. Never invent personal facts that contradict the profile.
   If an answer needs a fact you don't know (a time, a number, a name), offer a plausible concrete choice rather than a placeholder.
 - The transcript comes from speech recognition and may contain errors, cut-off sentences, and mislabeled speakers;
@@ -58,8 +62,12 @@ Rules:
   Use it so answers stay consistent with what the user has said before and feel personal; never contradict it.
 - "ja" is a short, natural Japanese translation so the user knows what they are saying.
 
-Output format: exactly 4 lines, one JSON object per line (JSON Lines), and nothing else —
-no translations of the conversation, no code fences, no commentary, no blank lines:
+Output format: exactly 5 lines, one JSON object per line (JSON Lines), and nothing else —
+no translations of the conversation, no code fences, no commentary, no blank lines.
+First line: a very short Japanese summary (about 20-40 characters) of what Them is talking about right now,
+including their question if any, so the user can check they followed:
+{"kind":"gist","ja":"..."}
+Then the 4 suggestions:
 {"kind":"answer","en":"...","ja":"..."}
 kind is one of: "answer", "question", "other" (use "answer" for reactions and answers).
 Latency-sensitive; begin your visible answer immediately.`;
@@ -184,9 +192,11 @@ async function suggest(request, env) {
   ].filter(Boolean);
 
   const model = pickModel(body, env);
-  const fallback = fallbackParams(model);
-  // Haiku は考える処理を切って、すぐに書き始めさせる(Opus 5.5 は切れないので考える量を少なくするだけ)
-  const thinking = /haiku/.test(model) ? { thinking: { type: "disabled" } } : {};
+  // 考える処理を切って、すぐに書き始めさせる(Haiku は disabled、Sonnet 5.5 は between_tools。Opus 5.5 は切れないので考える量を少なくするだけ)。
+  // Sonnet の between_tools は断られたときの別モデルへの切り替えと組み合わせない
+  const thinking = /haiku/.test(model) ? { thinking: { type: "disabled" } }
+    : /sonnet/.test(model) ? { thinking: { type: "between_tools" } } : {};
+  const fallback = /sonnet/.test(model) ? {} : fallbackParams(model);
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const encoder = new TextEncoder();
   const { readable, writable } = new TransformStream();
