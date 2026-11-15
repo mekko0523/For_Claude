@@ -1,7 +1,6 @@
 requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0
-playwright>=1.40
 
 # For fc26_watch/realtime_bot (the always-on reaction-roles/welcome/
 # moderation/leveling bot). Not needed for the GitHub Actions cron jobs.
