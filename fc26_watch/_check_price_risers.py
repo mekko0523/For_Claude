@@ -29,8 +29,14 @@ def main() -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.goto(URL, wait_until="networkidle", timeout=30000)
-        page.wait_for_timeout(3000)
+        try:
+            page.goto(URL, wait_until="networkidle", timeout=20000)
+        except Exception as exc:  # noqa: BLE001 -- investigation script; this site seems to keep
+            # some background connection open, so "networkidle" doesn't
+            # reliably fire even once the content we care about has
+            # rendered. Fall back to just waiting a fixed extra interval.
+            print(f"  (goto didn't reach networkidle, continuing anyway: {exc})")
+        page.wait_for_timeout(5000)
 
         print(f"=== Full rendered body text ({URL}) ===")
         print(page.inner_text("body"))
