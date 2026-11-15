@@ -20,10 +20,9 @@ from bs4 import BeautifulSoup
 from .config import REQUEST_HEADERS, REQUEST_TIMEOUT
 
 CANDIDATE_URLS = [
-    "https://www.fut.gg/players/",
-    "https://www.fut.gg/whats-hot/",
-    "https://www.fut.gg/api/players/",
-    "https://www.fut.gg/api/players/?sort=-price_change_percent",
+    "https://www.fut.gg/price-ranges/",
+    "https://www.fut.gg/api/fut/player-prices/27/",
+    "https://www.fut.gg/api/fut/players/v2/27/",
 ]
 
 
@@ -48,13 +47,15 @@ def dump(url: str) -> None:
     scripts = soup.find_all("script")
     print(f"  <script> tags: {len(scripts)}")
     price_scripts = [
-        s for s in scripts if s.string and re.search(r"price|percent", s.string, re.IGNORECASE)
+        s for s in scripts if s.string and re.search(r"price|percent|coins|trend", s.string, re.IGNORECASE)
     ]
-    print(f"  <script> tags mentioning price/percent: {len(price_scripts)}")
-    for s in price_scripts[:5]:
+    print(f"  <script> tags mentioning price/percent/coins/trend: {len(price_scripts)}")
+    for i, s in enumerate(price_scripts[:3]):
         body = s.string
-        idx = re.search(r"price|percent", body, re.IGNORECASE).start()
-        print(f"    ...{body[max(0, idx - 80):idx + 200]!r}...")
+        print(f"    --- script #{i} (len={len(body)}) ---")
+        for m in list(re.finditer(r"price|percent|coins|trend", body, re.IGNORECASE))[:6]:
+            idx = m.start()
+            print(f"      ...{body[max(0, idx - 60):idx + 250]!r}...")
 
     # Also check raw response text (pre-parsing) in case it's not even
     # inside a <script> tag BeautifulSoup recognizes.
