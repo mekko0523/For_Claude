@@ -62,13 +62,3 @@ jobs:
           else
             echo "No state changes to commit."
           fi
-
-      - name: TEMP -- install Playwright browser
-        run: |
-          pip install playwright
-          playwright install --with-deps chromium
-
-      - name: TEMP -- diagnose price-trend Discord link + check price-history API
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-        run: python -m fc26_watch._check_price_risers

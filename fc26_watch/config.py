@@ -186,17 +186,17 @@ REQUEST_HEADERS = {
 
 # fut.gg price-momentum picks (see price_trend.py). Of the time windows
 # fut.gg's API actually accepts (6h/12h/24h -- 3h/48h/72h/168h all 404, so a
-# true multi-day average isn't available), 24h is used as the base: it's the
-# most-smoothed option on offer, covering a full day's trading across time
-# zones rather than one region's primetime. MOMENTUM_SPIKE_CHECK_HOURS cross-
-# checks against the shorter 6h window to filter out cards whose 24h rise is
-# really just a single recent spike (news/stream hype, a promo reveal) rather
-# than a sustained trend -- if most of the move already happened in the last
-# 6h, it's excluded rather than recommended, since a spike that's already
-# visible on a tracker site is also one that may have already peaked.
+# true multi-day average, and per-player historical price charts, aren't
+# available), all three are combined as a cheap proxy for "chart shape":
+# a candidate only qualifies if its true rise is strictly smaller over 6h
+# than over 12h than over 24h (0 < 6h < 12h < 24h). That shape means the
+# price has been climbing steadily all day, accelerating toward now, rather
+# than jumping once on a single news/event spike that may have already
+# peaked by the time it's posted. A card missing from the extreme-mover
+# tail of any one window is skipped rather than guessed at.
 MOMENTUM_BASE_WINDOW_HOURS = 24
-MOMENTUM_SPIKE_CHECK_HOURS = 6
-MOMENTUM_SPIKE_RATIO = 0.75  # skip if the 6h rise is >= this fraction of the 24h rise
+MOMENTUM_MID_WINDOW_HOURS = 12
+MOMENTUM_SHORT_WINDOW_HOURS = 6
 MOMENTUM_MIN_RISE_PCT = 8.0  # ignore noise below this (true, sign-corrected) %
 MOMENTUM_MIN_PRICE = 5000  # ignore cheap fodder cards that swing wildly on thin volume
 MOMENTUM_TOP_N = 5  # how many picks to post per run
