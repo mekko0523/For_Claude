@@ -18,6 +18,7 @@ from . import config
 from .discord_notify import send_discord_notification
 from .fetcher import Item, collect_items
 from .mailer import send_notification
+from .price_trend import collect_price_trend_items
 from .state import load_state, save_state
 
 
@@ -31,7 +32,9 @@ def is_relevant_version(item: Item) -> bool:
     # source's live current-listing page (fut.gg's /evolutions/,
     # /objectives/, /sbc/), which doesn't carry old-version content to begin
     # with, so there's nothing here for the filter to protect against.
-    if item.category in (config.CATEGORY_EVO, config.CATEGORY_PLAYER_INFO):
+    # Price-trend items (player names) never spell out a version either, and
+    # are already scoped to FC27 via the momentum API's own game=27 param.
+    if item.category in (config.CATEGORY_EVO, config.CATEGORY_PLAYER_INFO, config.CATEGORY_PRICE_TREND):
         return True
     haystack = f"{item.title} {item.url}"
     return bool(config.FC_VERSION_PATTERN.search(haystack))
@@ -57,7 +60,7 @@ def dedupe_by_title(items: list[Item]) -> list[Item]:
 def run(dump_links: bool = False, dry_run: bool = False) -> list[Item]:
     state = load_state(config.STATE_FILE)
 
-    all_items = collect_items(config.SOURCES, dump_links=dump_links)
+    all_items = collect_items(config.SOURCES, dump_links=dump_links) + collect_price_trend_items()
     # Items already posted in a previous run (by URL) are never posted
     # again, however many runs have passed since.
     new_items = [item for item in all_items if item.url not in state.seen_urls]

@@ -62,6 +62,3 @@ jobs:
           else
             echo "No state changes to commit."
           fi
-
-      - name: TEMP -- check which momentum windows fut.gg's API accepts
-        run: python -m fc26_watch._check_price_risers

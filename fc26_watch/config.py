@@ -158,6 +158,9 @@ CATEGORY_EVO = "EVO情報"
 CATEGORY_PLAYER_INFO = "選手情報・SBC"
 CATEGORY_EA_OFFICIAL = "EA公式情報"
 CATEGORY_TREND = "トレンド"
+# Bot-posted price-momentum picks from fut.gg (see price_trend.py) -- distinct
+# from CATEGORY_TREND above, which is members manually sharing X/Twitter posts.
+CATEGORY_PRICE_TREND = "価格トレンド情報"
 
 # Matches "FC27", "FC 27", "FC-27", "FUT27", "FUT 27" (case-insensitive).
 FC_VERSION_PATTERN = re.compile(r"\bfc\s?-?\s?27\b|\bfut\s?-?\s?27\b", re.IGNORECASE)
@@ -180,6 +183,24 @@ REQUEST_HEADERS = {
         "+https://github.com/)"
     )
 }
+
+# fut.gg price-momentum picks (see price_trend.py). Of the time windows
+# fut.gg's API actually accepts (6h/12h/24h -- 3h/48h/72h/168h all 404, so a
+# true multi-day average isn't available), 24h is used as the base: it's the
+# most-smoothed option on offer, covering a full day's trading across time
+# zones rather than one region's primetime. MOMENTUM_SPIKE_CHECK_HOURS cross-
+# checks against the shorter 6h window to filter out cards whose 24h rise is
+# really just a single recent spike (news/stream hype, a promo reveal) rather
+# than a sustained trend -- if most of the move already happened in the last
+# 6h, it's excluded rather than recommended, since a spike that's already
+# visible on a tracker site is also one that may have already peaked.
+MOMENTUM_BASE_WINDOW_HOURS = 24
+MOMENTUM_SPIKE_CHECK_HOURS = 6
+MOMENTUM_SPIKE_RATIO = 0.75  # skip if the 6h rise is >= this fraction of the 24h rise
+MOMENTUM_MIN_RISE_PCT = 8.0  # ignore noise below this (true, sign-corrected) %
+MOMENTUM_MIN_PRICE = 5000  # ignore cheap fodder cards that swing wildly on thin volume
+MOMENTUM_TOP_N = 5  # how many picks to post per run
+MOMENTUM_TAIL_PAGES = 2  # how many pages to fetch from the end of each momentum list
 
 GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
