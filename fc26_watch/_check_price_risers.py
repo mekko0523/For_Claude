@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from playwright.sync_api import sync_playwright
 
-URL = "https://www.fut.gg/players/momentum/"
+URL = "https://www.fut.gg/players/trending/"
 
 
 def main() -> None:
