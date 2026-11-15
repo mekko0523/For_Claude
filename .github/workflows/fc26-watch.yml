@@ -62,3 +62,9 @@ jobs:
           else
             echo "No state changes to commit."
           fi
+
+      - name: TEMP -- install Playwright browser for price-riser check
+        run: playwright install --with-deps chromium
+
+      - name: TEMP -- check fut.gg price risers (rendered with Playwright)
+        run: python -m fc26_watch._check_price_risers
