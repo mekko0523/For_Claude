@@ -118,7 +118,7 @@ def collect_price_trend_items() -> list[Item]:
     mid_pct_by_id = {item["id"]: pct for item in mid_tail if (pct := true_rise_pct(item)) is not None}
     short_pct_by_id = {item["id"]: pct for item in short_tail if (pct := true_rise_pct(item)) is not None}
 
-    candidates: list[tuple[float, dict]] = []
+    candidates: list[tuple[float, float, float, dict]] = []
     for item in base_tail:
         base_pct = true_rise_pct(item)
         price = item.get("currentDbPrice")
@@ -141,19 +141,22 @@ def collect_price_trend_items() -> list[Item]:
             # which may have already peaked by the time this posts.
             continue
 
-        candidates.append((base_pct, item))
+        candidates.append((base_pct, mid_pct, short_pct, item))
 
     candidates.sort(key=lambda c: c[0], reverse=True)
 
     results: list[Item] = []
-    for base_pct, item in candidates[:MOMENTUM_TOP_N]:
+    for base_pct, mid_pct, short_pct, item in candidates[:MOMENTUM_TOP_N]:
         name = item.get("commonName") or f"{item.get('firstName')} {item.get('lastName')}"
         price = item["currentDbPrice"]
         results.append(
             Item(
                 source_name="futgg_price_trend",
                 category=CATEGORY_PRICE_TREND,
-                title=f"\U0001f4c8 {name} +{base_pct:.1f}%（{price:,}コイン、24h・安定上昇）",
+                title=(
+                    f"\U0001f4c8 {name}（{price:,}コイン、安定上昇）\n"
+                    f"  6h: +{short_pct:.1f}% / 12h: +{mid_pct:.1f}% / 24h: +{base_pct:.1f}%"
+                ),
                 url=urljoin(FUTGG_BASE_URL, item["url"]),
             )
         )
