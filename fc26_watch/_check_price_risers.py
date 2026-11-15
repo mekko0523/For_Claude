@@ -60,11 +60,42 @@ def try_price_history_endpoints() -> None:
             print(f"{url} -> ERROR {exc}")
 
 
+def check_player_page_has_chart() -> None:
+    from playwright.sync_api import sync_playwright
+
+    url = "https://www.fut.gg/players/277643-lamine-yamal-lamine-yamal/27-84163723/"
+    api_requests: list[str] = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.on("request", lambda req: api_requests.append(req.url) if "/api/" in req.url else None)
+        try:
+            page.goto(url, timeout=20000, wait_until="networkidle")
+        except Exception as exc:  # noqa: BLE001
+            print(f"goto networkidle wait failed (continuing anyway): {exc}")
+            page.wait_for_timeout(5000)
+
+        canvas_count = page.locator("canvas").count()
+        svg_count = page.locator("svg").count()
+        chart_text_hits = [
+            t for t in page.locator("text=/price/i").all_inner_texts()[:10]
+        ]
+        print(f"canvas elements: {canvas_count}, svg elements: {svg_count}")
+        print(f"text containing 'price' (sample): {chart_text_hits}")
+        print(f"\nAPI requests made loading this player page ({len(api_requests)}):")
+        for u in api_requests:
+            print(f"  {u}")
+        browser.close()
+
+
 def main() -> None:
     print("=== posted messages ===")
     check_posted_messages()
     print("\n=== price-history endpoint guesses ===")
     try_price_history_endpoints()
+    print("\n=== does the player page itself show a price chart? ===")
+    check_player_page_has_chart()
 
 
 if __name__ == "__main__":
