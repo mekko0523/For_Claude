@@ -199,6 +199,24 @@ MOMENTUM_MID_WINDOW_HOURS = 12
 MOMENTUM_SHORT_WINDOW_HOURS = 6
 MOMENTUM_MIN_RISE_PCT = 8.0  # ignore noise below this (true, sign-corrected) %
 MOMENTUM_MIN_PRICE = 5000  # ignore cheap fodder cards that swing wildly on thin volume
+
+# Second pick type for 価格トレンド情報 (see price_trend.collect_leak_expectation_items):
+# surfaces already-fetched general news headlines (not the official EVO/SBC
+# listing pages, which only carry content once it's actually live) that look
+# like they're reporting a leak/rumor of upcoming Evolution or SBC content,
+# since a leaked upcoming EVO/SBC can drive demand for specific players
+# before the price move shows up in momentum data at all. This needs no
+# extra network calls -- it just filters titles already collected this run.
+# A real X/Twitter leaker-account feed was considered but isn't automated,
+# same reason as the トレンド channel (no free search API).
+LEAK_SIGNAL_KEYWORDS = [
+    "leak", "leaked", "datamine", "datamined", "rumor", "rumour",
+    "upcoming", "coming soon", "predicted", "リーク", "予想", "速報",
+]
+LEAK_CONTENT_KEYWORDS = [
+    "evolution", "evo", "sbc", "squad building challenge",
+    "エボリューション", "エボ",
+]
 MOMENTUM_TOP_N = 5  # how many picks to post per run
 MOMENTUM_TAIL_PAGES = 2  # how many pages to fetch from the end of each momentum list
 

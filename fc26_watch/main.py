@@ -18,7 +18,7 @@ from . import config
 from .discord_notify import send_discord_notification
 from .fetcher import Item, collect_items
 from .mailer import send_notification
-from .price_trend import collect_price_trend_items
+from .price_trend import collect_leak_expectation_items, collect_price_trend_items
 from .state import load_state, save_state
 
 
@@ -60,7 +60,8 @@ def dedupe_by_title(items: list[Item]) -> list[Item]:
 def run(dump_links: bool = False, dry_run: bool = False) -> list[Item]:
     state = load_state(config.STATE_FILE)
 
-    all_items = collect_items(config.SOURCES, dump_links=dump_links) + collect_price_trend_items()
+    news_items = collect_items(config.SOURCES, dump_links=dump_links)
+    all_items = news_items + collect_price_trend_items() + collect_leak_expectation_items(news_items)
     # Items already posted in a previous run (by URL) are never posted
     # again, however many runs have passed since.
     new_items = [item for item in all_items if item.url not in state.seen_urls]

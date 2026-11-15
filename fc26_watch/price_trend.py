@@ -21,6 +21,16 @@ for how this module reads it:
 A candidate must also show a steadily-building rise across all three
 windows fut.gg's API supports (6h/12h/24h: 0 < 6h < 12h < 24h true rise)
 rather than a single recent spike -- see MOMENTUM_* in config.py.
+
+This module produces two different kinds of pick, both posted to the same
+価格トレンド情報 channel:
+ - collect_price_trend_items: the chart-shape picks above, from fut.gg's
+   momentum numbers.
+ - collect_leak_expectation_items: players a general news article (not the
+   official EVO/SBC listing pages) looks like it's reporting as the subject
+   of a leaked/rumored upcoming Evolution or SBC -- demand for these can
+   rise before any of that shows up in momentum data. The article itself is
+   always included as the source link, never asserted without one.
 """
 
 from __future__ import annotations
@@ -31,7 +41,11 @@ from urllib.parse import urljoin
 import requests
 
 from .config import (
+    CATEGORY_EA_OFFICIAL,
     CATEGORY_PRICE_TREND,
+    CATEGORY_UPDATE_NEWS,
+    LEAK_CONTENT_KEYWORDS,
+    LEAK_SIGNAL_KEYWORDS,
     MOMENTUM_BASE_WINDOW_HOURS,
     MOMENTUM_MID_WINDOW_HOURS,
     MOMENTUM_MIN_PRICE,
@@ -43,6 +57,11 @@ from .config import (
     REQUEST_TIMEOUT,
 )
 from .fetcher import Item
+
+# General news categories only -- the official EVO/SBC listing categories
+# (CATEGORY_EVO, CATEGORY_PLAYER_INFO) are confirmed-live content by the
+# time they appear there, not a leak/rumor of something upcoming.
+LEAK_SOURCE_CATEGORIES = {CATEGORY_UPDATE_NEWS, CATEGORY_EA_OFFICIAL}
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +155,32 @@ def collect_price_trend_items() -> list[Item]:
                 category=CATEGORY_PRICE_TREND,
                 title=f"\U0001f4c8 {name} +{base_pct:.1f}%（{price:,}コイン、24h・安定上昇）",
                 url=urljoin(FUTGG_BASE_URL, item["url"]),
+            )
+        )
+    return results
+
+
+def collect_leak_expectation_items(news_items: list[Item]) -> list[Item]:
+    """Flags already-fetched general-news headlines that look like a leak or
+    rumor of an upcoming Evolution or SBC, as a second, qualitative kind of
+    price-trend pick (see module docstring). Pure keyword matching on titles
+    already in hand -- no extra fetches, and no claim about which player is
+    named beyond what the linked article itself says."""
+    results: list[Item] = []
+    for item in news_items:
+        if item.category not in LEAK_SOURCE_CATEGORIES:
+            continue
+        title_lower = item.title.lower()
+        has_signal = any(kw in title_lower for kw in LEAK_SIGNAL_KEYWORDS)
+        has_content = any(kw in title_lower for kw in LEAK_CONTENT_KEYWORDS)
+        if not (has_signal and has_content):
+            continue
+        results.append(
+            Item(
+                source_name="futgg_price_trend_leak",
+                category=CATEGORY_PRICE_TREND,
+                title=f"\U0001f52e EVO/SBCリーク情報: {item.title}",
+                url=item.url,
             )
         )
     return results
