@@ -20,10 +20,10 @@ from bs4 import BeautifulSoup
 from .config import REQUEST_HEADERS, REQUEST_TIMEOUT
 
 CANDIDATE_URLS = [
-    "https://www.fut.gg/players/?sort=-price_change_percent",
-    "https://www.fut.gg/players/?sort=-price_change",
-    "https://www.fut.gg/whats-hot/",
     "https://www.fut.gg/players/",
+    "https://www.fut.gg/whats-hot/",
+    "https://www.fut.gg/api/players/",
+    "https://www.fut.gg/api/players/?sort=-price_change_percent",
 ]
 
 
@@ -40,6 +40,29 @@ def dump(url: str) -> None:
         return
 
     soup = BeautifulSoup(resp.text, "lxml")
+
+    # The rendered text had no price/percent data last run -- check whether
+    # it's embedded as JSON in a <script> tag instead (common for Next.js
+    # apps: __NEXT_DATA__ or streamed self.__next_f.push(...) chunks), which
+    # BeautifulSoup's get_text() wouldn't surface since it skips <script>.
+    scripts = soup.find_all("script")
+    print(f"  <script> tags: {len(scripts)}")
+    price_scripts = [
+        s for s in scripts if s.string and re.search(r"price|percent", s.string, re.IGNORECASE)
+    ]
+    print(f"  <script> tags mentioning price/percent: {len(price_scripts)}")
+    for s in price_scripts[:5]:
+        body = s.string
+        idx = re.search(r"price|percent", body, re.IGNORECASE).start()
+        print(f"    ...{body[max(0, idx - 80):idx + 200]!r}...")
+
+    # Also check raw response text (pre-parsing) in case it's not even
+    # inside a <script> tag BeautifulSoup recognizes.
+    raw_pct_matches = re.findall(r"[+-]?\d{1,3}(?:\.\d+)?%", resp.text)
+    print(f"  percent-looking tokens in RAW response text: {raw_pct_matches[:20]}")
+    raw_price_change_idx = resp.text.lower().find("price_change")
+    if raw_price_change_idx != -1:
+        print(f"  found literal 'price_change' in raw text near: {resp.text[raw_price_change_idx-60:raw_price_change_idx+200]!r}")
 
     # Look for anything that smells like a price-change percentage/value.
     text = soup.get_text(" ", strip=True)
