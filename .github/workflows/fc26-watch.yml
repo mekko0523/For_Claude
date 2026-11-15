@@ -63,5 +63,5 @@ jobs:
             echo "No state changes to commit."
           fi
 
-      - name: TEMP -- check fut.gg price risers (check far end of list)
+      - name: TEMP -- check fut.gg price risers (confirm sign flip, final list)
         run: python -m fc26_watch._check_price_risers

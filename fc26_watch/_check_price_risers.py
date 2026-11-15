@@ -1,15 +1,17 @@
-"""One-off investigation (take 7): check if risers live at the far end.
+"""One-off investigation (take 8): confirm the sign flip and list real risers.
 
-Take 6 (Playwright) found NO risers/fallers toggle at all on
-/players/momentum/ -- only 6h/12h/24h window buttons, and every one of
-the 30 rendered cards was a faller. So this single API call always
-returns the same page 1. But its JSON also carries "next", "currentPage"
-and "total" -- if the full list (across all pages) is sorted by true
-signed momentum ascending (most-negative first) and momentumPercentage
-is just an unsigned magnitude for display, the risers would sit at the
-FAR END of the list, not on page 1. Check "total" and fetch the last
-page directly to see if it holds clearly different (and presumably
-rising) cards.
+Take 7 found the full momentum list (594 items) is sorted DESCENDING by
+the raw momentumPercentage field: page 1 = most positive raw values,
+last page = most negative. But the actual fut.gg page visually shows
+page 1's top card (e.g. Akinfenwa, raw +24.28) with a *minus* sign
+("-24.28%"), and page-1 names are all retro/icon cards known for crashing
+after a promo spike -- while the last page's names (Lamine Yamal, Kobbie
+Mainoo, Trey Nyoni, Mohamed Amoura: hot young in-form players) fit real
+PRICE RISERS far better. So the UI's displayed sign is the *negative* of
+this raw field: raw positive = falling, raw negative = rising. Fetch the
+last two pages, sort by raw momentumPercentage ascending (most negative
+first = biggest real rise), and print the true Top 20 risers using the
+absolute value as the display percentage.
 
 Usage:
     python -m fc26_watch._check_price_risers
@@ -25,46 +27,31 @@ URL = "https://www.fut.gg/api/fut/players/v2/momentum/24/"
 PARAMS = {"game": "27", "excluded_quality_id": "9,8,6,5,3,2"}
 
 
-def fetch(page: int | None = None) -> dict:
+def fetch(page: int) -> dict:
     params = dict(PARAMS)
-    if page is not None:
-        params["page"] = str(page)
+    params["page"] = str(page)
     resp = requests.get(URL, headers=REQUEST_HEADERS, params=params, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
 
-def summarize(items: list[dict], label: str) -> None:
-    print(f"\n=== {label} ({len(items)} items) ===")
-    for i in items[:10]:
-        name = i.get("commonName") or f"{i.get('firstName')} {i.get('lastName')}"
-        print(f"  {name!r:35} momentumPercentage={i.get('momentumPercentage')!r} price={i.get('currentDbPrice')!r}")
-
-
 def main() -> None:
-    page1 = fetch()
-    total = page1.get("total")
-    current_page = page1.get("currentPage")
-    next_page = page1.get("next")
-    print(f"page1: total={total!r} currentPage={current_page!r} next={next_page!r}")
-    items1 = page1["data"]
-    summarize(items1, "page 1 (default)")
-
-    if not isinstance(total, int) or total <= len(items1):
-        print("\nTotal is small or missing -- no further pages to check.")
-        return
-
-    per_page = len(items1)
+    page1 = fetch(1)
+    total = page1["total"]
+    per_page = len(page1["data"])
     last_page_num = (total + per_page - 1) // per_page
-    print(f"\nComputed last_page_num={last_page_num} (per_page={per_page})")
+    print(f"total={total} per_page={per_page} last_page_num={last_page_num}")
 
-    last = fetch(page=last_page_num)
-    summarize(last["data"], f"LAST page ({last_page_num})")
+    tail_items = fetch(last_page_num)["data"]
+    if last_page_num > 1:
+        tail_items += fetch(last_page_num - 1)["data"]
 
-    # Also sample something in the middle, to see the gradient.
-    mid_page_num = max(1, last_page_num // 2)
-    mid = fetch(page=mid_page_num)
-    summarize(mid["data"], f"MIDDLE page ({mid_page_num})")
+    risers = sorted(tail_items, key=lambda i: i["momentumPercentage"])
+    print(f"\n=== Top 20 RISERS (raw momentumPercentage ascending -> true %% rise) ===")
+    for i in risers[:20]:
+        name = i.get("commonName") or f"{i.get('firstName')} {i.get('lastName')}"
+        true_pct = -i["momentumPercentage"]
+        print(f"  {name!r:35} +{true_pct:.2f}%  price={i.get('currentDbPrice')!r}  url={i.get('url')}")
 
 
 if __name__ == "__main__":
