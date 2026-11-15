@@ -1,13 +1,15 @@
-"""One-off investigation (take 6): find the risers/fallers direction signal.
+"""One-off investigation (take 7): check if risers live at the far end.
 
-Take 5 confirmed /api/fut/players/v2/momentum/24/ is real JSON data, but
-dumping every field on an item found no direction indicator (no signed
-value, no isRising/trend boolean) -- momentumPercentage is apparently an
-unsigned magnitude. The rendered /players/momentum/ page showed this same
-player/value as "-23.57%", so direction must come from a toggle (Risers
-vs Fallers tab) that calls a DIFFERENT url/param, not from this data.
-Load the page with Playwright, find and click that toggle, and capture
-the resulting network request to see what actually changes.
+Take 6 (Playwright) found NO risers/fallers toggle at all on
+/players/momentum/ -- only 6h/12h/24h window buttons, and every one of
+the 30 rendered cards was a faller. So this single API call always
+returns the same page 1. But its JSON also carries "next", "currentPage"
+and "total" -- if the full list (across all pages) is sorted by true
+signed momentum ascending (most-negative first) and momentumPercentage
+is just an unsigned magnitude for display, the risers would sit at the
+FAR END of the list, not on page 1. Check "total" and fetch the last
+page directly to see if it holds clearly different (and presumably
+rising) cards.
 
 Usage:
     python -m fc26_watch._check_price_risers
@@ -15,55 +17,54 @@ Usage:
 
 from __future__ import annotations
 
-from playwright.sync_api import sync_playwright
+import requests
 
-URL = "https://www.fut.gg/players/momentum/"
+from .config import REQUEST_HEADERS, REQUEST_TIMEOUT
+
+URL = "https://www.fut.gg/api/fut/players/v2/momentum/24/"
+PARAMS = {"game": "27", "excluded_quality_id": "9,8,6,5,3,2"}
+
+
+def fetch(page: int | None = None) -> dict:
+    params = dict(PARAMS)
+    if page is not None:
+        params["page"] = str(page)
+    resp = requests.get(URL, headers=REQUEST_HEADERS, params=params, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def summarize(items: list[dict], label: str) -> None:
+    print(f"\n=== {label} ({len(items)} items) ===")
+    for i in items[:10]:
+        name = i.get("commonName") or f"{i.get('firstName')} {i.get('lastName')}"
+        print(f"  {name!r:35} momentumPercentage={i.get('momentumPercentage')!r} price={i.get('currentDbPrice')!r}")
 
 
 def main() -> None:
-    requests_seen: list[str] = []
+    page1 = fetch()
+    total = page1.get("total")
+    current_page = page1.get("currentPage")
+    next_page = page1.get("next")
+    print(f"page1: total={total!r} currentPage={current_page!r} next={next_page!r}")
+    items1 = page1["data"]
+    summarize(items1, "page 1 (default)")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.on(
-            "request",
-            lambda req: requests_seen.append(req.url) if "/api/" in req.url else None,
-        )
+    if not isinstance(total, int) or total <= len(items1):
+        print("\nTotal is small or missing -- no further pages to check.")
+        return
 
-        try:
-            page.goto(URL, timeout=20000, wait_until="networkidle")
-        except Exception as exc:  # noqa: BLE001
-            print(f"goto networkidle wait failed (continuing anyway): {exc}")
-            page.wait_for_timeout(5000)
+    per_page = len(items1)
+    last_page_num = (total + per_page - 1) // per_page
+    print(f"\nComputed last_page_num={last_page_num} (per_page={per_page})")
 
-        print(f"=== API requests after initial load ({len(requests_seen)}) ===")
-        for u in requests_seen:
-            print(f"  {u}")
+    last = fetch(page=last_page_num)
+    summarize(last["data"], f"LAST page ({last_page_num})")
 
-        # Look for a Risers/Fallers-style toggle and list all clickable text
-        # so we can see exactly what's on this page.
-        candidates = page.locator(
-            "button, a, [role=tab], [role=button]"
-        )
-        count = candidates.count()
-        print(f"\n=== {count} clickable elements found; those with relevant text ===")
-        texts = []
-        for i in range(min(count, 200)):
-            try:
-                t = candidates.nth(i).inner_text(timeout=500).strip()
-            except Exception:  # noqa: BLE001
-                continue
-            if t:
-                texts.append(t)
-        for t in texts:
-            if any(k in t.lower() for k in ("ris", "fall", "gain", "drop", "up", "down", "momentum")):
-                print(f"  {t!r}")
-
-        print(f"\n=== ALL clickable text (for manual inspection) ===")
-        print(texts)
-
-        browser.close()
+    # Also sample something in the middle, to see the gradient.
+    mid_page_num = max(1, last_page_num // 2)
+    mid = fetch(page=mid_page_num)
+    summarize(mid["data"], f"MIDDLE page ({mid_page_num})")
 
 
 if __name__ == "__main__":
