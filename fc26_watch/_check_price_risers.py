@@ -42,7 +42,21 @@ def main() -> None:
         return
 
     print(f"item count: {len(items)}")
-    print(f"first item full content: {items[0]}")
+    print(f"\nALL keys on first item, sorted: {sorted(items[0].keys())}")
+
+    # The one sampled item's momentumPercentage (23.57, Akinfenwa) matches
+    # the magnitude shown as "-23.57%" when the actual /players/momentum/
+    # page rendered this exact card -- so this field may be an unsigned
+    # magnitude, with direction (rising vs falling) stored separately.
+    # Print every field whose value looks boolean/directional to find it.
+    print("\nFields that might encode direction (bool-ish or small int, name hints):")
+    for k, v in items[0].items():
+        if isinstance(v, bool) or (
+            isinstance(v, (int, float))
+            and abs(v) <= 1
+            and any(h in k.lower() for h in ("trend", "direction", "rising", "falling", "up", "down", "sign"))
+        ):
+            print(f"  {k!r}: {v!r}")
 
     # Find the percentage-change key by name, then sort descending for risers.
     pct_key = None
