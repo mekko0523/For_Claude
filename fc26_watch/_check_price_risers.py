@@ -12,17 +12,15 @@ Usage:
 
 from __future__ import annotations
 
-import re
+import json
 
 import requests
-from bs4 import BeautifulSoup
 
 from .config import REQUEST_HEADERS, REQUEST_TIMEOUT
 
 CANDIDATE_URLS = [
-    "https://www.fut.gg/price-ranges/",
-    "https://www.fut.gg/api/fut/player-prices/27/",
     "https://www.fut.gg/api/fut/players/v2/27/",
+    "https://www.fut.gg/api/fut/players/v2/27/?page=1",
 ]
 
 
@@ -33,59 +31,48 @@ def dump(url: str) -> None:
     except requests.RequestException as exc:
         print(f"  request failed: {exc}")
         return
-    print(f"  status: {resp.status_code}  len: {len(resp.text)}")
+    print(f"  status: {resp.status_code}  content-type: {resp.headers.get('content-type')}  len: {len(resp.text)}")
     if not resp.ok:
         print(f"  body head: {resp.text[:300]!r}")
         return
 
-    soup = BeautifulSoup(resp.text, "lxml")
+    try:
+        data = resp.json()
+    except ValueError:
+        print(f"  not valid JSON. body head: {resp.text[:500]!r}")
+        return
 
-    # The rendered text had no price/percent data last run -- check whether
-    # it's embedded as JSON in a <script> tag instead (common for Next.js
-    # apps: __NEXT_DATA__ or streamed self.__next_f.push(...) chunks), which
-    # BeautifulSoup's get_text() wouldn't surface since it skips <script>.
-    scripts = soup.find_all("script")
-    print(f"  <script> tags: {len(scripts)}")
-    price_scripts = [
-        s for s in scripts if s.string and re.search(r"price|percent|coins|trend", s.string, re.IGNORECASE)
-    ]
-    print(f"  <script> tags mentioning price/percent/coins/trend: {len(price_scripts)}")
-    for i, s in enumerate(price_scripts[:3]):
-        body = s.string
-        print(f"    --- script #{i} (len={len(body)}) ---")
-        for m in list(re.finditer(r"price|percent|coins|trend", body, re.IGNORECASE))[:6]:
-            idx = m.start()
-            print(f"      ...{body[max(0, idx - 60):idx + 250]!r}...")
+    def describe(obj, path="$", depth=0):
+        if depth > 2:
+            return
+        if isinstance(obj, dict):
+            print(f"  {path}: dict with keys {list(obj.keys())[:30]}")
+            for k, v in list(obj.items())[:10]:
+                describe(v, f"{path}.{k}", depth + 1)
+        elif isinstance(obj, list):
+            print(f"  {path}: list, length {len(obj)}")
+            if obj:
+                describe(obj[0], f"{path}[0]", depth + 1)
 
-    # Also check raw response text (pre-parsing) in case it's not even
-    # inside a <script> tag BeautifulSoup recognizes.
-    raw_pct_matches = re.findall(r"[+-]?\d{1,3}(?:\.\d+)?%", resp.text)
-    print(f"  percent-looking tokens in RAW response text: {raw_pct_matches[:20]}")
-    raw_price_change_idx = resp.text.lower().find("price_change")
-    if raw_price_change_idx != -1:
-        print(f"  found literal 'price_change' in raw text near: {resp.text[raw_price_change_idx-60:raw_price_change_idx+200]!r}")
+    describe(data)
 
-    # Look for anything that smells like a price-change percentage/value.
-    text = soup.get_text(" ", strip=True)
-    pct_matches = re.findall(r"[+-]?\d{1,3}(?:\.\d+)?%", text)
-    print(f"  percent-looking tokens found in page text: {pct_matches[:40]}")
+    # If there's a list of player-like dicts anywhere obvious, print a
+    # sample of the first one's full keys/values (truncated) and scan for
+    # anything price/change-shaped among them.
+    candidates = []
+    if isinstance(data, dict):
+        for key in ("data", "players", "results", "items"):
+            if isinstance(data.get(key), list):
+                candidates = data[key]
+                break
+    elif isinstance(data, list):
+        candidates = data
 
-    # Player card links, same pattern used elsewhere in this project.
-    player_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if re.match(r"^/players/\d+", href) or "/players/" in href and re.search(r"/players/\d", href):
-            player_links.append((href, " ".join(a.get_text().split())[:80]))
-    print(f"  player card links found: {len(player_links)}")
-    for href, label in player_links[:20]:
-        print(f"    {href}  {label!r}")
-
-    # Any element with a class hinting at price/change.
-    price_ish = soup.find_all(class_=re.compile(r"price|change|percent", re.IGNORECASE))
-    print(f"  elements with price/change/percent-ish class: {len(price_ish)}")
-    for el in price_ish[:20]:
-        snippet = " ".join(el.get_text().split())[:60]
-        print(f"    <{el.name} class={' '.join(el.get('class') or [])!r}> {snippet!r}")
+    if candidates:
+        print(f"\n  Found a list of {len(candidates)} items. First item's full content:")
+        print(f"  {json.dumps(candidates[0], ensure_ascii=False)[:2000]}")
+        price_keys = [k for k in candidates[0].keys() if "price" in k.lower() or "coin" in k.lower() or "trend" in k.lower()] if isinstance(candidates[0], dict) else []
+        print(f"\n  Keys on first item that look price-related: {price_keys}")
 
 
 def main() -> None:
