@@ -1,12 +1,12 @@
-"""One-off investigation (take 4): capture the real network requests
-/players/momentum/ makes, to learn its actual API + sort params directly
-instead of guessing. That page already confirmed real per-player %/coin
-price-change data (e.g. "ST 86.6 107K -23.57% -25,220", name recoverable
-from the URL slug), but its default view only showed fallers (negative %)
--- need to find how to flip it to show risers (positive %).
+"""One-off investigation (take 5): call fut.gg's real momentum API directly.
 
-Only GitHub Actions runners can reach fut.gg at all from this project (this
-sandbox's own network can't resolve the host), so this runs there.
+Captured via Playwright's network log while loading /players/momentum/:
+    https://www.fut.gg/api/fut/players/v2/momentum/24/?game=27&excluded_quality_id=9,8,6,5,3,2
+"24" matches the page's 6h/12h/24h time-window buttons. This is a real
+JSON API (same family as /api/fut/players/v2/27/ found earlier, which also
+worked with plain requests) -- no browser needed for this part. The
+page's own default view only showed fallers; rather than hunt for a sort
+query param, just fetch the full list and sort it in Python.
 
 Usage:
     python -m fc26_watch._check_price_risers
@@ -14,45 +14,52 @@ Usage:
 
 from __future__ import annotations
 
-from playwright.sync_api import sync_playwright
+import requests
 
-URL = "https://www.fut.gg/players/momentum/"
+from .config import REQUEST_HEADERS, REQUEST_TIMEOUT
+
+URL = "https://www.fut.gg/api/fut/players/v2/momentum/24/"
 
 
 def main() -> None:
-    requests_seen: list[str] = []
+    resp = requests.get(
+        URL,
+        headers=REQUEST_HEADERS,
+        params={"game": "27", "excluded_quality_id": "9,8,6,5,3,2"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    print(f"status: {resp.status_code}  content-type: {resp.headers.get('content-type')}  len: {len(resp.text)}")
+    if not resp.ok:
+        print(f"body head: {resp.text[:500]!r}")
+        return
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.on("request", lambda req: requests_seen.append(req.url))
+    data = resp.json()
+    print(f"top-level keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
 
-        try:
-            page.goto(URL, wait_until="networkidle", timeout=20000)
-        except Exception as exc:  # noqa: BLE001 -- investigation script; see earlier runs
-            print(f"  (goto didn't reach networkidle, continuing anyway: {exc})")
-        page.wait_for_timeout(5000)
+    items = data.get("data") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        print(f"full body (not a list under 'data'): {str(data)[:2000]}")
+        return
 
-        print(f"=== All requests made while loading {URL} ===")
-        for u in requests_seen:
-            if "fut.gg" in u and not any(
-                u.endswith(ext) for ext in (".css", ".js", ".png", ".webp", ".svg", ".woff2", ".ico")
-            ):
-                print(f"  {u}")
+    print(f"item count: {len(items)}")
+    print(f"first item full content: {items[0]}")
 
-        # Now try clicking something that looks like it would flip
-        # sort direction, and see what NEW request fires.
-        print("\n=== Looking for a sort-direction control to click ===")
-        candidates = page.query_selector_all(
-            "th, [class*='sort' i], [class*='Sort' i], [aria-label*='sort' i]"
-        )
-        print(f"  found {len(candidates)} candidate sort controls")
-        for el in candidates[:10]:
-            text = " ".join((el.inner_text() or "").split())
-            cls = el.get_attribute("class") or ""
-            print(f"    <{el.evaluate('e => e.tagName')} class={cls[:80]!r}> {text[:60]!r}")
+    # Find the percentage-change key by name, then sort descending for risers.
+    pct_key = None
+    for k in items[0].keys():
+        if "momentum" in k.lower() or ("percent" in k.lower() and "change" in k.lower()):
+            pct_key = k
+            break
+    print(f"\npercent-change key guessed as: {pct_key!r}")
 
-        browser.close()
+    if pct_key:
+        valid = [i for i in items if i.get(pct_key) is not None]
+        print(f"items with non-null {pct_key}: {len(valid)} / {len(items)}")
+        risers = sorted(valid, key=lambda i: i[pct_key], reverse=True)
+        print("\n=== Top 20 RISERS (by %, descending) ===")
+        for i in risers[:20]:
+            name = i.get("commonName") or f"{i.get('firstName')} {i.get('lastName')}"
+            print(f"  {name!r:35} {pct_key}={i.get(pct_key)!r} url={i.get('url')}")
 
 
 if __name__ == "__main__":
