@@ -1,12 +1,13 @@
-"""One-off investigation (take 5): call fut.gg's real momentum API directly.
+"""One-off investigation (take 6): find the risers/fallers direction signal.
 
-Captured via Playwright's network log while loading /players/momentum/:
-    https://www.fut.gg/api/fut/players/v2/momentum/24/?game=27&excluded_quality_id=9,8,6,5,3,2
-"24" matches the page's 6h/12h/24h time-window buttons. This is a real
-JSON API (same family as /api/fut/players/v2/27/ found earlier, which also
-worked with plain requests) -- no browser needed for this part. The
-page's own default view only showed fallers; rather than hunt for a sort
-query param, just fetch the full list and sort it in Python.
+Take 5 confirmed /api/fut/players/v2/momentum/24/ is real JSON data, but
+dumping every field on an item found no direction indicator (no signed
+value, no isRising/trend boolean) -- momentumPercentage is apparently an
+unsigned magnitude. The rendered /players/momentum/ page showed this same
+player/value as "-23.57%", so direction must come from a toggle (Risers
+vs Fallers tab) that calls a DIFFERENT url/param, not from this data.
+Load the page with Playwright, find and click that toggle, and capture
+the resulting network request to see what actually changes.
 
 Usage:
     python -m fc26_watch._check_price_risers
@@ -14,66 +15,55 @@ Usage:
 
 from __future__ import annotations
 
-import requests
+from playwright.sync_api import sync_playwright
 
-from .config import REQUEST_HEADERS, REQUEST_TIMEOUT
-
-URL = "https://www.fut.gg/api/fut/players/v2/momentum/24/"
+URL = "https://www.fut.gg/players/momentum/"
 
 
 def main() -> None:
-    resp = requests.get(
-        URL,
-        headers=REQUEST_HEADERS,
-        params={"game": "27", "excluded_quality_id": "9,8,6,5,3,2"},
-        timeout=REQUEST_TIMEOUT,
-    )
-    print(f"status: {resp.status_code}  content-type: {resp.headers.get('content-type')}  len: {len(resp.text)}")
-    if not resp.ok:
-        print(f"body head: {resp.text[:500]!r}")
-        return
+    requests_seen: list[str] = []
 
-    data = resp.json()
-    print(f"top-level keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.on(
+            "request",
+            lambda req: requests_seen.append(req.url) if "/api/" in req.url else None,
+        )
 
-    items = data.get("data") if isinstance(data, dict) else data
-    if not isinstance(items, list):
-        print(f"full body (not a list under 'data'): {str(data)[:2000]}")
-        return
+        try:
+            page.goto(URL, timeout=20000, wait_until="networkidle")
+        except Exception as exc:  # noqa: BLE001
+            print(f"goto networkidle wait failed (continuing anyway): {exc}")
+            page.wait_for_timeout(5000)
 
-    print(f"item count: {len(items)}")
-    print(f"\nALL keys on first item, sorted: {sorted(items[0].keys())}")
+        print(f"=== API requests after initial load ({len(requests_seen)}) ===")
+        for u in requests_seen:
+            print(f"  {u}")
 
-    # The one sampled item's momentumPercentage (23.57, Akinfenwa) matches
-    # the magnitude shown as "-23.57%" when the actual /players/momentum/
-    # page rendered this exact card -- so this field may be an unsigned
-    # magnitude, with direction (rising vs falling) stored separately.
-    # Print every field whose value looks boolean/directional to find it.
-    print("\nFields that might encode direction (bool-ish or small int, name hints):")
-    for k, v in items[0].items():
-        if isinstance(v, bool) or (
-            isinstance(v, (int, float))
-            and abs(v) <= 1
-            and any(h in k.lower() for h in ("trend", "direction", "rising", "falling", "up", "down", "sign"))
-        ):
-            print(f"  {k!r}: {v!r}")
+        # Look for a Risers/Fallers-style toggle and list all clickable text
+        # so we can see exactly what's on this page.
+        candidates = page.locator(
+            "button, a, [role=tab], [role=button]"
+        )
+        count = candidates.count()
+        print(f"\n=== {count} clickable elements found; those with relevant text ===")
+        texts = []
+        for i in range(min(count, 200)):
+            try:
+                t = candidates.nth(i).inner_text(timeout=500).strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if t:
+                texts.append(t)
+        for t in texts:
+            if any(k in t.lower() for k in ("ris", "fall", "gain", "drop", "up", "down", "momentum")):
+                print(f"  {t!r}")
 
-    # Find the percentage-change key by name, then sort descending for risers.
-    pct_key = None
-    for k in items[0].keys():
-        if "momentum" in k.lower() or ("percent" in k.lower() and "change" in k.lower()):
-            pct_key = k
-            break
-    print(f"\npercent-change key guessed as: {pct_key!r}")
+        print(f"\n=== ALL clickable text (for manual inspection) ===")
+        print(texts)
 
-    if pct_key:
-        valid = [i for i in items if i.get(pct_key) is not None]
-        print(f"items with non-null {pct_key}: {len(valid)} / {len(items)}")
-        risers = sorted(valid, key=lambda i: i[pct_key], reverse=True)
-        print("\n=== Top 20 RISERS (by %, descending) ===")
-        for i in risers[:20]:
-            name = i.get("commonName") or f"{i.get('firstName')} {i.get('lastName')}"
-            print(f"  {name!r:35} {pct_key}={i.get(pct_key)!r} url={i.get('url')}")
+        browser.close()
 
 
 if __name__ == "__main__":
