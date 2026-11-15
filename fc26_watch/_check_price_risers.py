@@ -3,13 +3,13 @@ browser (Playwright) instead of a bare HTTP GET.
 
 Plain requests.get() against fut.gg's /players/, /whats-hot/ and
 /price-ranges/ pages returned 200 but the price/momentum data was never in
-the server-rendered HTML -- the app fetches it client-side after load. A
-guessed-at JSON API (/api/fut/players/v2/27/) exists but its momentum/price
-fields were always null and sort params were ignored; the more specific
-/api/fut/player-prices/27/ 403'd in a way that looks like a same-origin
-check this script won't try to spoof around. Rendering the page with an
-actual browser sidesteps all of that -- whatever JS the real site runs to
-fetch and display price data runs here too.
+the server-rendered HTML -- the app fetches it client-side after load.
+Rendering with Playwright confirmed /price-ranges/ does show real coin
+amounts once rendered (/whats-hot/'s percentages turned out to be SBC
+completion-vote stats, unrelated to player prices). This pass dumps the
+page's full rendered text plus each player card's structured content, to
+see whether price-range data implies a rising/falling direction, and
+whether there's a dedicated "risers" sort/tab control to switch to.
 
 Only GitHub Actions runners can reach fut.gg at all from this project (this
 sandbox's own network can't resolve the host), so this runs there.
@@ -20,50 +20,35 @@ Usage:
 
 from __future__ import annotations
 
-import re
-
 from playwright.sync_api import sync_playwright
 
-PAGES = [
-    "https://www.fut.gg/price-ranges/",
-    "https://www.fut.gg/whats-hot/",
-]
-
-
-def dump(url: str) -> None:
-    print(f"\n=== {url} ===")
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        try:
-            page.goto(url, wait_until="networkidle", timeout=30000)
-        except Exception as exc:  # noqa: BLE001 -- investigation script, want to see what breaks
-            print(f"  navigation issue (continuing anyway): {exc}")
-        page.wait_for_timeout(3000)  # give client-side data fetches a moment past networkidle
-
-        text = page.inner_text("body")
-        print(f"  rendered body text length: {len(text)}")
-
-        pct_matches = re.findall(r"[+-]?\d{1,3}(?:\.\d+)?%", text)
-        print(f"  percent-looking tokens in rendered text: {pct_matches[:40]}")
-
-        # Print a chunk of rendered text around the first percent match, to
-        # see the surrounding player name/price context.
-        if pct_matches:
-            idx = text.find(pct_matches[0])
-            print(f"  context around first match:\n{text[max(0, idx - 300):idx + 300]!r}")
-
-        # Also dump raw lines near any coin-amount-looking numbers (FUT
-        # prices are usually formatted like "12,500" or "1.2M").
-        coin_matches = re.findall(r"\b\d{1,3}(?:,\d{3})+\b|\b\d+(?:\.\d+)?[KM]\b", text)
-        print(f"  coin-amount-looking tokens: {coin_matches[:20]}")
-
-        browser.close()
+URL = "https://www.fut.gg/price-ranges/"
 
 
 def main() -> None:
-    for url in PAGES:
-        dump(url)
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(URL, wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(3000)
+
+        print(f"=== Full rendered body text ({URL}) ===")
+        print(page.inner_text("body"))
+
+        print("\n=== Links on the page (href + visible text) ===")
+        for a in page.query_selector_all("a"):
+            href = a.get_attribute("href") or ""
+            text = " ".join((a.inner_text() or "").split())
+            if href or text:
+                print(f"  {href}  {text[:100]!r}")
+
+        print("\n=== Buttons / role=button elements (sort controls etc.) ===")
+        for el in page.query_selector_all("button, [role=button], select, option"):
+            text = " ".join((el.inner_text() or "").split())
+            if text:
+                print(f"  <{el.evaluate('e => e.tagName')}> {text[:80]!r}")
+
+        browser.close()
 
 
 if __name__ == "__main__":
