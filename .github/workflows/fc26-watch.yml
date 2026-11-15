@@ -62,3 +62,20 @@ jobs:
           else
             echo "No state changes to commit."
           fi
+
+      - name: TEMP -- post only the chart-shape price-trend picks this once
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: python -m fc26_watch._check_price_risers
+
+      - name: TEMP -- commit state after the chart-only post
+        run: |
+          if [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "chore: update watcher state [skip ci]"
+            git push
+          else
+            echo "No state changes to commit."
+          fi
