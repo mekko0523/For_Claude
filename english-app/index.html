@@ -197,6 +197,16 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
 .pick.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--g0); border: 1px solid var(--line); }
 .pdot.l1 { background: var(--g1); } .pdot.l2 { background: var(--g2); } .pdot.l3 { background: var(--good); border-color: var(--good); }
+body.typing header.top { position: static; }
+body.typing .composer { position: static; }
+.qja-mini { font-size: 18px; font-weight: 700; line-height: 1.45; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); }
+.composer { flex-direction: column; align-items: stretch; }
+.composer-row { display: flex; gap: 8px; align-items: flex-end; }
+.curq { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+.curq:empty { display: none; }
+.curq .en { font-size: 15px; }
+.blurq { filter: blur(6px); cursor: pointer; }
+.react { font-size: 14px; color: var(--muted); }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; max-width: calc(100% - 32px); }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp 0.8s linear infinite; }
 @keyframes sp { to { transform: rotate(360deg); } }
@@ -281,9 +291,12 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
     <div class="chat" id="c-chat"></div>
     <div id="c-start"></div>
     <div class="composer" id="c-composer" hidden>
+      <div class="curq" id="c-curq"></div>
+      <div class="composer-row">
       <button class="icon-btn mic-big" id="c-mic" type="button" aria-label="話して答える"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
       <textarea id="c-input" rows="2" placeholder="英語で答える(キーボードのマイクで話してもOK)"></textarea>
       <button class="btn primary" id="c-send" type="button">送信</button>
+      </div>
     </div>
   </section>
 
@@ -485,7 +498,7 @@ AUD.addEventListener("ended", () => {
 });
 AUD.addEventListener("error", () => { slog("audio error " + (AUD.error && AUD.error.code)); toast("音声ファイルを読み込めませんでした"); });
 function audioFor(text) {
-  for (const d of Object.values(S.days)) for (const p of d.patterns || []) if (p.en === text && p.audio) return p.audio;
+  for (const d of Object.values(S.days)) for (const p of [...(d.patterns || []), ...(d.questions || [])]) if (p.en === text && p.audio) return p.audio;
   return null;
 }
 function playUrls(urls, rate) {
@@ -516,6 +529,14 @@ function sayMany(list, rate = 1) {
 }
 function stopSay() { audQueue = []; try { AUD.pause(); } catch (e) {} try { S.tts && S.tts.stop(); } catch (e) {} try { SS && SS.cancel(); } catch (e) {} }
 
+/* While the phone keyboard is open, free the sticky header and scroll the
+   prompt + answer box to the top of what is still visible. */
+function keepInView(el) {
+  document.body.classList.add("typing");
+  const go = () => { try { el.scrollIntoView({ block: "start", behavior: "auto" }); } catch (e) {} };
+  setTimeout(go, 50); setTimeout(go, 350); setTimeout(go, 700);
+}
+document.addEventListener("focusout", () => setTimeout(() => { if (!document.activeElement || document.activeElement.tagName !== "TEXTAREA") document.body.classList.remove("typing"); }, 100));
 /* voice answers: one-tap mic where the viewer offers it (Chrome / desktop app),
    otherwise the phone keyboard's own dictation key. */
 let dictTarget = null, dictBase = "", dictDone = null;
@@ -532,6 +553,7 @@ function startVoice(ta, onDone, hintEl) {
   }
   ta.value = "";
   ta.focus();
+  keepInView(ta.closest("[data-keep]") || ta);
   if (hintEl) hintEl.innerHTML = "キーボードの <b>マイクボタン</b> を押して英語で話してください。話し終えて少し待つと自動で判定します。";
   let timer = null;
   ta.oninput = () => {
@@ -585,9 +607,10 @@ Rules:
 ${learnedPatternList().map(p => "  - " + p).join("\n") || "  (none yet)"}
 - Example sentences follow the level above, about everyday life or work.
 - Japanese fields in natural Japanese.
+- Also write 10 conversation "questions" (one per pattern, same order): a short, natural question to the learner about their own life, work or opinions that invites them to answer with that pattern. Under 18 words, everyday vocabulary. Give "ja" (natural Japanese translation) and "target" (the pattern text).
 
 Reply with only JSON:
-{"patterns":[{"func":"言いたいこと(日本語・15字以内)","pattern":"As far as I know, ~","meaning":"意味とニュアンス(日本語・40字以内)","en":"As far as I know, the shop is closed on Mondays.","ja":"私の知る限り、その店は月曜休みだよ。","note":"使い分けのコツ(日本語・1文)"}]}`;
+{"questions":[{"id":"q1","en":"What do you think of working from home?","ja":"在宅勤務についてどう思う?","target":"Personally, I feel like ~"}],"patterns":[{"func":"言いたいこと(日本語・15字以内)","pattern":"As far as I know, ~","meaning":"意味とニュアンス(日本語・40字以内)","en":"As far as I know, the shop is closed on Mondays.","ja":"私の知る限り、その店は月曜休みだよ。","note":"使い分けのコツ(日本語・1文)"}]}`;
 }
 function talkPrompt(t) {
   const day = S.days[t.date || lessonDate()];
@@ -595,6 +618,8 @@ function talkPrompt(t) {
   const weak = weakCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
   const unused = unusedCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
   const recent = Object.values(S.days).filter(d => d.date < (t.date || TODAY)).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 3).flatMap(d => d.patterns.map(p => `- ${p.pattern}`)).slice(0, 12).join("\n");
+  const asked = new Set(t.turns.map(x => x.qid).filter(Boolean));
+  const qs = ((day && day.questions) || []).filter(q => !asked.has(q.id));
   const convo = t.turns.map(x => x.role === "coach" ? `Coach: ${x.text}` : `Learner: ${x.text}`).join("\n");
   const last = t.turns[t.turns.length - 1];
   return `You are a warm, natural English conversation partner and speaking coach for a Japanese adult learner (reads OK, speaking is weak). Your job: chat about their real life and get them to actually USE today's target patterns out loud.
@@ -616,11 +641,12 @@ ${convo || "(not started)"}
 
 Do this:
 1. ${last && last.role === "me" ? "Give feedback on the learner's LAST answer only: \"corrected\" = their sentence with minimal grammar fixes (same if already fine); \"better\" = a more natural version of what THEY meant that uses one target pattern; \"used\" = exact target patterns (copy the pattern text from the list) they used, else []; \"tip_ja\" = one short tip in Japanese; \"ok\" = true if understandable and mostly correct." : "No feedback yet: set \"feedback\" to null."}
-2. Write your next line "reply": a short natural reaction (one sentence, skip it on the first line) plus ONE open question about their life/work/opinions that naturally invites a target pattern they have not used yet. Under 35 words, everyday vocabulary, no Japanese.
+${qs.length ? `2. Choose the next question from this list of recorded questions (they have audio, so do not rewrite them). Pick one not asked yet that naturally follows the conversation and invites a target pattern they have not used yet. Put its id in "next_q". Also write "reaction": a short natural reaction to their answer (one sentence, max 15 words, no question). Set "reply" to "".
+${qs.map(q => `   ${q.id}: ${q.en}`).join("\n")}` : `2. Write your next line "reply": a short natural reaction (one sentence, skip it on the first line) plus ONE open question about their life/work/opinions that naturally invites a target pattern they have not used yet. Under 35 words, everyday vocabulary, no Japanese. Set "next_q" to "" and "reaction" to "".`}
 3. "hint_ja": a Japanese hint (under 40 chars) naming one target pattern that fits the question.
 
 Reply with only JSON:
-{"feedback":{"ok":true,"corrected":"...","better":"...","used":["..."],"tip_ja":"..."},"reply":"...","hint_ja":"..."}`;
+{"feedback":{"ok":true,"corrected":"...","better":"...","used":["..."],"tip_ja":"..."},"reaction":"...","next_q":"q3","reply":"...","hint_ja":"..."}`;
 }
 function gradePrompt(card, said) {
   return `A Japanese learner is doing instant English composition (Japanese -> spoken English).
@@ -647,6 +673,7 @@ async function generateToday(btn) {
     const pl = planFor(TODAY);
     const doc = { date: TODAY, day: pl.n, week: pl.week, theme: pl.theme, focus: pl.focus, source: "app", createdAt: new Date().toISOString(),
       patterns: list.map((p, i) => ({ id: `${TODAY}-${pad(i + 1)}`, func: String(p.func || ""), pattern: String(p.pattern), meaning: String(p.meaning || ""), en: String(p.en), ja: String(p.ja || ""), note: String(p.note || ""), ...(p.review ? { review: true, base: String(p.base || "") } : {}) })), level: curLevel().level };
+    if (Array.isArray(r.questions)) doc.questions = r.questions.filter(q => q && q.en).slice(0, 10).map((q, i) => ({ id: `q${i + 1}`, en: String(q.en), ja: String(q.ja || ""), target: String(q.target || "") }));
     await save(`days/${TODAY}`, doc);
     ensureCards(); renderAll();
   } catch (e) {
@@ -968,7 +995,8 @@ function renderTest() {
       </div>` : ""}
       ${ph === "ask" ? `<button class="speak-btn" id="q-speak" type="button" data-mic>${ICON_MIC}<span>タップして話す</span></button>
       <div class="row" style="justify-content:center"><button class="btn ghost small" id="q-giveup" type="button">出てこない・お手本を聞く</button></div>` : ""}
-      <div id="q-listen" class="listen" ${ph === "listen" ? "" : "hidden"}>
+      <div id="q-listen" class="listen" data-keep ${ph === "listen" ? "" : "hidden"}>
+        <div class="qja-mini">${esc(c.ja)}</div>
         ${timerSec() ? `<div class="timer" id="q-timer" style="--dur:${timerSec()}s"><i></i></div>` : ""}
         <div class="small" id="q-voicehint"></div>
         <textarea id="q-input" class="voicebox" rows="2" placeholder="ここに話した英語が出ます" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
@@ -1040,7 +1068,9 @@ function renderTalk() {
   const chat = $("c-chat"); let fbi = 0;
   chat.innerHTML = t.turns.map((x, i) => {
     if (x.role === "coach") return `<div class="msg coach ${S.listenMode && !x.shown ? "hidden-text" : ""}" data-i="${i}">
+      ${x.react ? `<div class="react">${esc(x.react)}</div>` : ""}
       <div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div class="en" style="flex:1;min-width:0">${esc(x.text)}</div><button class="icon-btn" data-sayi="${i}" type="button" aria-label="聞く">${ICON_SPK}</button></div>
+      ${x.ja ? `<details class="small muted"><summary>日本語訳</summary>${esc(x.ja)}</details>` : ""}
       ${x.hint ? `<div class="hint">ヒント:${esc(x.hint)}</div>` : ""}</div>`;
     const f = t.feedback[fbi++];
     return `<div class="msg me"><div class="en">${esc(x.text)}</div></div>` + (f ? `<div class="fbcard">
@@ -1062,12 +1092,30 @@ function renderTalk() {
       <div class="muted small">質問は今日のパターンと、前に習った苦手パターンを使うように作られます。答えるたびに添削と「こう言える」が返ってきます。リスニングモードでは英文をかくして、音声だけで聞き取ります。</div>
       <div><button class="btn primary" id="c-go" type="button" ${day ? "" : "disabled"}>会話をはじめる</button></div></div>`;
     $("c-composer").hidden = true;
-    const go = $("c-go"); if (go) go.onclick = () => talkStep();
+    const go = $("c-go"); if (go) go.onclick = () => {
+      const q = day && day.questions && day.questions[0];
+      if (!q) { talkStep(); return; }
+      t.turns.push(coachTurn(q, ""));
+      saveTalk(t); say(q.en); renderTalk();
+    };
     return;
   }
   start.innerHTML = userTurns >= 5 ? `<div class="banner good"><div><b>今日の会話はクリア(${userTurns}往復)。</b>まだ続けてもOK。「こう言える」の文を声に出して言い直すと、さらに身につきます。</div></div>` : `<div class="small muted">あと <span class="num">${5 - userTurns}</span> 往復でクリア</div>`;
   $("c-composer").hidden = false;
   $("c-send").disabled = !!t.busy;
+  const lastQ = [...t.turns].reverse().find(x => x.role === "coach");
+  const li = t.turns.lastIndexOf(lastQ);
+  $("c-curq").innerHTML = lastQ ? `<div class="row" style="flex-wrap:nowrap;align-items:flex-start;gap:8px">
+      <button class="icon-btn" data-sayi="${li}" type="button" aria-label="質問をもう一度聞く">${ICON_SPK}</button>
+      <div style="flex:1;min-width:0"><div class="small muted">いまの質問</div>
+      <div class="en ${S.listenMode && !lastQ.shown ? "blurq" : ""}" data-reveal="${li}">${esc(lastQ.text)}</div>
+      ${lastQ.hint ? `<div class="small muted">${esc(lastQ.hint)}</div>` : ""}</div></div>` : "";
+}
+function coachTurn(q, react) {
+  return { role: "coach", text: q.en, qid: q.id, ja: q.ja || "", react: react || "", hint: q.target ? `「${q.target}」を使ってみよう` : "" };
+}
+function saveTalk(t) {
+  save(`talks/${t.date}`, { date: t.date, turns: t.turns.map(({ role, text, hint, qid, ja, react }) => ({ role, text, hint: hint || "", qid: qid || "", ja: ja || "", react: react || "" })), feedback: t.feedback, updatedAt: new Date().toISOString() });
 }
 async function talkStep() {
   const t = S.talk;
@@ -1075,10 +1123,15 @@ async function talkStep() {
   try {
     const r = await S.sample.json(talkPrompt(t), { modelTier: "default", cache: false });
     if (t.turns.length && t.turns[t.turns.length - 1].role === "me") { t.feedback.push(r.feedback || null); if (r.feedback && Array.isArray(r.feedback.used)) markUsed(r.feedback.used); }
-    t.turns.push({ role: "coach", text: String(r.reply || "Tell me more about that."), hint: String(r.hint_ja || "") });
+    const day = S.days[t.date];
+    const asked = new Set(t.turns.map(x => x.qid).filter(Boolean));
+    const qs = ((day && day.questions) || []).filter(q => !asked.has(q.id));
+    const q = qs.find(x => x.id === r.next_q) || (qs.length && !r.reply ? qs[0] : null);
+    if (q) { const ct = coachTurn(q, String(r.reaction || "")); if (r.hint_ja) ct.hint = String(r.hint_ja); t.turns.push(ct); }
+    else t.turns.push({ role: "coach", text: String(r.reply || "Tell me more about that."), hint: String(r.hint_ja || "") });
     t.busy = false;
     const userTurns = t.turns.filter(x => x.role === "me").length;
-    save(`talks/${t.date}`, { date: t.date, turns: t.turns.map(({ role, text, hint }) => ({ role, text, hint: hint || "" })), feedback: t.feedback, updatedAt: new Date().toISOString() });
+    saveTalk(t);
     if (userTurns > 0) setProg(t.date, { talk: { done: userTurns >= 5, turns: userTurns } });
     renderTalk(); renderToday();
     say(t.turns[t.turns.length - 1].text);
@@ -1114,14 +1167,23 @@ $("c-mic").onclick = () => {
     return;
   }
   ta.focus();
+  keepInView($("c-composer"));
   if (!micTipShown) { micTipShown = true; toast("キーボードのマイクボタンを押して話し、終わったら「送信」"); }
 };
+$("c-input").addEventListener("focus", () => keepInView($("c-composer")));
 $("c-input").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("c-send").click(); });
 $("c-chat").addEventListener("click", e => {
   const b = e.target.closest("button[data-sayi]");
   if (b) { say(S.talk.turns[Number(b.dataset.sayi)].text); return; }
+  if (e.target.closest("details")) return;
   const m = e.target.closest(".msg.coach.hidden-text");
   if (m) { S.talk.turns[Number(m.dataset.i)].shown = true; m.classList.remove("hidden-text"); }
+});
+$("c-curq").addEventListener("click", e => {
+  const b = e.target.closest("button[data-sayi]");
+  if (b) { say(S.talk.turns[Number(b.dataset.sayi)].text); return; }
+  const r = e.target.closest("[data-reveal]");
+  if (r) { S.talk.turns[Number(r.dataset.reveal)].shown = true; r.classList.remove("blurq"); }
 });
 $("c-listen").onchange = e => { S.listenMode = e.target.checked; try { localStorage.setItem("cd.listen", S.listenMode ? "1" : "0"); } catch (x) {} renderTalk(); };
 

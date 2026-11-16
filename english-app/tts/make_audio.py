@@ -5,7 +5,7 @@ Usage:
 
 <day.json>  a days/<date> document saved by ArtifactData (out_dir), or the raw document
 <model_dir> holds kokoro.onnx and voices.bin (kokoro-onnx v1.0 model files)
-<out_dir>   gets one <pattern id>.mp4 per pattern
+<out_dir>   gets one <pattern id>.mp4 per pattern and one <date>-<question id>.mp4 per question
 
 Setup:
   pip install kokoro-onnx soundfile
@@ -31,11 +31,13 @@ def main() -> None:
     doc = doc.get("data", doc)
     os.makedirs(out_dir, exist_ok=True)
     tts = Kokoro(os.path.join(model_dir, "kokoro.onnx"), os.path.join(model_dir, "voices.bin"))
-    for p in doc["patterns"]:
-        samples, rate = tts.create(p["en"], voice=VOICE, speed=0.95, lang="en-us")
+    items = [(p["id"], p["en"]) for p in doc["patterns"]]
+    items += [(f"{doc['date']}-{q['id']}", q["en"]) for q in doc.get("questions", [])]
+    for item_id, text in items:
+        samples, rate = tts.create(text, voice=VOICE, speed=0.95, lang="en-us")
         with tempfile.NamedTemporaryFile(suffix=".wav") as wav:
             sf.write(wav.name, samples, rate)
-            out = os.path.join(out_dir, f"{p['id']}.mp4")
+            out = os.path.join(out_dir, f"{item_id}.mp4")
             subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error", "-i", wav.name, "-ac", "1",
                  "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out],
