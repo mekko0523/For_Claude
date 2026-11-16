@@ -2,9 +2,9 @@ name: FC27 Update Watch
 
 on:
   schedule:
-    # 3x/day, 8 hours apart: 03:00 / 11:00 / 19:00 JST == 18:00(prev day) /
-    # 02:00 / 10:00 UTC.
-    - cron: "0 2,10,18 * * *"
+    # 3x/day, 6 hours apart: 08:00 / 14:00 / 20:00 JST == 23:00(prev day) /
+    # 05:00 / 11:00 UTC.
+    - cron: "0 5,11,23 * * *"
   workflow_dispatch:
     inputs:
       dump_links:

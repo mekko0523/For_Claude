@@ -158,6 +158,9 @@ CATEGORY_EVO = "EVO情報"
 CATEGORY_PLAYER_INFO = "選手情報・SBC"
 CATEGORY_EA_OFFICIAL = "EA公式情報"
 CATEGORY_TREND = "トレンド"
+# Bot-posted price-momentum picks from fut.gg (see price_trend.py) -- distinct
+# from CATEGORY_TREND above, which is members manually sharing X/Twitter posts.
+CATEGORY_PRICE_TREND = "価格トレンド情報"
 
 # Matches "FC27", "FC 27", "FC-27", "FUT27", "FUT 27" (case-insensitive).
 FC_VERSION_PATTERN = re.compile(r"\bfc\s?-?\s?27\b|\bfut\s?-?\s?27\b", re.IGNORECASE)
@@ -180,6 +183,42 @@ REQUEST_HEADERS = {
         "+https://github.com/)"
     )
 }
+
+# fut.gg price-momentum picks (see price_trend.py). Of the time windows
+# fut.gg's API actually accepts (6h/12h/24h -- 3h/48h/72h/168h all 404, so a
+# true multi-day average, and per-player historical price charts, aren't
+# available), all three are combined as a cheap proxy for "chart shape":
+# a candidate only qualifies if its true rise is strictly smaller over 6h
+# than over 12h than over 24h (0 < 6h < 12h < 24h). That shape means the
+# price has been climbing steadily all day, accelerating toward now, rather
+# than jumping once on a single news/event spike that may have already
+# peaked by the time it's posted. A card missing from the extreme-mover
+# tail of any one window is skipped rather than guessed at.
+MOMENTUM_BASE_WINDOW_HOURS = 24
+MOMENTUM_MID_WINDOW_HOURS = 12
+MOMENTUM_SHORT_WINDOW_HOURS = 6
+MOMENTUM_MIN_RISE_PCT = 8.0  # ignore noise below this (true, sign-corrected) %
+MOMENTUM_MIN_PRICE = 5000  # ignore cheap fodder cards that swing wildly on thin volume
+
+# Second pick type for 価格トレンド情報 (see price_trend.collect_leak_expectation_items):
+# surfaces already-fetched general news headlines (not the official EVO/SBC
+# listing pages, which only carry content once it's actually live) that look
+# like they're reporting a leak/rumor of upcoming Evolution or SBC content,
+# since a leaked upcoming EVO/SBC can drive demand for specific players
+# before the price move shows up in momentum data at all. This needs no
+# extra network calls -- it just filters titles already collected this run.
+# A real X/Twitter leaker-account feed was considered but isn't automated,
+# same reason as the トレンド channel (no free search API).
+LEAK_SIGNAL_KEYWORDS = [
+    "leak", "leaked", "datamine", "datamined", "rumor", "rumour",
+    "upcoming", "coming soon", "predicted", "リーク", "予想", "速報",
+]
+LEAK_CONTENT_KEYWORDS = [
+    "evolution", "evo", "sbc", "squad building challenge",
+    "エボリューション", "エボ",
+]
+MOMENTUM_TOP_N = 5  # how many picks to post per run
+MOMENTUM_TAIL_PAGES = 2  # how many pages to fetch from the end of each momentum list
 
 GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
