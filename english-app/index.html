@@ -419,6 +419,8 @@ let ttsBroken = false, speechUnlocked = false;
 function unlockSpeech() {
   if (speechUnlocked || !SS) return;
   speechUnlocked = true;
+  // iOS 16.4+: treat this page's sound as media playback, not a ringer-style sound
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
   try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; u.lang = "en-US"; SS.speak(u); } catch (e) {}
 }
 document.addEventListener("touchend", unlockSpeech, { once: true, capture: true });
@@ -434,7 +436,12 @@ function nativeSay(list, rate) {
   if (!SS) { toast("この端末では音声を再生できません"); return; }
   const go = () => {
     let started = false;
-    list.forEach((text, i) => { const u = utter(text, rate); if (i === 0) u.onstart = () => { started = true; }; SS.speak(u); });
+    list.forEach((text, i) => {
+      const u = utter(text, rate);
+      if (i === 0) u.onstart = () => { started = true; };
+      u.onerror = ev => { if (ev && ev.error && ev.error !== "interrupted" && ev.error !== "canceled") toast("音声を再生できませんでした(" + ev.error + ")"); };
+      SS.speak(u);
+    });
     try { if (SS.paused) SS.resume(); } catch (e) {}
     clearTimeout(silentTimer);
     silentTimer = setTimeout(() => { if (!started && !SS.speaking) toast("音声が出ないときは、消音モード(本体横のスイッチ)と音量を確認してください"); }, 2500);
