@@ -228,9 +228,9 @@ body.typing .composer { position: static; }
       <div class="daypill" id="daypill">Day — / 90</div>
     </div>
     <nav class="tabs" aria-label="画面">
-      <a href="#today" data-tab="today">今日</a>
+      <a href="#today" data-tab="today">練習</a>
       <a href="#test" data-tab="test">テスト</a>
-      <a href="#talk" data-tab="talk">会話</a>
+      <a href="#talk" data-tab="talk">実践</a>
       <a href="#log" data-tab="log">記録</a>
     </nav>
   </div>
@@ -270,7 +270,7 @@ body.typing .composer { position: static; }
       <div>① 各パターンを聞いて、0.5秒遅れで真似して言う(シャドーイング)を3回。言えたら「音読OK」。</div>
       <div>② 例文を自分の話に置き換えて、声に出して1回言う。</div>
       <div>③ 「テスト」で日本語から1〜2秒で英語を言う(瞬間英作文)。</div>
-      <div>④ 「会話」でClaudeの質問に、今日のパターンを使って答える。</div>
+      <div>④ 「実践」でClaudeの質問に、今日のパターンを使って答える。</div>
     </div>
   </section>
 
@@ -824,7 +824,7 @@ function renderToday() {
   const items = [
     ["① 音読", `${(p.read || []).length}/${total}`, (p.read || []).length >= total, "#today"],
     ["② テスト", p.test && p.test.done ? `${p.test.correct}/${p.test.total}` : "未", p.test && p.test.done, "#test"],
-    ["③ 会話", p.talk && p.talk.done ? `${p.talk.turns}往復` : (p.talk && p.talk.turns ? `${p.talk.turns}/5` : "未"), p.talk && p.talk.done, "#talk"],
+    ["③ 実践", p.talk && p.talk.done ? `${p.talk.turns}往復` : (p.talk && p.talk.turns ? `${p.talk.turns}/5` : "未"), p.talk && p.talk.done, "#talk"],
   ];
   $("t-check").innerHTML = items.map(([k, v, done, href]) => `<a class="check ${done ? "done" : ""}" href="${href}"><span class="k">${k}</span><span class="v num">${esc(v)}</span></a>`).join("");
 
@@ -955,7 +955,7 @@ function renderTest() {
       <div class="eyebrow">結果</div>
       <h2 style="font-size:26px"><span class="num">${t.correct}</span> / <span class="num">${t.list.length}</span> 言えた</h2>
       ${wrong.length ? `<div class="muted small">出てこなかったパターン(明日また出ます):</div><ul style="margin:0;padding-left:18px">${wrong.map(c => `<li><b>${esc(c.pattern)}</b> — ${esc(c.en)}</li>`).join("")}</ul>` : `<div>全部言えました。</div>`}
-      <div class="row"><a class="btn primary" href="#talk">会話の練習へ</a><button class="btn" id="q-again" type="button">もう一周</button></div>
+      <div class="row"><a class="btn primary" href="#talk">実践(英会話)へ</a><button class="btn" id="q-again" type="button">もう一周</button></div>
     </div>`;
     $("q-again").onclick = () => { S.test = null; renderTest(); };
     return;
@@ -1083,14 +1083,14 @@ function renderTalk() {
   const userTurns = t.turns.filter(x => x.role === "me").length;
   const start = $("c-start");
   if (!S.sample) {
-    start.innerHTML = `<div class="panel"><div class="eyebrow">会話の練習</div><div>この画面ではClaudeに接続できません。claude.ai で開くと、Claudeが今日のパターンを使わせる質問をしてくれます。</div></div>`;
+    start.innerHTML = `<div class="panel"><div class="eyebrow">実践:英会話</div><div>この画面ではClaudeに接続できません。claude.ai で開くと、Claudeが今日のパターンを使わせる質問をしてくれます。</div></div>`;
     $("c-composer").hidden = true; return;
   }
   if (!t.turns.length) {
-    start.innerHTML = `<div class="panel"><div class="eyebrow">会話の練習</div>
+    start.innerHTML = `<div class="panel"><div class="eyebrow">実践:英会話</div>
       <h2 style="font-size:20px">Claudeの質問に英語で答える。<span class="mark">5往復</span>でクリア。</h2>
       <div class="muted small">質問は今日のパターンと、前に習った苦手パターンを使うように作られます。答えるたびに添削と「こう言える」が返ってきます。リスニングモードでは英文をかくして、音声だけで聞き取ります。</div>
-      <div><button class="btn primary" id="c-go" type="button" ${day ? "" : "disabled"}>会話をはじめる</button></div></div>`;
+      <div><button class="btn primary" id="c-go" type="button" ${day ? "" : "disabled"}>はじめる</button></div></div>`;
     $("c-composer").hidden = true;
     const go = $("c-go"); if (go) go.onclick = () => {
       const q = day && day.questions && day.questions[0];
@@ -1100,7 +1100,16 @@ function renderTalk() {
     };
     return;
   }
-  start.innerHTML = userTurns >= 5 ? `<div class="banner good"><div><b>今日の会話はクリア(${userTurns}往復)。</b>まだ続けてもOK。「こう言える」の文を声に出して言い直すと、さらに身につきます。</div></div>` : `<div class="small muted">あと <span class="num">${5 - userTurns}</span> 往復でクリア</div>`;
+  start.innerHTML = userTurns >= 5 ? `<div class="banner good"><div><b>実践はクリア(${userTurns}往復)。</b>まだ続けてもOK。「こう言える」の文を声に出して言い直すと、さらに身につきます。</div></div>` : `<div class="small muted">あと <span class="num">${5 - userTurns}</span> 往復でクリア</div>`;
+  start.insertAdjacentHTML("beforeend", `<div class="row" style="justify-content:flex-end"><button class="btn ghost small" id="c-reset" type="button" ${t.busy ? "disabled" : ""}>${S.resetArm ? "もう一度押すとリセット" : "最初の質問からやり直す"}</button></div>`);
+  $("c-reset").onclick = () => {
+    if (!S.resetArm) { S.resetArm = true; renderTalk(); setTimeout(() => { if (S.resetArm) { S.resetArm = false; renderTalk(); } }, 4000); return; }
+    S.resetArm = false; stopSay();
+    S.talk = { date: t.date, turns: [], feedback: [] };
+    saveTalk(S.talk);
+    $("c-input").value = "";
+    renderTalk(); window.scrollTo(0, 0);
+  };
   $("c-composer").hidden = false;
   $("c-send").disabled = !!t.busy;
   const lastQ = [...t.turns].reverse().find(x => x.role === "coach");
@@ -1132,7 +1141,7 @@ async function talkStep() {
     t.busy = false;
     const userTurns = t.turns.filter(x => x.role === "me").length;
     saveTalk(t);
-    if (userTurns > 0) setProg(t.date, { talk: { done: userTurns >= 5, turns: userTurns } });
+    if (userTurns > 0) { const pt = prog(t.date).talk || {}; setProg(t.date, { talk: { done: !!pt.done || userTurns >= 5, turns: Math.max(pt.turns || 0, userTurns) } }); }
     renderTalk(); renderToday();
     say(t.turns[t.turns.length - 1].text);
     $("c-chat").lastElementChild && $("c-chat").lastElementChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
