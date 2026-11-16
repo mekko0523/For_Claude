@@ -1,0 +1,908 @@
+<title>Chunk Daily</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one narrow phrasebook column; a sticky tab bar; patterns are highlighted like a marker on a notebook. */
+:root {
+  --bg: #F3F5FA;
+  --surface: #FFFFFF;
+  --ink: #141A33;
+  --muted: #5A6283;
+  --line: #DCE1EE;
+  --accent: #2F45D6;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E3E7FC;
+  --mark: #FFE45C;
+  --mark-ink: #141A33;
+  --good: #1D8A5B;
+  --good-soft: #DDF3E8;
+  --warn: #B86A00;
+  --warn-soft: #FFF0D6;
+  --bad: #C2353B;
+  --bad-soft: #FBE3E4;
+  --g0: #E4E8F2; --g1: #C3CCF3; --g2: #8B9BEA; --g3: #2F45D6;
+  --display: "Bricolage Grotesque", "Zen Kaku Gothic New", system-ui, sans-serif;
+  --body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1120; --surface: #171B2F; --ink: #E8EBF7; --muted: #9AA2C4; --line: #2A3050;
+    --accent: #7D8EFF; --accent-ink: #0E1120; --accent-soft: #232A52;
+    --mark: #E8C93A; --mark-ink: #141A33;
+    --good: #4CC98F; --good-soft: #15352A; --warn: #F0A848; --warn-soft: #3A2A12; --bad: #F07076; --bad-soft: #3D1B1F;
+    --g0: #222842; --g1: #2F3A7A; --g2: #4C5FC6; --g3: #7D8EFF;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1120; --surface: #171B2F; --ink: #E8EBF7; --muted: #9AA2C4; --line: #2A3050;
+  --accent: #7D8EFF; --accent-ink: #0E1120; --accent-soft: #232A52;
+  --mark: #E8C93A; --mark-ink: #141A33;
+  --good: #4CC98F; --good-soft: #15352A; --warn: #F0A848; --warn-soft: #3A2A12; --bad: #F07076; --bad-soft: #3D1B1F;
+  --g0: #222842; --g1: #2F3A7A; --g2: #4C5FC6; --g3: #7D8EFF;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.65; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 720px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 64px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.25; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* header + tabs */
+header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.top-in { display: flex; flex-direction: column; gap: 8px; padding-block: 12px 0; }
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.brand h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+.brand h1 span { background: linear-gradient(transparent 55%, var(--mark) 55%); color: inherit; padding: 0 2px; }
+.daypill { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+nav.tabs { display: grid; grid-template-columns: repeat(4, 1fr); }
+nav.tabs a { text-align: center; padding: 8px 4px 10px; color: var(--muted); text-decoration: none; font-weight: 700; font-size: 14px; border-bottom: 3px solid transparent; position: relative; }
+nav.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+nav.tabs a .dot { position: absolute; top: 6px; margin-left: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
+
+main { display: flex; flex-direction: column; gap: 20px; padding-top: 20px; }
+section[data-view] { display: flex; flex-direction: column; gap: 16px; }
+
+/* generic */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 14px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.ghost { background: transparent; }
+.btn:disabled { opacity: .5; cursor: default; }
+.icon-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; width: 38px; height: 38px; display: inline-grid; place-items: center; flex: none; }
+.icon-btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.icon-btn svg, .btn svg { width: 18px; height: 18px; }
+.banner { border-radius: 12px; padding: 12px 14px; font-size: 14px; display: flex; gap: 10px; align-items: flex-start; }
+.banner.warn { background: var(--warn-soft); color: var(--ink); border: 1px solid var(--warn); }
+.banner.bad { background: var(--bad-soft); border: 1px solid var(--bad); }
+.banner.good { background: var(--good-soft); border: 1px solid var(--good); }
+.banner.info { background: var(--accent-soft); border: 1px solid var(--accent); }
+.chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700; background: var(--accent-soft); color: var(--ink); }
+.chip.good { background: var(--good-soft); color: var(--good); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.mark { background: linear-gradient(transparent 50%, var(--mark) 50%); color: inherit; padding: 0 2px; }
+textarea, input[type="search"] { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical; }
+
+/* today */
+.hero { display: flex; flex-direction: column; gap: 6px; }
+.hero .theme { font-size: 26px; font-weight: 800; }
+.hero .focus { font-size: 16px; }
+.checklist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.check { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: inherit; }
+.check .k { font-size: 12px; color: var(--muted); font-weight: 700; }
+.check .v { font-weight: 700; font-size: 14px; }
+.check.done { border-color: var(--good); background: var(--good-soft); }
+.check.done .v::before { content: "✓ "; color: var(--good); }
+.toolbar { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cards { display: flex; flex-direction: column; gap: 10px; counter-reset: p; }
+.pcard { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+.pcard.read { border-color: var(--good); }
+.pcard .func { font-size: 12px; font-weight: 700; color: var(--accent); }
+.pcard .pat { font-family: var(--display); font-weight: 700; font-size: 20px; line-height: 1.3; }
+.pcard .meaning { font-size: 13px; color: var(--muted); }
+.pcard .ex { grid-column: 1 / -1; border-top: 1px dashed var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.pcard .en { font-size: 16px; }
+.pcard .ja { font-size: 13px; color: var(--muted); }
+.pcard .note { font-size: 13px; }
+.pcard .side { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.hide-en .pcard .en, .hide-en .pcard .pat { filter: blur(6px); cursor: pointer; transition: filter .2s; }
+.hide-en .pcard.peek .en, .hide-en .pcard.peek .pat { filter: none; }
+.readbtn { font-size: 12px; font-weight: 700; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); padding: 4px 10px; white-space: nowrap; }
+.readbtn.on { background: var(--good); color: var(--surface); border-color: var(--good); }
+
+/* test */
+.qcard { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.qja { font-size: 22px; font-weight: 700; line-height: 1.45; }
+.timer { height: 4px; background: var(--g0); border-radius: 4px; overflow: hidden; }
+.timer i { display: block; height: 100%; background: var(--accent); width: 100%; transform-origin: left; }
+.timer.run i { animation: shrink 6s linear forwards; }
+@keyframes shrink { to { transform: scaleX(0); } }
+.answer { border-top: 1px dashed var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.answer .en { font-size: 19px; font-family: var(--display); font-weight: 500; }
+.rate { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rate button { border-radius: 12px; padding: 10px 6px; font-weight: 700; border: 1px solid var(--line); background: var(--surface); }
+.rate .r2 { border-color: var(--good); color: var(--good); }
+.rate .r1 { border-color: var(--warn); color: var(--warn); }
+.rate .r0 { border-color: var(--bad); color: var(--bad); }
+.progressbar { height: 6px; border-radius: 6px; background: var(--g0); overflow: hidden; }
+.progressbar i { display: block; height: 100%; background: var(--accent); }
+.fb { border-radius: 12px; padding: 10px 12px; background: var(--accent-soft); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+
+/* talk */
+.chat { display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 88%; border-radius: 16px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.msg.coach { background: var(--surface); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 4px; }
+.msg.me { background: var(--accent); color: var(--accent-ink); align-self: flex-end; border-bottom-right-radius: 4px; }
+.msg .en { font-size: 16px; }
+.msg.coach.hidden-text .en { filter: blur(7px); cursor: pointer; }
+.msg .hint { font-size: 13px; color: var(--muted); }
+.fbcard { align-self: flex-end; max-width: 92%; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.fbcard b { font-weight: 700; }
+.fbcard .better { background: linear-gradient(transparent 55%, var(--mark) 55%); color: inherit; }
+.composer { position: sticky; bottom: 0; background: var(--bg); padding-block: 10px calc(10px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; align-items: flex-end; border-top: 1px solid var(--line); }
+.composer textarea { min-height: 48px; max-height: 160px; }
+.targets { display: flex; flex-wrap: wrap; gap: 6px; }
+.targets .chip.used { background: var(--good); color: var(--surface); }
+
+/* log */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+.stat .v { font-family: var(--mono); font-size: 24px; font-weight: 500; }
+.stat .k { font-size: 12px; color: var(--muted); font-weight: 700; }
+.grid90 { display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 4px; }
+.grid90 i { aspect-ratio: 1; border-radius: 4px; background: var(--g0); display: block; position: relative; }
+.grid90 i.l1 { background: var(--g1); } .grid90 i.l2 { background: var(--g2); } .grid90 i.l3 { background: var(--g3); }
+.grid90 i.miss { outline: 2px solid var(--bad); outline-offset: -2px; }
+.grid90 i.today { outline: 2px solid var(--ink); outline-offset: 1px; }
+.grid90 i.future { opacity: .45; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; gap: 4px; align-items: center; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.daylist { display: flex; flex-direction: column; }
+.daylist details { border-top: 1px solid var(--line); padding: 10px 0; }
+.daylist summary { cursor: pointer; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; list-style: none; }
+.daylist summary::-webkit-details-marker { display: none; }
+.daylist ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.lib { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow: auto; }
+.lib .item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.lib .item .p { font-weight: 700; }
+.lib .item .e { font-size: 13px; color: var(--muted); grid-column: 1 / -1; }
+.toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; max-width: calc(100% - 32px); }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp 0.8s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+@media (max-width: 520px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero .theme { font-size: 22px; }
+  .pcard .pat { font-size: 18px; }
+  .qja { font-size: 19px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .timer.run i, .spin { animation: none; }
+}
+</style>
+
+<header class="top">
+  <div class="wrap top-in" style="padding-bottom:0">
+    <div class="brand">
+      <h1><span>Chunk</span> Daily</h1>
+      <div class="daypill" id="daypill">Day — / 90</div>
+    </div>
+    <nav class="tabs" aria-label="画面">
+      <a href="#today" data-tab="today">今日</a>
+      <a href="#test" data-tab="test">テスト</a>
+      <a href="#talk" data-tab="talk">会話</a>
+      <a href="#log" data-tab="log">記録</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<main>
+  <div id="sysbanner"></div>
+
+  <!-- TODAY -->
+  <section data-view="today" id="v-today">
+    <div class="hero">
+      <div class="eyebrow" id="t-week">Week 1 · 意見・考え</div>
+      <h2 class="theme" id="t-focus">今日のパターン</h2>
+      <div class="muted small" id="t-date"></div>
+    </div>
+    <div id="t-alert"></div>
+    <div class="checklist" id="t-check"></div>
+    <div class="toolbar">
+      <div class="row">
+        <button class="btn" id="t-playall" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>全部聞く</button>
+        <button class="btn ghost" id="t-hide" type="button" aria-pressed="false">英語をかくす</button>
+      </div>
+      <span class="small muted" id="t-readcount"></span>
+    </div>
+    <div class="cards" id="t-cards"></div>
+    <div class="panel small">
+      <div class="eyebrow">今日のやり方</div>
+      <div>① 各パターンを聞いて、0.5秒遅れで真似して言う(シャドーイング)を3回。言えたら「音読OK」。</div>
+      <div>② 例文を自分の話に置き換えて、声に出して1回言う。</div>
+      <div>③ 「テスト」で日本語から1〜2秒で英語を言う(瞬間英作文)。</div>
+      <div>④ 「会話」でClaudeの質問に、今日のパターンを使って答える。</div>
+    </div>
+  </section>
+
+  <!-- TEST -->
+  <section data-view="test" id="v-test" hidden>
+    <div id="q-root"></div>
+  </section>
+
+  <!-- TALK -->
+  <section data-view="talk" id="v-talk" hidden>
+    <div class="panel">
+      <div class="toolbar">
+        <div class="eyebrow">今日のターゲット(使えたら緑)</div>
+        <label class="row small"><input type="checkbox" id="c-listen"> リスニングモード(英文をかくす)</label>
+      </div>
+      <div class="targets" id="c-targets"></div>
+    </div>
+    <div class="chat" id="c-chat"></div>
+    <div id="c-start"></div>
+    <div class="composer" id="c-composer" hidden>
+      <button class="icon-btn" id="c-mic" type="button" aria-label="音声で入力" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <textarea id="c-input" rows="2" placeholder="英語で答える(マイクでもOK)"></textarea>
+      <button class="btn primary" id="c-send" type="button">送信</button>
+    </div>
+  </section>
+
+  <!-- LOG -->
+  <section data-view="log" id="v-log" hidden>
+    <div class="stats" id="l-stats"></div>
+    <div class="panel">
+      <div class="toolbar"><div class="eyebrow">90日カレンダー</div><div class="legend" id="l-legend"></div></div>
+      <div class="grid90" id="l-grid"></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">苦手パターン(何度もつまずいたもの)</div>
+      <div class="lib" id="l-weak"></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">日ごとの記録</div>
+      <div class="daylist" id="l-days"></div>
+    </div>
+    <div class="panel">
+      <div class="toolbar"><div class="eyebrow">覚えたパターン一覧</div><span class="small muted" id="l-libcount"></span></div>
+      <input type="search" id="l-search" placeholder="パターンや例文で検索">
+      <div class="lib" id="l-lib"></div>
+    </div>
+  </section>
+</main>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------- curriculum ---------- */
+const START = "2026-11-16";
+const WEEKS = [
+  ["意見・考えを言う", ["意見の切り出し(I think 以外)", "控えめに意見を言う", "はっきり主張する", "自分の見方・立場を示す", "相手の意見を聞く", "要するに・結論を言う", "応用:カジュアルな意見表現"]],
+  ["確信度・推測", ["わからない・自信がない(I'm not sure 以外)", "たぶん・おそらく", "推測する・〜みたい", "確信している", "記憶があいまい", "可能性を述べる", "応用:ぼかし表現"]],
+  ["希望・予定・意図", ["〜したい(I would like to 以外)", "〜するつもり・予定", "迷っている・検討中", "楽しみにしている", "気が進まない・やりたくない", "目標・夢を語る", "応用:願望のカジュアル表現"]],
+  ["依頼・提案・誘い", ["丁寧にお願いする", "気軽に頼む", "提案する", "誘う", "誘いを受ける・断る", "許可を求める", "応用:相手に配慮した頼み方"]],
+  ["同意・反対", ["強く同意する", "部分的に同意する", "やんわり反対する", "はっきり反対する", "保留・どちらとも言えない", "相手を立てつつ意見する", "応用:議論でのやりとり"]],
+  ["理由・説明・つなぎ", ["理由を言う", "例を挙げる", "順序立てて説明する", "話を付け足す", "逆接・とはいえ", "話題を変える・戻す", "応用:長く話すためのつなぎ"]],
+  ["気持ち・リアクション", ["驚き", "喜び・感動", "がっかり・残念", "イライラ・不満", "共感・相づち", "励ます・慰める", "応用:感想を詳しく言う"]],
+  ["経験・ストーリー", ["経験を話す", "昔の習慣", "出来事を時系列で話す", "オチ・結果を言う", "思い出す・懐かしむ", "後悔・〜すればよかった", "応用:エピソードトーク"]],
+  ["比較・好み・選択", ["好みを言う", "比べる", "どちらでもいい・こだわらない", "おすすめする", "選んだ理由を言う", "条件付きで選ぶ", "応用:迷いを言葉にする"]],
+  ["問題・トラブル・相談", ["問題を伝える", "謝る", "相談する", "アドバイスする", "解決策を出す", "催促・確認する", "応用:困った状況を切り抜ける"]],
+  ["会話を続ける技術", ["聞き返す", "言い直す・言い換える", "言葉が出ないとき", "確認する・要約し返す", "質問を広げる", "時間をかせぐ", "応用:パラフレーズ"]],
+  ["仕事・議論", ["会議で発言する", "進捗・状況を報告する", "優先順位・判断を伝える", "懸念を伝える", "合意形成・まとめ", "フィードバックする", "応用:プレゼン・説明"]],
+  ["総仕上げ", ["総復習:意見と推測", "総復習:依頼と同意・反対", "総復習:気持ちと経験", "総復習:比較と相談", "総復習:会話を続ける", "総まとめ:自分の話をする"]],
+];
+const INTERVALS = [0, 1, 3, 7, 14, 30]; // days by box
+
+/* ---------- date helpers ---------- */
+const pad = n => String(n).padStart(2, "0");
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parse = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
+const diffDays = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
+const TODAY = iso(new Date());
+const dayNum = s => diffDays(START, s) + 1;
+function planFor(s) {
+  const n = Math.max(1, Math.min(90, dayNum(s)));
+  const w = Math.min(WEEKS.length - 1, Math.floor((n - 1) / 7));
+  const f = WEEKS[w][1][Math.min(WEEKS[w][1].length - 1, (n - 1) % 7)];
+  return { n, week: w + 1, theme: WEEKS[w][0], focus: f };
+}
+const fmtJa = s => { const d = parse(s); return `${d.getMonth() + 1}月${d.getDate()}日(${"日月火水木金土"[d.getDay()]})`; };
+
+/* ---------- state ---------- */
+const S = {
+  db: null, sample: null, tts: null, dict: null,
+  days: {}, progress: {}, cards: {}, talks: {},
+  loaded: { days: false, progress: false, cards: false },
+  hideEn: false, listenMode: false,
+  test: null, talk: null,
+};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function toast(msg) {
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
+  document.body.append(t); setTimeout(() => t.remove(), 2600);
+}
+try { S.hideEn = localStorage.getItem("cd.hideEn") === "1"; S.listenMode = localStorage.getItem("cd.listen") === "1"; } catch (e) {}
+
+/* ---------- storage (db or memory) ---------- */
+const chains = {};
+function save(path, data) {
+  const [col, id] = path.split("/");
+  if (S[col]) S[col][id] = data;
+  if (!S.db) return Promise.resolve();
+  chains[path] = (chains[path] || Promise.resolve()).then(() => S.db.doc(path).set(data)).catch(e => {
+    toast(e && e.code === "quota_exceeded" ? "保存容量がいっぱいです" : "保存できませんでした。通信を確認してください");
+  });
+  return chains[path];
+}
+function prog(date) {
+  return S.progress[date] || { date, read: [], test: { done: false, correct: 0, total: 0 }, talk: { done: false, turns: 0 } };
+}
+function setProg(date, patch) {
+  const p = JSON.parse(JSON.stringify(prog(date)));
+  Object.assign(p, patch, { updatedAt: new Date().toISOString() });
+  return save(`progress/${date}`, p);
+}
+function level(date) {
+  const p = S.progress[date]; const d = S.days[date];
+  if (!p) return 0;
+  const total = d ? d.patterns.length : 10;
+  return (p.read && p.read.length >= total ? 1 : 0) + (p.test && p.test.done ? 1 : 0) + (p.talk && p.talk.done ? 1 : 0);
+}
+function missing(date) {
+  const p = S.progress[date]; const out = [];
+  const total = S.days[date] ? S.days[date].patterns.length : 10;
+  if (!p || !p.read || p.read.length < total) out.push("音読");
+  if (!p || !p.test || !p.test.done) out.push("テスト");
+  if (!p || !p.talk || !p.talk.done) out.push("会話");
+  return out;
+}
+
+/* ---------- speech ---------- */
+let browserVoice = null;
+function pickVoice() {
+  try {
+    const vs = speechSynthesis.getVoices().filter(v => /^en(-|_)/i.test(v.lang));
+    browserVoice = vs.find(v => /US/i.test(v.lang) && /Samantha|Google|Natural|Aria|Jenny/i.test(v.name)) || vs.find(v => /US/i.test(v.lang)) || vs[0] || null;
+  } catch (e) {}
+}
+try { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; } catch (e) {}
+async function say(text, rate = 1) {
+  if (S.tts) {
+    try { await S.tts.speak([{ text, language: "en" }], { rate }); return; }
+    catch (e) { if (e && (e.code === "stopped")) return; }
+  }
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; u.rate = rate * 0.95; if (browserVoice) u.voice = browserVoice;
+    await new Promise(r => { u.onend = r; u.onerror = r; speechSynthesis.speak(u); });
+  } catch (e) { toast("音声を再生できませんでした"); }
+}
+function stopSay() { try { S.tts && S.tts.stop(); } catch (e) {} try { speechSynthesis.cancel(); } catch (e) {} }
+
+let dictTarget = null, dictBase = "";
+function bindMic(btn, ta) {
+  if (!S.dict) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.onclick = () => {
+    if (S.dict.active() && dictTarget === ta) { S.dict.stop().catch(() => {}); return; }
+    dictTarget = ta; dictBase = ta.value ? ta.value.trim() + " " : "";
+    S.dict.start({ language: "en" }).catch(e => {
+      if (e && e.code === "not_granted") { toast("マイクが許可されていません。入力欄に打ち込んでください"); document.querySelectorAll("[data-mic]").forEach(b => b.hidden = true); }
+      else if (e && e.code !== "stopped") toast("音声入力を開始できませんでした");
+    });
+  };
+  btn.setAttribute("data-mic", "");
+}
+function initDictation() {
+  if (!S.dict) return;
+  S.dict.onPartial(({ text }) => { if (dictTarget) dictTarget.value = dictBase + text; });
+  S.dict.onFinal(({ text }) => { if (dictTarget) { dictBase = dictBase + text + " "; dictTarget.value = dictBase; } });
+  S.dict.onState(({ state }) => {
+    document.querySelectorAll("[data-mic]").forEach(b => b.classList.toggle("on", state === "listening" || state === "starting"));
+  });
+}
+const ICON_SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+const ICON_SLOW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const ICON_MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+
+/* ---------- Claude prompts ---------- */
+function learnedPatternList(limit = 400) {
+  return Object.values(S.days).sort((a, b) => a.date < b.date ? -1 : 1).flatMap(d => d.patterns.map(p => p.pattern)).slice(-limit);
+}
+function genPrompt(date) {
+  const pl = planFor(date);
+  return `You are an English speaking coach for a Japanese adult learner. They can read English but struggle to speak: they keep reusing the same few frames ("I'm not sure...", "I would like to..."). The goal is to give them many reusable spoken chunks.
+
+Create today's lesson: 10 NEW speaking patterns (reusable sentence frames / chunks).
+Day ${pl.n} of 90. Week theme: ${pl.theme}. Today's focus: ${pl.focus}.
+
+Rules:
+- Natural spoken English that native speakers really use in daily life and at work. Mix casual and polite.
+- Each "pattern" is a reusable frame; mark the slot with "~" (e.g. "As far as I know, ~").
+- All 10 must be different from each other and from these already-learned patterns:
+${learnedPatternList().map(p => "  - " + p).join("\n") || "  (none yet)"}
+- Example sentences: short (under 14 words), about everyday life or work, easy vocabulary.
+- Japanese fields in natural Japanese.
+
+Reply with only JSON:
+{"patterns":[{"func":"言いたいこと(日本語・15字以内)","pattern":"As far as I know, ~","meaning":"意味とニュアンス(日本語・40字以内)","en":"As far as I know, the shop is closed on Mondays.","ja":"私の知る限り、その店は月曜休みだよ。","note":"使い分けのコツ(日本語・1文)"}]}`;
+}
+function talkPrompt(t) {
+  const day = S.days[TODAY];
+  const targets = day ? day.patterns.map(p => `- ${p.pattern}  (${p.func})`).join("\n") : "";
+  const weak = weakCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
+  const recent = Object.values(S.days).filter(d => d.date < TODAY).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 3).flatMap(d => d.patterns.map(p => `- ${p.pattern}`)).slice(0, 12).join("\n");
+  const convo = t.turns.map(x => x.role === "coach" ? `Coach: ${x.text}` : `Learner: ${x.text}`).join("\n");
+  const last = t.turns[t.turns.length - 1];
+  return `You are a warm, natural English conversation partner and speaking coach for a Japanese adult learner (reads OK, speaking is weak). Your job: chat about their real life and get them to actually USE today's target patterns out loud.
+
+Today's target patterns:
+${targets}
+
+Also try to recycle (older / weak patterns):
+${weak || "(none)"}
+${recent}
+
+Conversation so far:
+${convo || "(not started)"}
+
+Do this:
+1. ${last && last.role === "me" ? "Give feedback on the learner's LAST answer only: \"corrected\" = their sentence with minimal grammar fixes (same if already fine); \"better\" = a more natural version of what THEY meant that uses one target pattern; \"used\" = exact target patterns (copy the pattern text from the list) they used, else []; \"tip_ja\" = one short tip in Japanese; \"ok\" = true if understandable and mostly correct." : "No feedback yet: set \"feedback\" to null."}
+2. Write your next line "reply": a short natural reaction (one sentence, skip it on the first line) plus ONE open question about their life/work/opinions that naturally invites a target pattern they have not used yet. Under 35 words, everyday vocabulary, no Japanese.
+3. "hint_ja": a Japanese hint (under 40 chars) naming one target pattern that fits the question.
+
+Reply with only JSON:
+{"feedback":{"ok":true,"corrected":"...","better":"...","used":["..."],"tip_ja":"..."},"reply":"...","hint_ja":"..."}`;
+}
+function gradePrompt(card, said) {
+  return `A Japanese learner is doing instant English composition (Japanese -> spoken English).
+Japanese: ${card.ja}
+Target pattern: ${card.pattern}
+Model answer: ${card.en}
+Learner said: ${said}
+
+Judge meaning and naturalness, not exact wording. Reply with only JSON:
+{"verdict":"good|ok|retry","comment_ja":"日本語で1〜2文のコメント","natural":"a natural version of what the learner said, using the target pattern"}`;
+}
+
+/* ---------- Claude calls ---------- */
+async function generateToday(btn) {
+  if (!S.sample) { toast("この画面ではClaudeを呼べません"); return; }
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 作成中…(20秒ほど)';
+  try {
+    const r = await S.sample.json(genPrompt(TODAY), { modelTier: "default", cache: false });
+    const list = (r && Array.isArray(r.patterns) ? r.patterns : []).filter(p => p && p.pattern && p.en).slice(0, 10);
+    if (list.length < 5) throw { code: "bad" };
+    const pl = planFor(TODAY);
+    const doc = { date: TODAY, day: pl.n, week: pl.week, theme: pl.theme, focus: pl.focus, source: "app", createdAt: new Date().toISOString(),
+      patterns: list.map((p, i) => ({ id: `${TODAY}-${pad(i + 1)}`, func: String(p.func || ""), pattern: String(p.pattern), meaning: String(p.meaning || ""), en: String(p.en), ja: String(p.ja || ""), note: String(p.note || "") })) };
+    await save(`days/${TODAY}`, doc);
+    ensureCards(); renderAll();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "もう一度つくる";
+    toast(e && e.code === "not_granted" ? "Claudeの利用が許可されませんでした" : e && e.code === "rate_limited" ? "混み合っています。少し待ってから試してください" : "作成に失敗しました。もう一度試してください");
+  }
+}
+
+/* ---------- cards / SRS ---------- */
+const pendingCards = new Set();
+function ensureCards() {
+  if (S.db && !S.loaded.cards) return;
+  for (const d of Object.values(S.days)) for (const p of d.patterns) {
+    if (S.cards[p.id] || pendingCards.has(p.id)) continue;
+    pendingCards.add(p.id);
+    save(`cards/${p.id}`, { id: p.id, date: d.date, func: p.func, pattern: p.pattern, en: p.en, ja: p.ja, box: 0, due: d.date, reviews: 0, lapses: 0, last: null });
+  }
+}
+function weakCards() {
+  return Object.values(S.cards).filter(c => c.lapses >= 2 || (c.reviews > 0 && c.box <= 1 && c.lapses >= 1)).sort((a, b) => b.lapses - a.lapses);
+}
+function rateCard(c, r) {
+  const n = { ...c, reviews: (c.reviews || 0) + 1, last: TODAY };
+  if (r === 2) n.box = Math.min(5, (c.box || 0) + 1);
+  else if (r === 1) n.box = Math.max(1, c.box || 0);
+  else { n.box = 1; n.lapses = (c.lapses || 0) + 1; }
+  n.due = addDays(TODAY, r === 2 ? INTERVALS[n.box] : 1);
+  save(`cards/${c.id}`, n);
+}
+
+/* ---------- routing ---------- */
+const VIEWS = ["today", "test", "talk", "log"];
+function route() {
+  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "today";
+  VIEWS.forEach(x => { $("v-" + x).hidden = x !== v; });
+  document.querySelectorAll("nav.tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.tab === v ? "page" : "false"));
+  stopSay();
+  if (v === "test") renderTest();
+  if (v === "talk") renderTalk();
+  if (v === "log") renderLog();
+  window.scrollTo(0, 0);
+}
+addEventListener("hashchange", route);
+
+/* ---------- TODAY ---------- */
+function renderToday() {
+  const pl = planFor(TODAY);
+  const day = S.days[TODAY];
+  const p = prog(TODAY);
+  $("daypill").textContent = dayNum(TODAY) > 90 ? `Day ${dayNum(TODAY)} · 修了後` : `Day ${pl.n} / 90`;
+  $("t-week").textContent = `Week ${pl.week} · ${day ? day.theme : pl.theme}`;
+  $("t-focus").textContent = day ? day.focus : pl.focus;
+  $("t-date").textContent = fmtJa(TODAY);
+
+  // alerts: yesterday + missed
+  const al = [];
+  if (dayNum(TODAY) < 1) al.push(`<div class="banner info">プログラムは ${fmtJa(START)} から始まります。</div>`);
+  const y = addDays(TODAY, -1);
+  if (y >= START && (S.loaded.progress || !S.db)) {
+    const miss = missing(y);
+    if (miss.length === 3) al.push(`<div class="banner bad"><div><b>昨日はお休みでした。</b>今日の分を終えたら、記録タブの昨日のパターンを1回聞いて取り戻しましょう。</div></div>`);
+    else if (miss.length) al.push(`<div class="banner warn"><div><b>昨日の未完了:${miss.join("・")}</b>。今日はそこから先にやると取り返せます。</div></div>`);
+  }
+  const streak = calcStreak();
+  if (level(TODAY) === 3) al.push(`<div class="banner good"><div><b>今日のメニュー完了!</b> 連続 <span class="num">${streak.cur}</span> 日。明日の朝7時に新しい10パターンが届きます。</div></div>`);
+  $("t-alert").innerHTML = al.join("");
+
+  const total = day ? day.patterns.length : 10;
+  const items = [
+    ["① 音読", `${(p.read || []).length}/${total}`, (p.read || []).length >= total, "#today"],
+    ["② テスト", p.test && p.test.done ? `${p.test.correct}/${p.test.total}` : "未", p.test && p.test.done, "#test"],
+    ["③ 会話", p.talk && p.talk.done ? `${p.talk.turns}往復` : (p.talk && p.talk.turns ? `${p.talk.turns}/5` : "未"), p.talk && p.talk.done, "#talk"],
+  ];
+  $("t-check").innerHTML = items.map(([k, v, done, href]) => `<a class="check ${done ? "done" : ""}" href="${href}"><span class="k">${k}</span><span class="v num">${esc(v)}</span></a>`).join("");
+
+  const root = $("t-cards");
+  root.classList.toggle("hide-en", S.hideEn);
+  $("t-hide").setAttribute("aria-pressed", S.hideEn); $("t-hide").textContent = S.hideEn ? "英語を表示" : "英語をかくす";
+  if (!day) {
+    const canGen = !!S.sample;
+    const waiting = S.db && !S.loaded.days;
+    root.innerHTML = `<div class="panel">
+      <div class="eyebrow">${waiting ? "読み込み中" : "まだ届いていません"}</div>
+      <div>${waiting ? "記録を読み込んでいます…" : `今日の10パターン(テーマ:${esc(pl.focus)})は、毎朝7時ごろに届きます。今すぐ始めたいときは、ここで作れます。`}</div>
+      ${!waiting && canGen ? `<div><button class="btn primary" id="t-gen" type="button">今日の10パターンを作る</button></div>` : ""}
+      ${!waiting && !canGen ? `<div class="small muted">この画面ではClaudeに接続できません。claude.ai で開いてください。</div>` : ""}
+    </div>`;
+    const g = $("t-gen"); if (g) g.onclick = () => generateToday(g);
+    $("t-readcount").textContent = "";
+    return;
+  }
+  const readSet = new Set(p.read || []);
+  $("t-readcount").textContent = `音読OK ${readSet.size}/${total}`;
+  root.innerHTML = day.patterns.map(x => `
+    <article class="pcard ${readSet.has(x.id) ? "read" : ""}" data-id="${esc(x.id)}">
+      <div style="min-width:0;display:flex;flex-direction:column;gap:4px">
+        <div class="func">${esc(x.func)}</div>
+        <div class="pat">${esc(x.pattern)}</div>
+        <div class="meaning">${esc(x.meaning)}</div>
+      </div>
+      <div class="side">
+        <button class="icon-btn" data-say="${esc(x.id)}" type="button" aria-label="例文を聞く">${ICON_SPK}</button>
+        <button class="icon-btn" data-slow="${esc(x.id)}" type="button" aria-label="ゆっくり聞く">${ICON_SLOW}</button>
+      </div>
+      <div class="ex">
+        <div class="en">${esc(x.en)}</div>
+        <div class="ja">${esc(x.ja)}</div>
+        ${x.note ? `<div class="note">${esc(x.note)}</div>` : ""}
+        <div class="row" style="justify-content:flex-end"><button class="readbtn ${readSet.has(x.id) ? "on" : ""}" data-read="${esc(x.id)}" type="button">${readSet.has(x.id) ? "音読OK" : "3回まねした"}</button></div>
+      </div>
+    </article>`).join("");
+}
+$("t-cards").addEventListener("click", e => {
+  const day = S.days[TODAY]; if (!day) return;
+  const find = id => day.patterns.find(p => p.id === id);
+  const b = e.target.closest("button");
+  if (b && b.dataset.say) { say(find(b.dataset.say).en, 1); return; }
+  if (b && b.dataset.slow) { say(find(b.dataset.slow).en, 0.75); return; }
+  if (b && b.dataset.read) {
+    const p = prog(TODAY); const set = new Set(p.read || []);
+    set.has(b.dataset.read) ? set.delete(b.dataset.read) : set.add(b.dataset.read);
+    setProg(TODAY, { read: [...set] }).then(() => {});
+    renderToday(); return;
+  }
+  const card = e.target.closest(".pcard");
+  if (card && S.hideEn) card.classList.toggle("peek");
+});
+$("t-hide").onclick = () => { S.hideEn = !S.hideEn; try { localStorage.setItem("cd.hideEn", S.hideEn ? "1" : "0"); } catch (e) {} renderToday(); };
+$("t-playall").onclick = async () => {
+  const day = S.days[TODAY]; if (!day) return;
+  if (S.tts) { S.tts.speak(day.patterns.map(p => ({ text: p.en, language: "en" }))).catch(() => {}); return; }
+  for (const p of day.patterns) await say(p.en);
+};
+
+/* ---------- TEST ---------- */
+function buildQueue() {
+  const all = Object.values(S.cards);
+  const reviews = all.filter(c => c.date < TODAY && c.due <= TODAY).sort((a, b) => a.due < b.due ? -1 : 1).slice(0, 20);
+  const fresh = all.filter(c => c.date === TODAY).sort((a, b) => a.id < b.id ? -1 : 1);
+  return { reviews: reviews.length, fresh: fresh.length, list: [...reviews, ...fresh] };
+}
+function renderTest() {
+  const root = $("q-root");
+  const t = S.test;
+  const p = prog(TODAY);
+  if (!t) {
+    const q = buildQueue();
+    const doneNote = p.test && p.test.done ? `<div class="banner good">今日のテストは完了済み(<span class="num">${p.test.correct}/${p.test.total}</span>)。もう一周しても構いません。</div>` : "";
+    root.innerHTML = `${doneNote}<div class="panel">
+      <div class="eyebrow">瞬間英作文テスト</div>
+      <h2 style="font-size:22px">日本語を見て、1〜2秒で英語を<span class="mark">声に出す</span></h2>
+      <div class="muted small">青いバーが消えるまで(6秒)に言い始めるのが目標。言えたかどうかは自分で判定します。間違えたパターンは翌日にまた出ます。</div>
+      <div class="stats" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="stat"><span class="v">${q.fresh}</span><span class="k">今日の新しいパターン</span></div>
+        <div class="stat"><span class="v">${q.reviews}</span><span class="k">復習(忘れかけ)</span></div>
+      </div>
+      ${q.list.length ? `<div><button class="btn primary" id="q-start" type="button">テストを始める(${q.list.length}問)</button></div>` : `<div class="muted">出題できるパターンがまだありません。「今日」タブでパターンを受け取ってください。</div>`}
+    </div>`;
+    const s = $("q-start");
+    if (s) s.onclick = () => { S.test = { list: q.list.map(c => c.id), i: 0, correct: 0, results: [], revealed: false, fresh: q.fresh }; renderTest(); };
+    return;
+  }
+  if (t.i >= t.list.length) {
+    const wrong = t.results.filter(r => r.r === 0).map(r => S.cards[r.id]).filter(Boolean);
+    root.innerHTML = `<div class="panel">
+      <div class="eyebrow">結果</div>
+      <h2 style="font-size:26px"><span class="num">${t.correct}</span> / <span class="num">${t.list.length}</span> 言えた</h2>
+      ${wrong.length ? `<div class="muted small">出てこなかったパターン(明日また出ます):</div><ul style="margin:0;padding-left:18px">${wrong.map(c => `<li><b>${esc(c.pattern)}</b> — ${esc(c.en)}</li>`).join("")}</ul>` : `<div>全部言えました。</div>`}
+      <div class="row"><a class="btn primary" href="#talk">会話の練習へ</a><button class="btn" id="q-again" type="button">もう一周</button></div>
+    </div>`;
+    $("q-again").onclick = () => { S.test = null; renderTest(); };
+    return;
+  }
+  const c = S.cards[t.list[t.i]];
+  if (!c) { t.i++; renderTest(); return; }
+  const isNew = c.date === TODAY;
+  root.innerHTML = `
+    <div class="row" style="justify-content:space-between"><span class="small muted num">${t.i + 1} / ${t.list.length}</span><span class="chip ${isNew ? "" : "warn"}">${isNew ? "今日" : "復習"}</span></div>
+    <div class="progressbar"><i style="width:${(t.i / t.list.length) * 100}%"></i></div>
+    <div class="qcard">
+      <div class="func small" style="color:var(--accent);font-weight:700">${esc(c.func)}</div>
+      <div class="qja">${esc(c.ja)}</div>
+      <div class="timer ${t.revealed ? "" : "run"}"><i></i></div>
+      <div class="row">
+        <button class="btn ghost small" id="q-hint" type="button">ヒント:パターンを見る</button>
+        <span id="q-hinttext" class="mark" hidden>${esc(c.pattern)}</span>
+      </div>
+      <div class="row" style="align-items:flex-end;flex-wrap:nowrap">
+        <button class="icon-btn" id="q-mic" type="button" aria-label="音声で入力" hidden>${ICON_MIC}</button>
+        <textarea id="q-input" rows="2" placeholder="言った英語を残す(任意・マイクでもOK)"></textarea>
+      </div>
+      ${t.revealed ? `
+      <div class="answer">
+        <div class="eyebrow">答え</div>
+        <div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div class="en" style="flex:1;min-width:0">${esc(c.en)}</div><button class="icon-btn" id="q-say" type="button" aria-label="答えを聞く">${ICON_SPK}</button></div>
+        <div class="small"><span class="mark">${esc(c.pattern)}</span></div>
+        <div id="q-fb"></div>
+        ${S.sample && t.said ? `<div><button class="btn small" id="q-grade" type="button">Claudeに添削してもらう</button></div>` : ""}
+        <div class="rate">
+          <button class="r2" data-r="2" type="button">すぐ言えた</button>
+          <button class="r1" data-r="1" type="button">あやしい</button>
+          <button class="r0" data-r="0" type="button">出てこない</button>
+        </div>
+      </div>` : `<div><button class="btn primary" id="q-show" type="button">答えを見る</button></div>`}
+    </div>`;
+  const ta = $("q-input"); ta.value = t.said || "";
+  bindMic($("q-mic"), ta);
+  ta.oninput = () => { t.said = ta.value; };
+  $("q-hint").onclick = () => { $("q-hinttext").hidden = false; $("q-hint").hidden = true; };
+  if (!t.revealed) {
+    $("q-show").onclick = () => { t.said = ta.value.trim(); t.revealed = true; try { S.dict && S.dict.active() && S.dict.stop(); } catch (e) {} renderTest(); say(c.en); };
+    return;
+  }
+  $("q-say").onclick = () => say(c.en);
+  const g = $("q-grade");
+  if (g) g.onclick = async () => {
+    g.disabled = true; g.innerHTML = '<span class="spin"></span> 添削中';
+    try {
+      const r = await S.sample.json(gradePrompt(c, t.said), { modelTier: "quick" });
+      const tone = r.verdict === "good" ? "good" : r.verdict === "ok" ? "warn" : "bad";
+      $("q-fb").innerHTML = `<div class="fb"><div><span class="chip ${tone}">${r.verdict === "good" ? "いいね" : r.verdict === "ok" ? "惜しい" : "もう一度"}</span></div><div>${esc(r.comment_ja)}</div>${r.natural ? `<div><b>自然な言い方:</b> ${esc(r.natural)}</div>` : ""}</div>`;
+      g.remove();
+    } catch (e) { g.disabled = false; g.textContent = "添削をやり直す"; toast(e && e.code === "not_granted" ? "Claudeの利用が許可されませんでした" : "添削できませんでした"); }
+  };
+  root.querySelectorAll(".rate button").forEach(b => b.onclick = () => {
+    const r = Number(b.dataset.r);
+    rateCard(c, r);
+    t.results.push({ id: c.id, r }); if (r === 2) t.correct++;
+    t.i++; t.revealed = false; t.said = "";
+    if (t.i >= t.list.length) setProg(TODAY, { test: { done: true, correct: t.correct, total: t.list.length, at: new Date().toISOString() } });
+    renderTest(); renderToday();
+  });
+}
+
+/* ---------- TALK ---------- */
+function talkDoc() { return S.talks[TODAY] || { date: TODAY, turns: [], feedback: [] }; }
+function renderTalk() {
+  const day = S.days[TODAY];
+  const t = S.talk || (S.talk = JSON.parse(JSON.stringify(talkDoc())));
+  const used = new Set(t.feedback.flatMap(f => (f && f.used) || []).map(s => s.toLowerCase()));
+  $("c-targets").innerHTML = day ? day.patterns.map(p => `<span class="chip ${used.has(p.pattern.toLowerCase()) ? "used" : ""}">${esc(p.pattern)}</span>`).join("") : `<span class="muted small">今日のパターンを受け取ると表示されます</span>`;
+  $("c-listen").checked = S.listenMode;
+
+  const chat = $("c-chat"); let fbi = 0;
+  chat.innerHTML = t.turns.map((x, i) => {
+    if (x.role === "coach") return `<div class="msg coach ${S.listenMode && !x.shown ? "hidden-text" : ""}" data-i="${i}">
+      <div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div class="en" style="flex:1;min-width:0">${esc(x.text)}</div><button class="icon-btn" data-sayi="${i}" type="button" aria-label="聞く">${ICON_SPK}</button></div>
+      ${x.hint ? `<div class="hint">ヒント:${esc(x.hint)}</div>` : ""}</div>`;
+    const f = t.feedback[fbi++];
+    return `<div class="msg me"><div class="en">${esc(x.text)}</div></div>` + (f ? `<div class="fbcard">
+      <div>${f.ok ? '<span class="chip good">OK</span>' : '<span class="chip warn">直しポイント</span>'} ${(f.used || []).map(u => `<span class="chip">${esc(u)}</span>`).join(" ")}</div>
+      ${f.corrected && f.corrected !== x.text ? `<div><b>修正:</b> ${esc(f.corrected)}</div>` : ""}
+      ${f.better ? `<div><b>こう言える:</b> <span class="better">${esc(f.better)}</span></div>` : ""}
+      ${f.tip_ja ? `<div class="muted">${esc(f.tip_ja)}</div>` : ""}</div>` : "");
+  }).join("") + (t.busy ? `<div class="msg coach"><span class="spin"></span></div>` : "");
+
+  const userTurns = t.turns.filter(x => x.role === "me").length;
+  const start = $("c-start");
+  if (!S.sample) {
+    start.innerHTML = `<div class="panel"><div class="eyebrow">会話の練習</div><div>この画面ではClaudeに接続できません。claude.ai で開くと、Claudeが今日のパターンを使わせる質問をしてくれます。</div></div>`;
+    $("c-composer").hidden = true; return;
+  }
+  if (!t.turns.length) {
+    start.innerHTML = `<div class="panel"><div class="eyebrow">会話の練習</div>
+      <h2 style="font-size:20px">Claudeの質問に英語で答える。<span class="mark">5往復</span>でクリア。</h2>
+      <div class="muted small">質問は今日のパターンと、前に習った苦手パターンを使うように作られます。答えるたびに添削と「こう言える」が返ってきます。リスニングモードでは英文をかくして、音声だけで聞き取ります。</div>
+      <div><button class="btn primary" id="c-go" type="button" ${day ? "" : "disabled"}>会話をはじめる</button></div></div>`;
+    $("c-composer").hidden = true;
+    const go = $("c-go"); if (go) go.onclick = () => talkStep();
+    return;
+  }
+  start.innerHTML = userTurns >= 5 ? `<div class="banner good"><div><b>今日の会話はクリア(${userTurns}往復)。</b>まだ続けてもOK。「こう言える」の文を声に出して言い直すと、さらに身につきます。</div></div>` : `<div class="small muted">あと <span class="num">${5 - userTurns}</span> 往復でクリア</div>`;
+  $("c-composer").hidden = false;
+  $("c-send").disabled = !!t.busy;
+}
+async function talkStep() {
+  const t = S.talk;
+  t.busy = true; renderTalk();
+  try {
+    const r = await S.sample.json(talkPrompt(t), { modelTier: "default", cache: false });
+    if (t.turns.length && t.turns[t.turns.length - 1].role === "me") t.feedback.push(r.feedback || null);
+    t.turns.push({ role: "coach", text: String(r.reply || "Tell me more about that."), hint: String(r.hint_ja || "") });
+    t.busy = false;
+    const userTurns = t.turns.filter(x => x.role === "me").length;
+    save(`talks/${TODAY}`, { date: TODAY, turns: t.turns.map(({ role, text, hint }) => ({ role, text, hint: hint || "" })), feedback: t.feedback, updatedAt: new Date().toISOString() });
+    if (userTurns > 0) setProg(TODAY, { talk: { done: userTurns >= 5, turns: userTurns } });
+    renderTalk(); renderToday();
+    say(t.turns[t.turns.length - 1].text);
+    $("c-chat").lastElementChild && $("c-chat").lastElementChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } catch (e) {
+    t.busy = false;
+    if (t.turns.length && t.turns[t.turns.length - 1].role === "me") { /* keep answer; allow resend */ t.retry = true; }
+    renderTalk();
+    toast(e && e.code === "not_granted" ? "Claudeの利用が許可されませんでした" : e && e.code === "rate_limited" ? "混み合っています。少し待って送信し直してください" : "返事を受け取れませんでした。もう一度送信してください");
+  }
+}
+$("c-send").onclick = () => {
+  const t = S.talk; const ta = $("c-input"); const text = ta.value.trim();
+  if (t.busy) return;
+  try { S.dict && S.dict.active() && S.dict.stop(); } catch (e) {}
+  if (!text && t.retry) { t.retry = false; talkStep(); return; }
+  if (!text) return;
+  if (t.retry) { t.turns.pop(); t.retry = false; }
+  t.turns.push({ role: "me", text }); ta.value = ""; dictBase = "";
+  talkStep();
+};
+$("c-input").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("c-send").click(); });
+$("c-chat").addEventListener("click", e => {
+  const b = e.target.closest("button[data-sayi]");
+  if (b) { say(S.talk.turns[Number(b.dataset.sayi)].text); return; }
+  const m = e.target.closest(".msg.coach.hidden-text");
+  if (m) { S.talk.turns[Number(m.dataset.i)].shown = true; m.classList.remove("hidden-text"); }
+});
+$("c-listen").onchange = e => { S.listenMode = e.target.checked; try { localStorage.setItem("cd.listen", S.listenMode ? "1" : "0"); } catch (x) {} renderTalk(); };
+
+/* ---------- LOG ---------- */
+function calcStreak() {
+  let cur = 0, best = 0, run = 0;
+  const end = TODAY;
+  for (let s = START; s <= end; s = addDays(s, 1)) {
+    if (level(s) === 3) { run++; best = Math.max(best, run); }
+    else if (s !== end) run = 0;
+  }
+  cur = run;
+  return { cur, best };
+}
+function renderLog() {
+  const st = calcStreak();
+  const cards = Object.values(S.cards);
+  const mastered = cards.filter(c => c.box >= 4).length;
+  let missed = 0;
+  for (let s = START; s < TODAY; s = addDays(s, 1)) if (level(s) < 3) missed++;
+  $("l-stats").innerHTML = [
+    [st.cur, "連続達成(日)"], [st.best, "最長連続(日)"], [cards.length, "学んだパターン"], [mastered, "定着(4段階以上)"],
+  ].map(([v, k]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("")
+    + (missed ? `<div class="banner warn" style="grid-column:1/-1">未完了の日が <b class="num">${missed}</b> 日あります(赤枠)。</div>` : "");
+
+  $("l-legend").innerHTML = `<span><i style="background:var(--g0)"></i>0</span><span><i style="background:var(--g1)"></i>1</span><span><i style="background:var(--g2)"></i>2</span><span><i style="background:var(--g3)"></i>3項目</span>`;
+  let g = "";
+  for (let i = 0; i < 90; i++) {
+    const s = addDays(START, i); const lv = level(s);
+    const cls = [`l${lv}`, s === TODAY ? "today" : "", s > TODAY ? "future" : "", s < TODAY && lv < 3 ? "miss" : ""].join(" ");
+    g += `<i class="${cls}" title="Day ${i + 1} ${fmtJa(s)}:${lv}/3"></i>`;
+  }
+  $("l-grid").innerHTML = g;
+
+  const weak = weakCards();
+  $("l-weak").innerHTML = weak.length ? weak.slice(0, 30).map(c => `<div class="item"><span class="p">${esc(c.pattern)}</span><span class="chip bad">×${c.lapses}</span><span class="e">${esc(c.en)} / ${esc(c.ja)}</span></div>`).join("") : `<div class="muted small">まだありません。テストで「出てこない」を選んだパターンがここに集まり、会話の質問にも優先して使われます。</div>`;
+
+  const days = Object.values(S.days).sort((a, b) => a.date < b.date ? 1 : -1);
+  $("l-days").innerHTML = days.length ? days.map(d => {
+    const lv = level(d.date); const miss = missing(d.date);
+    return `<details><summary><span class="num small muted">Day ${d.day}</span><b>${esc(d.focus)}</b><span class="small muted">${fmtJa(d.date)}</span>${lv === 3 ? '<span class="chip good">完了</span>' : d.date < TODAY ? `<span class="chip bad">未:${miss.join("・")}</span>` : `<span class="chip">${lv}/3</span>`}</summary>
+      <ul>${d.patterns.map(p => `<li><b>${esc(p.pattern)}</b> — ${esc(p.en)}</li>`).join("")}</ul></details>`;
+  }).join("") : `<div class="muted small">記録はまだありません。</div>`;
+  renderLib();
+}
+function renderLib() {
+  const q = ($("l-search").value || "").toLowerCase().trim();
+  const all = Object.values(S.cards).sort((a, b) => a.id < b.id ? 1 : -1);
+  const list = q ? all.filter(c => (c.pattern + " " + c.en + " " + c.ja + " " + c.func).toLowerCase().includes(q)) : all;
+  $("l-libcount").textContent = `${list.length}件`;
+  const boxLabel = b => b >= 4 ? '<span class="chip good">定着</span>' : b >= 2 ? '<span class="chip">練習中</span>' : '<span class="chip warn">新しい</span>';
+  $("l-lib").innerHTML = list.slice(0, 200).map(c => `<div class="item"><span class="p">${esc(c.pattern)}</span>${boxLabel(c.box)}<span class="e">${esc(c.en)} / ${esc(c.ja)}</span></div>`).join("") || `<div class="muted small">該当なし</div>`;
+}
+$("l-search").addEventListener("input", renderLib);
+
+/* ---------- render all ---------- */
+function renderAll() {
+  renderToday();
+  const v = location.hash.slice(1);
+  if (v === "log") renderLog();
+  if (v === "test" && !S.test) renderTest();
+  if (v === "talk" && !S.talk?.busy) { if (!S.talk || !S.talk.turns.length) S.talk = null; renderTalk(); }
+  const dot = (tab, on) => { const a = document.querySelector(`nav.tabs a[data-tab="${tab}"]`); const d = a.querySelector(".dot"); if (on && !d) a.insertAdjacentHTML("beforeend", '<span class="dot"></span>'); if (!on && d) d.remove(); };
+  const p = prog(TODAY); const has = !!S.days[TODAY];
+  dot("test", has && !(p.test && p.test.done));
+  dot("talk", has && !(p.talk && p.talk.done));
+}
+
+/* ---------- boot ---------- */
+route(); renderAll();
+
+(async () => {
+  const c = window.claude;
+  if (!c || !c.use) { $("sysbanner").innerHTML = `<div class="banner warn">記録の保存とClaudeの機能は claude.ai で開いたときに使えます。</div>`; return; }
+  const [db, sample, tts, dict] = await Promise.all(["db", "sample", "tts", "dictation"].map(n => c.use(n).catch(() => null)));
+  S.sample = sample; S.tts = tts; S.dict = dict;
+  initDictation();
+  bindMic($("c-mic"), $("c-input"));
+  if (!db) {
+    $("sysbanner").innerHTML = `<div class="banner warn">記録を保存できない環境です。今日の練習はできますが、閉じると記録が消えます。</div>`;
+    renderAll(); return;
+  }
+  S.db = db;
+  const timer = setTimeout(() => { if (!S.loaded.days) $("sysbanner").innerHTML = `<div class="banner warn">記録をまだ読み込めていません。通信を確認してください。</div>`; }, 10000);
+  const onErr = e => { $("sysbanner").innerHTML = `<div class="banner bad">記録の読み込みが止まりました(${esc(e && e.code)})。ページを開き直してください。</div>`; };
+  const sub = (col, after) => db.collection(col).onSnapshot(snap => {
+    const m = {}; snap.docs.forEach(d => { m[d.id] = d.data(); });
+    // keep optimistic local writes that the store hasn't echoed yet
+    S[col] = Object.assign({}, m);
+    if (!snap.metadata.fromCache) { S.loaded[col] = true; if (col === "days") { clearTimeout(timer); $("sysbanner").innerHTML = ""; } }
+    after && after(); renderAll();
+  }, onErr);
+  sub("days", ensureCards);
+  sub("progress");
+  sub("cards", ensureCards);
+  db.doc(`talks/${TODAY}`).onSnapshot(snap => {
+    if (snap.exists) { S.talks[TODAY] = snap.data(); if (!S.talk || (!S.talk.busy && S.talk.turns.length < (snap.data().turns || []).length)) { S.talk = null; if (location.hash === "#talk") renderTalk(); } }
+  }, () => {});
+})();
+})();
+</script>
