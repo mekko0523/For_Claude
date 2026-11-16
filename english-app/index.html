@@ -191,6 +191,7 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
 .mbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--g0); }
 .mbar i { display: block; height: 100%; }
 .report ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.diag { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; max-width: calc(100% - 32px); }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp 0.8s linear infinite; }
 @keyframes sp { to { transform: rotate(360deg); } }
@@ -237,8 +238,15 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
       <div class="row">
         <button class="btn" id="t-playall" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>全部聞く</button>
         <button class="btn ghost" id="t-hide" type="button" aria-pressed="false">英語をかくす</button>
+        <button class="btn ghost small" id="t-diag" type="button">音声チェック</button>
       </div>
       <span class="small muted" id="t-readcount"></span>
+    </div>
+    <div class="panel" id="t-diagpanel" hidden>
+      <div class="toolbar"><div class="eyebrow">音声チェック</div><button class="btn primary small" id="t-diagplay" type="button">テスト再生</button></div>
+      <div class="small muted">「テスト再生」を押して、音が出たかどうかと、この枠のスクリーンショットを送ってください。</div>
+      <pre id="t-diaginfo" class="diag"></pre>
+      <pre id="t-diaglog" class="diag"></pre>
     </div>
     <div class="cards" id="t-cards"></div>
     <div class="panel small">
@@ -417,36 +425,46 @@ const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform ==
 const SS = (() => { try { return window.speechSynthesis || null; } catch (e) { return null; } })();
 let ttsBroken = false, speechUnlocked = false;
 function unlockSpeech() {
-  if (speechUnlocked || !SS) return;
+  if (speechUnlocked) return;
   speechUnlocked = true;
   // iOS 16.4+: treat this page's sound as media playback, not a ringer-style sound
   try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
-  try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; u.lang = "en-US"; SS.speak(u); } catch (e) {}
 }
-document.addEventListener("touchend", unlockSpeech, { once: true, capture: true });
-document.addEventListener("click", unlockSpeech, { once: true, capture: true });
 function utter(text, rate) {
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "en-US"; u.rate = IOS ? Math.max(0.5, rate * 0.9) : rate * 0.95;
-  if (browserVoice) u.voice = browserVoice;
+  // On iPhone, getVoices() also lists voices that are not downloaded (Enhanced/Premium etc.).
+  // Choosing one of those plays silence with no error, so let iOS use its installed default voice.
+  if (browserVoice && !IOS) u.voice = browserVoice;
   return u;
+}
+/* speech diagnostics (shown by the 音声チェック button) */
+const speechLog = [];
+function slog(msg) {
+  const t = new Date(); speechLog.push(`${pad(t.getMinutes())}:${pad(t.getSeconds())}.${String(t.getMilliseconds()).padStart(3, "0")} ${msg}`);
+  if (speechLog.length > 40) speechLog.shift();
+  const box = document.getElementById("t-diaglog"); if (box) box.textContent = speechLog.join("\n");
 }
 let silentTimer = null;
 function nativeSay(list, rate) {
-  if (!SS) { toast("この端末では音声を再生できません"); return; }
-  const go = () => {
-    let started = false;
-    list.forEach((text, i) => {
-      const u = utter(text, rate);
-      if (i === 0) u.onstart = () => { started = true; };
-      u.onerror = ev => { if (ev && ev.error && ev.error !== "interrupted" && ev.error !== "canceled") toast("音声を再生できませんでした(" + ev.error + ")"); };
-      SS.speak(u);
-    });
-    try { if (SS.paused) SS.resume(); } catch (e) {}
-    clearTimeout(silentTimer);
-    silentTimer = setTimeout(() => { if (!started && !SS.speaking) toast("音声が出ないときは、消音モード(本体横のスイッチ)と音量を確認してください"); }, 2500);
-  };
-  if (SS.speaking || SS.pending) { SS.cancel(); setTimeout(go, 120); } else go();
+  if (!SS) { toast("この端末では音声を再生できません(speechSynthesis なし)"); slog("speechSynthesis がありません"); return; }
+  // Speak synchronously inside the tap: iOS drops speech started later (setTimeout / after await).
+  slog(`speak x${list.length} 前の状態 speaking=${SS.speaking} pending=${SS.pending} paused=${SS.paused}`);
+  if (SS.speaking || SS.pending || SS.paused) { try { SS.cancel(); } catch (e) {} }
+  let started = false;
+  list.forEach((text, i) => {
+    const u = utter(text, rate);
+    u.onstart = () => { if (i === 0) started = true; slog(`start #${i + 1}`); };
+    u.onend = () => slog(`end #${i + 1}`);
+    u.onerror = ev => { slog(`error #${i + 1}: ${ev && ev.error}`); if (ev && ev.error && ev.error !== "interrupted" && ev.error !== "canceled") toast("音声を再生できませんでした(" + ev.error + ")"); };
+    try { SS.speak(u); } catch (e) { slog("speak 例外: " + e.message); }
+  });
+  try { if (SS.paused) SS.resume(); } catch (e) {}
+  clearTimeout(silentTimer);
+  silentTimer = setTimeout(() => {
+    slog(`2.5秒後 started=${started} speaking=${SS.speaking} pending=${SS.pending}`);
+    if (!started) { toast("音声が始まりませんでした。「音声チェック」の結果を送ってください"); try { SS.cancel(); } catch (e) {} }
+  }, 2500);
 }
 // Called directly from a tap: never await before speaking.
 function say(text, rate = 1) { sayMany([text], rate); }
@@ -761,6 +779,23 @@ $("t-cards").addEventListener("click", e => {
   if (card && S.hideEn) card.classList.toggle("peek");
 });
 $("t-hide").onclick = () => { S.hideEn = !S.hideEn; try { localStorage.setItem("cd.hideEn", S.hideEn ? "1" : "0"); } catch (e) {} renderToday(); };
+function diagInfo() {
+  let voices = [];
+  try { voices = SS ? SS.getVoices() : []; } catch (e) {}
+  const en = voices.filter(v => /^en/i.test(v.lang));
+  let framed = "?"; try { framed = window.top !== window.self ? "iframe内" : "トップ"; } catch (e) { framed = "iframe内(別オリジン)"; }
+  return [
+    `端末: ${IOS ? "iPhone/iPad" : "その他"} / ${navigator.userAgent.replace(/^Mozilla\/5.0 /, "").slice(0, 120)}`,
+    `表示: ${framed}`,
+    `speechSynthesis: ${SS ? "あり" : "なし"} / 音声数 ${voices.length}(英語 ${en.length})`,
+    `使う声: ${browserVoice && !IOS ? browserVoice.name + " " + browserVoice.lang : "端末の標準英語音声(en-US)"}`,
+    `Claudeの声(tts): ${S.tts ? "あり" : "なし"}${ttsBroken ? "(失敗済み)" : ""}`,
+    `audioSession: ${navigator.audioSession ? navigator.audioSession.type : "なし"}`,
+    `状態: speaking=${SS && SS.speaking} pending=${SS && SS.pending} paused=${SS && SS.paused}`,
+  ].join("\n");
+}
+$("t-diag").onclick = () => { const pnl = $("t-diagpanel"); pnl.hidden = !pnl.hidden; pickVoice(); $("t-diaginfo").textContent = diagInfo(); $("t-diaglog").textContent = speechLog.join("\n") || "(まだ再生していません)"; };
+$("t-diagplay").onclick = () => { say("Hello! This is a sound test."); setTimeout(() => { $("t-diaginfo").textContent = diagInfo(); }, 3000); };
 $("t-playall").onclick = () => {
   const day = S.days[TODAY]; if (!day) return;
   sayMany(day.patterns.map(p => p.en));
