@@ -243,8 +243,8 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
       <span class="small muted" id="t-readcount"></span>
     </div>
     <div class="panel" id="t-diagpanel" hidden>
-      <div class="toolbar"><div class="eyebrow">音声チェック</div><button class="btn primary small" id="t-diagplay" type="button">テスト再生</button></div>
-      <div class="small muted">「テスト再生」を押して、音が出たかどうかと、この枠のスクリーンショットを送ってください。</div>
+      <div class="toolbar"><div class="eyebrow">音声チェック</div><div class="row"><button class="btn primary small" id="t-diagfile" type="button">音声ファイルで再生</button><button class="btn small" id="t-diagplay" type="button">端末の声で再生</button></div></div>
+      <div class="small muted">ボタンを押して音が出たかどうかと、この枠のスクリーンショットを送ってください。</div>
       <pre id="t-diaginfo" class="diag"></pre>
       <pre id="t-diaglog" class="diag"></pre>
     </div>
@@ -466,10 +466,39 @@ function nativeSay(list, rate) {
     if (!started) { toast("音声が始まりませんでした。「音声チェック」の結果を送ってください"); try { SS.cancel(); } catch (e) {} }
   }, 2500);
 }
+/* Recorded audio (MP3 made for each pattern) plays through an <audio> element,
+   which iPhone allows inside the claude.ai frame; the built-in speech voice is
+   muted there. Speech synthesis stays as the fallback for text with no file. */
+const AUD = new Audio();
+AUD.preload = "auto";
+let audQueue = [], audRate = 1;
+AUD.addEventListener("playing", () => slog("audio playing"));
+AUD.addEventListener("ended", () => {
+  slog("audio end");
+  if (audQueue.length) { AUD.src = audQueue.shift(); AUD.playbackRate = audRate; AUD.play().catch(e => slog("audio次 失敗: " + e.name)); }
+});
+AUD.addEventListener("error", () => { slog("audio error " + (AUD.error && AUD.error.code)); toast("音声ファイルを読み込めませんでした"); });
+function audioFor(text) {
+  for (const d of Object.values(S.days)) for (const p of d.patterns || []) if (p.en === text && p.audio) return p.audio;
+  return null;
+}
+function playUrls(urls, rate) {
+  try { SS && SS.cancel(); } catch (e) {}
+  audRate = rate; audQueue = urls.slice(1);
+  AUD.pause();
+  AUD.src = urls[0];
+  AUD.defaultPlaybackRate = rate; AUD.playbackRate = rate;
+  try { AUD.preservesPitch = true; } catch (e) {}
+  slog(`audio play x${urls.length} rate=${rate}`);
+  const pr = AUD.play();
+  if (pr) pr.catch(e => { slog("audio play 失敗: " + e.name + " " + e.message); toast("音声を再生できませんでした(" + e.name + ")"); });
+}
 // Called directly from a tap: never await before speaking.
 function say(text, rate = 1) { sayMany([text], rate); }
 function sayMany(list, rate = 1) {
   unlockSpeech();
+  const urls = list.map(audioFor);
+  if (urls.every(Boolean)) { playUrls(urls, rate); return; }
   if (S.tts && !IOS && !ttsBroken) {
     S.tts.speak(list.map(text => ({ text, language: "en" })), { rate }).catch(e => {
       if (e && e.code === "stopped") return;
@@ -479,7 +508,7 @@ function sayMany(list, rate = 1) {
   }
   nativeSay(list, rate);
 }
-function stopSay() { try { S.tts && S.tts.stop(); } catch (e) {} try { SS && SS.cancel(); } catch (e) {} }
+function stopSay() { audQueue = []; try { AUD.pause(); } catch (e) {} try { S.tts && S.tts.stop(); } catch (e) {} try { SS && SS.cancel(); } catch (e) {} }
 
 /* voice answers: one-tap mic where the viewer offers it (Chrome / desktop app),
    otherwise the phone keyboard's own dictation key. */
@@ -795,7 +824,8 @@ function diagInfo() {
   ].join("\n");
 }
 $("t-diag").onclick = () => { const pnl = $("t-diagpanel"); pnl.hidden = !pnl.hidden; pickVoice(); $("t-diaginfo").textContent = diagInfo(); $("t-diaglog").textContent = speechLog.join("\n") || "(まだ再生していません)"; };
-$("t-diagplay").onclick = () => { say("Hello! This is a sound test."); setTimeout(() => { $("t-diaginfo").textContent = diagInfo(); }, 3000); };
+$("t-diagfile").onclick = () => { const u = S.meta.audio && S.meta.audio.test; if (!u) { toast("テスト用の音声ファイルがまだありません"); return; } playUrls([u], 1); setTimeout(() => { $("t-diaginfo").textContent = diagInfo(); }, 3000); };
+$("t-diagplay").onclick = () => { nativeSay(["Hello! This is a sound test."], 1); setTimeout(() => { $("t-diaginfo").textContent = diagInfo(); }, 3000); };
 $("t-playall").onclick = () => {
   const day = S.days[TODAY]; if (!day) return;
   sayMany(day.patterns.map(p => p.en));
