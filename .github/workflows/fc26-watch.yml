@@ -63,7 +63,5 @@ jobs:
             echo "No state changes to commit."
           fi
 
-      - name: TEMP -- demo-post current chart-shape picks (format check)
-        env:
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      - name: TEMP -- print sample (unfiltered) display format
         run: python -m fc26_watch._check_price_risers
