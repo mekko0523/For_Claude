@@ -127,7 +127,7 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
 .qja { font-size: 22px; font-weight: 700; line-height: 1.45; }
 .timer { height: 4px; background: var(--g0); border-radius: 4px; overflow: hidden; }
 .timer i { display: block; height: 100%; background: var(--accent); width: 100%; transform-origin: left; }
-.timer.run i { animation: shrink 6s linear forwards; }
+.timer.run i { animation: shrink var(--dur, 12s) linear forwards; }
 @keyframes shrink { to { transform: scaleX(0); } }
 .answer { border-top: 1px dashed var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .answer .en { font-size: 19px; font-family: var(--display); font-weight: 500; }
@@ -192,6 +192,11 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
 .mbar i { display: block; height: 100%; }
 .report ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .diag { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.picker { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-bottom: 2px; }
+.pick { flex: none; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
+.pick.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--g0); border: 1px solid var(--line); }
+.pdot.l1 { background: var(--g1); } .pdot.l2 { background: var(--g2); } .pdot.l3 { background: var(--good); border-color: var(--good); }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; max-width: calc(100% - 32px); }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp 0.8s linear infinite; }
 @keyframes sp { to { transform: rotate(360deg); } }
@@ -224,6 +229,7 @@ textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; co
 <div class="wrap">
 <main>
   <div id="sysbanner"></div>
+  <div id="picker" class="picker" hidden></div>
 
   <!-- TODAY -->
   <section data-view="today" id="v-today">
@@ -350,7 +356,7 @@ const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())
 const parse = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
 const diffDays = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
-const TODAY = iso(new Date());
+let TODAY = iso(new Date());
 const dayNum = s => diffDays(START, s) + 1;
 function planFor(s) {
   const n = Math.max(1, Math.min(90, dayNum(s)));
@@ -584,11 +590,11 @@ Reply with only JSON:
 {"patterns":[{"func":"言いたいこと(日本語・15字以内)","pattern":"As far as I know, ~","meaning":"意味とニュアンス(日本語・40字以内)","en":"As far as I know, the shop is closed on Mondays.","ja":"私の知る限り、その店は月曜休みだよ。","note":"使い分けのコツ(日本語・1文)"}]}`;
 }
 function talkPrompt(t) {
-  const day = S.days[TODAY];
+  const day = S.days[t.date || lessonDate()];
   const targets = day ? day.patterns.map(p => `- ${p.pattern}  (${p.func})`).join("\n") : "";
   const weak = weakCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
   const unused = unusedCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
-  const recent = Object.values(S.days).filter(d => d.date < TODAY).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 3).flatMap(d => d.patterns.map(p => `- ${p.pattern}`)).slice(0, 12).join("\n");
+  const recent = Object.values(S.days).filter(d => d.date < (t.date || TODAY)).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 3).flatMap(d => d.patterns.map(p => `- ${p.pattern}`)).slice(0, 12).join("\n");
   const convo = t.turns.map(x => x.role === "coach" ? `Coach: ${x.text}` : `Learner: ${x.text}`).join("\n");
   const last = t.turns[t.turns.length - 1];
   return `You are a warm, natural English conversation partner and speaking coach for a Japanese adult learner (reads OK, speaking is weak). Your job: chat about their real life and get them to actually USE today's target patterns out loud.
@@ -719,19 +725,58 @@ function route() {
   if (v === "test") renderTest();
   if (v === "talk") renderTalk();
   if (v === "log") renderLog();
+  renderPicker();
   window.scrollTo(0, 0);
 }
 addEventListener("hashchange", route);
 
+/* ---------- lesson day (today's set, or the latest one before it arrives) ---------- */
+function defaultLesson() {
+  if (S.days[TODAY]) return TODAY;
+  const ds = Object.keys(S.days).filter(d => d < TODAY).sort();
+  return ds.length ? ds[ds.length - 1] : TODAY;
+}
+function lessonDate() { return S.pick && S.days[S.pick] ? S.pick : defaultLesson(); }
+const fmtShort = d => { const x = parse(d); return `${x.getMonth() + 1}/${x.getDate()}`; };
+function renderPicker() {
+  const box = $("picker");
+  const v = location.hash.slice(1) || "today";
+  const ds = Object.keys(S.days).filter(d => d <= TODAY).sort().reverse().slice(0, 7);
+  if (v === "log" || !ds.length) { box.hidden = true; return; }
+  const cur = lessonDate();
+  box.hidden = false;
+  box.innerHTML = `<span class="small muted">教材</span>` + ds.map(d => {
+    const lv = level(d);
+    const name = d === TODAY ? "今日" : d === addDays(TODAY, -1) ? "昨日" : fmtShort(d);
+    return `<button class="pick ${d === cur ? "on" : ""}" data-pick="${d}" type="button">${name}<span class="pdot l${lv}"></span></button>`;
+  }).join("");
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-pick]"); if (!b) return;
+  S.pick = b.dataset.pick; S.test = null; S.talk = null;
+  renderAll(); route();
+});
+function checkDate() {
+  const n = iso(new Date());
+  if (n === TODAY) return;
+  TODAY = n; S.pick = null;
+  if (!(S.test && S.test.i < S.test.list.length)) S.test = null;
+  if (!(S.talk && S.talk.busy)) S.talk = null;
+  renderAll(); route();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkDate(); });
+setInterval(checkDate, 30000);
+
 /* ---------- TODAY ---------- */
 function renderToday() {
-  const pl = planFor(TODAY);
-  const day = S.days[TODAY];
-  const p = prog(TODAY);
-  $("daypill").textContent = dayNum(TODAY) > 90 ? `Day ${dayNum(TODAY)} · 修了後` : `Day ${pl.n} / 90`;
+  const LD = lessonDate();
+  const pl = planFor(LD);
+  const day = S.days[LD];
+  const p = prog(LD);
+  $("daypill").textContent = dayNum(LD) > 90 ? `Day ${dayNum(LD)} · 修了後` : `Day ${pl.n} / 90`;
   $("t-week").textContent = `Week ${pl.week} · ${day ? day.theme : pl.theme}`;
   $("t-focus").textContent = day ? day.focus : pl.focus;
-  $("t-date").textContent = `${fmtJa(TODAY)} ・ Lv${(day && day.level) || curLevel().level} ${LEVELS[(day && day.level) || curLevel().level].ja}`;
+  $("t-date").textContent = `${fmtJa(LD)} ・ Lv${(day && day.level) || curLevel().level} ${LEVELS[(day && day.level) || curLevel().level].ja}`;
 
   // alerts: yesterday + missed
   const al = [];
@@ -742,8 +787,10 @@ function renderToday() {
     if (miss.length === 3) al.push(`<div class="banner bad"><div><b>昨日はお休みでした。</b>今日の分を終えたら、記録タブの昨日のパターンを1回聞いて取り戻しましょう。</div></div>`);
     else if (miss.length) al.push(`<div class="banner warn"><div><b>昨日の未完了:${miss.join("・")}</b>。今日はそこから先にやると取り返せます。</div></div>`);
   }
+  if (LD !== TODAY && !S.days[TODAY] && !S.pick) al.push(`<div class="banner info"><div>今日の10パターンは朝7時ごろに届きます。それまでは <b>${LD === addDays(TODAY, -1) ? "昨日" : fmtJa(LD)}</b> の分で練習できます(記録もその日の分になります)。</div></div>`);
+  else if (LD !== TODAY) al.push(`<div class="banner info"><div><b>復習中:</b>${fmtJa(LD)}(Day ${dayNum(LD)})の分です。やった分はその日の記録になるので、やり残しを取り返せます。</div></div>`);
   const streak = calcStreak();
-  if (level(TODAY) === 3) al.push(`<div class="banner good"><div><b>今日のメニュー完了!</b> 連続 <span class="num">${streak.cur}</span> 日。明日の朝7時に新しい10パターンが届きます。</div></div>`);
+  if (LD === TODAY && level(TODAY) === 3) al.push(`<div class="banner good"><div><b>今日のメニュー完了!</b> 連続 <span class="num">${streak.cur}</span> 日。明日の朝7時に新しい10パターンが届きます。</div></div>`);
   $("t-alert").innerHTML = al.join("");
 
   const total = day ? day.patterns.length : 10;
@@ -793,15 +840,16 @@ function renderToday() {
     </article>`).join("");
 }
 $("t-cards").addEventListener("click", e => {
-  const day = S.days[TODAY]; if (!day) return;
+  const LD = lessonDate();
+  const day = S.days[LD]; if (!day) return;
   const find = id => day.patterns.find(p => p.id === id);
   const b = e.target.closest("button");
   if (b && b.dataset.say) { say(find(b.dataset.say).en, 1); return; }
   if (b && b.dataset.slow) { say(find(b.dataset.slow).en, 0.75); return; }
   if (b && b.dataset.read) {
-    const p = prog(TODAY); const set = new Set(p.read || []);
+    const p = prog(LD); const set = new Set(p.read || []);
     set.has(b.dataset.read) ? set.delete(b.dataset.read) : set.add(b.dataset.read);
-    setProg(TODAY, { read: [...set] }).then(() => {});
+    setProg(LD, { read: [...set] }).then(() => {});
     renderToday(); return;
   }
   const card = e.target.closest(".pcard");
@@ -827,36 +875,51 @@ $("t-diag").onclick = () => { const pnl = $("t-diagpanel"); pnl.hidden = !pnl.hi
 $("t-diagfile").onclick = () => { const u = S.meta.audio && S.meta.audio.test; if (!u) { toast("テスト用の音声ファイルがまだありません"); return; } playUrls([u], 1); setTimeout(() => { $("t-diaginfo").textContent = diagInfo(); }, 3000); };
 $("t-diagplay").onclick = () => { nativeSay(["Hello! This is a sound test."], 1); setTimeout(() => { $("t-diaginfo").textContent = diagInfo(); }, 3000); };
 $("t-playall").onclick = () => {
-  const day = S.days[TODAY]; if (!day) return;
+  const day = S.days[lessonDate()]; if (!day) return;
   sayMany(day.patterns.map(p => p.en));
 };
 
 /* ---------- TEST ---------- */
-function buildQueue() {
+function buildQueue(mode = "lesson") {
+  const LD = lessonDate();
   const all = Object.values(S.cards);
-  const reviews = all.filter(c => c.date < TODAY && c.due <= TODAY).sort((a, b) => a.due < b.due ? -1 : 1).slice(0, 20);
-  const fresh = all.filter(c => c.date === TODAY).sort((a, b) => a.id < b.id ? -1 : 1);
+  if (mode === "weak") {
+    const list = [...weakCards(), ...unusedCards()].slice(0, 20);
+    return { reviews: list.length, fresh: 0, list };
+  }
+  const reviews = all.filter(c => c.date !== LD && c.date < TODAY && c.due <= TODAY).sort((a, b) => a.due < b.due ? -1 : 1).slice(0, 20);
+  const fresh = all.filter(c => c.date === LD).sort((a, b) => a.id < b.id ? -1 : 1);
   return { reviews: reviews.length, fresh: fresh.length, list: [...reviews, ...fresh] };
 }
+function timerSec() { try { const v = localStorage.getItem("cd.timer"); return v == null ? 12 : Number(v); } catch (e) { return 12; } }
 function renderTest() {
   const root = $("q-root");
   const t = S.test;
-  const p = prog(TODAY);
+  const LD = lessonDate();
+  const p = prog(LD);
   if (!t) {
     const q = buildQueue();
-    const doneNote = p.test && p.test.done ? `<div class="banner good">今日のテストは完了済み(<span class="num">${p.test.correct}/${p.test.total}</span>)。もう一周しても構いません。</div>` : "";
+    const qw = buildQueue("weak");
+    const ts = timerSec();
+    const doneNote = p.test && p.test.done ? `<div class="banner good">${LD === TODAY ? "今日" : fmtJa(LD) + "の分"}のテストは完了済み(<span class="num">${p.test.correct}/${p.test.total}</span>)。もう一周しても構いません。</div>` : "";
     root.innerHTML = `${doneNote}<div class="panel">
       <div class="eyebrow">瞬間英作文テスト</div>
       <h2 style="font-size:22px">日本語を見て、1〜2秒で英語を<span class="mark">声に出す</span></h2>
-      <div class="muted small">「タップして話す」を押して、青いバーが消えるまで(6秒)に言い始めるのが目標。話した英語をClaudeが判定し、お手本の音声が流れます。言えなかったパターンは翌日にまた出ます。</div>
+      <div class="muted small">日本語を読んで「タップして話す」→ キーボードのマイクで話す。青いバーは話す準備ができてから動き出す目安で、過ぎても減点はありません。話した英語をClaudeが判定し、お手本の音声が流れます。言えなかったパターンは翌日にまた出ます。</div>
+      <div class="row small"><span class="muted">話す時間の目安</span>${[8, 12, 20, 0].map(v => `<button class="pick ${v === ts ? "on" : ""}" data-timer="${v}" type="button">${v ? v + "秒" : "なし"}</button>`).join("")}</div>
       <div class="stats" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-        <div class="stat"><span class="v">${q.fresh}</span><span class="k">今日の新しいパターン</span></div>
+        <div class="stat"><span class="v">${q.fresh}</span><span class="k">${LD === TODAY ? "今日" : fmtShort(LD)}のパターン</span></div>
         <div class="stat"><span class="v">${q.reviews}</span><span class="k">復習(忘れかけ)</span></div>
       </div>
-      ${q.list.length ? `<div><button class="btn primary" id="q-start" type="button">テストを始める(${q.list.length}問)</button></div>` : `<div class="muted">出題できるパターンがまだありません。「今日」タブでパターンを受け取ってください。</div>`}
+      <div class="row">
+        ${q.list.length ? `<button class="btn primary" id="q-start" type="button">テストを始める(${q.list.length}問)</button>` : `<span class="muted">出題できるパターンがまだありません。</span>`}
+        ${qw.list.length ? `<button class="btn" id="q-weak" type="button">苦手・使えていないだけ(${qw.list.length}問)</button>` : ""}
+      </div>
     </div>`;
-    const s = $("q-start");
-    if (s) s.onclick = () => { S.test = { list: q.list.map(c => c.id), i: 0, correct: 0, results: [], phase: "ask", fresh: q.fresh }; renderTest(); };
+    const begin = (qq, mode) => { S.test = { list: qq.list.map(c => c.id), i: 0, correct: 0, results: [], phase: "ask", mode, date: LD }; renderTest(); };
+    const s = $("q-start"); if (s) s.onclick = () => begin(q, "lesson");
+    const w = $("q-weak"); if (w) w.onclick = () => begin(qw, "weak");
+    root.querySelectorAll("[data-timer]").forEach(b => b.onclick = () => { try { localStorage.setItem("cd.timer", b.dataset.timer); } catch (e) {} renderTest(); });
     return;
   }
   if (t.i >= t.list.length) {
@@ -872,7 +935,7 @@ function renderTest() {
   }
   const c = S.cards[t.list[t.i]];
   if (!c) { t.i++; renderTest(); return; }
-  const isNew = c.date === TODAY;
+  const isNew = c.date === t.date;
   const ph = t.phase || "ask";
   const RL = { 2: "すぐ言えた", 1: "あやしい", 0: "出てこない" };
   const g = t.grade;
@@ -894,12 +957,11 @@ function renderTest() {
         <div><button class="btn ghost small" id="q-retry" type="button">もう一度話す</button></div>
       </div>`;
   root.innerHTML = `
-    <div class="row" style="justify-content:space-between"><span class="small muted num">${t.i + 1} / ${t.list.length}</span><span class="chip ${isNew ? "" : "warn"}">${isNew ? "今日" : "復習"}</span></div>
+    <div class="row" style="justify-content:space-between"><span class="small muted num">${t.i + 1} / ${t.list.length}</span><span class="chip ${isNew ? "" : "warn"}">${isNew ? (t.date === TODAY ? "今日" : fmtShort(t.date)) : "復習"}</span></div>
     <div class="progressbar"><i style="width:${(t.i / t.list.length) * 100}%"></i></div>
     <div class="qcard">
       <div class="func small" style="color:var(--accent);font-weight:700">${esc(c.func)}</div>
       <div class="qja">${esc(c.ja)}</div>
-      ${ph === "ask" || ph === "listen" ? `<div class="timer ${ph === "ask" ? "run" : ""}"><i></i></div>` : ""}
       ${ph === "ask" || ph === "listen" ? `<div class="row">
         <button class="btn ghost small" id="q-hint" type="button">ヒント:パターンを見る</button>
         <span id="q-hinttext" class="mark" hidden>${esc(c.pattern)}</span>
@@ -907,6 +969,7 @@ function renderTest() {
       ${ph === "ask" ? `<button class="speak-btn" id="q-speak" type="button" data-mic>${ICON_MIC}<span>タップして話す</span></button>
       <div class="row" style="justify-content:center"><button class="btn ghost small" id="q-giveup" type="button">出てこない・お手本を聞く</button></div>` : ""}
       <div id="q-listen" class="listen" ${ph === "listen" ? "" : "hidden"}>
+        ${timerSec() ? `<div class="timer" id="q-timer" style="--dur:${timerSec()}s"><i></i></div>` : ""}
         <div class="small" id="q-voicehint"></div>
         <textarea id="q-input" class="voicebox" rows="2" placeholder="ここに話した英語が出ます" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
         <div class="row"><button class="btn primary" id="q-judge" type="button">判定する</button><button class="btn ghost" id="q-cancel" type="button">やめる</button></div>
@@ -939,8 +1002,9 @@ function renderTest() {
   if (sp) sp.onclick = () => {
     t.phase = "listen";
     sp.hidden = true; const gu = $("q-giveup"); if (gu) gu.parentElement.hidden = true;
-    root.querySelector(".timer").classList.remove("run");
     $("q-listen").hidden = false;
+    const tm = $("q-timer");
+    if (tm) { tm.classList.add("run"); tm.addEventListener("animationend", () => { const h = $("q-voicehint"); if (h && t.phase === "listen") h.insertAdjacentHTML("beforeend", "<br><span class=\"muted\">目安の時間を過ぎました。そのまま話し終えてOKです。</span>"); }, { once: true }); }
     startVoice(ta, judge, $("q-voicehint"));
   };
   const gu = $("q-giveup");
@@ -953,7 +1017,7 @@ function renderTest() {
     rateCard(c, r);
     t.results.push({ id: c.id, r }); if (r === 2) t.correct++;
     t.i++; t.phase = "ask"; t.said = ""; t.grade = null; t.suggest = null;
-    if (t.i >= t.list.length) setProg(TODAY, { test: { done: true, correct: t.correct, total: t.list.length, at: new Date().toISOString() } });
+    if (t.i >= t.list.length && t.mode === "lesson") setProg(t.date, { test: { done: true, correct: t.correct, total: t.list.length, at: new Date().toISOString() } });
     stopSay(); renderTest(); renderToday();
   };
   const nx = $("q-next"); if (nx) nx.onclick = () => apply(t.suggest);
@@ -962,12 +1026,15 @@ function renderTest() {
 }
 
 /* ---------- TALK ---------- */
-function talkDoc() { return S.talks[TODAY] || { date: TODAY, turns: [], feedback: [] }; }
+function talkDoc(d) { return S.talks[d] || { date: d, turns: [], feedback: [] }; }
 function renderTalk() {
-  const day = S.days[TODAY];
-  const t = S.talk || (S.talk = JSON.parse(JSON.stringify(talkDoc())));
+  const LD = lessonDate();
+  const day = S.days[LD];
+  if (S.talk && S.talk.date !== LD && !S.talk.busy) S.talk = null;
+  const t = S.talk || (S.talk = JSON.parse(JSON.stringify(talkDoc(LD))));
+  if (!t.date) t.date = LD;
   const used = new Set(t.feedback.flatMap(f => (f && f.used) || []).map(s => s.toLowerCase()));
-  $("c-targets").innerHTML = day ? day.patterns.map(p => `<span class="chip ${used.has(p.pattern.toLowerCase()) ? "used" : ""}">${esc(p.pattern)}</span>`).join("") : `<span class="muted small">今日のパターンを受け取ると表示されます</span>`;
+  $("c-targets").innerHTML = day ? day.patterns.map(p => `<span class="chip ${used.has(p.pattern.toLowerCase()) ? "used" : ""}">${esc(p.pattern)}</span>`).join("") : `<span class="muted small">パターンを受け取ると表示されます</span>`;
   $("c-listen").checked = S.listenMode;
 
   const chat = $("c-chat"); let fbi = 0;
@@ -1011,8 +1078,8 @@ async function talkStep() {
     t.turns.push({ role: "coach", text: String(r.reply || "Tell me more about that."), hint: String(r.hint_ja || "") });
     t.busy = false;
     const userTurns = t.turns.filter(x => x.role === "me").length;
-    save(`talks/${TODAY}`, { date: TODAY, turns: t.turns.map(({ role, text, hint }) => ({ role, text, hint: hint || "" })), feedback: t.feedback, updatedAt: new Date().toISOString() });
-    if (userTurns > 0) setProg(TODAY, { talk: { done: userTurns >= 5, turns: userTurns } });
+    save(`talks/${t.date}`, { date: t.date, turns: t.turns.map(({ role, text, hint }) => ({ role, text, hint: hint || "" })), feedback: t.feedback, updatedAt: new Date().toISOString() });
+    if (userTurns > 0) setProg(t.date, { talk: { done: userTurns >= 5, turns: userTurns } });
     renderTalk(); renderToday();
     say(t.turns[t.turns.length - 1].text);
     $("c-chat").lastElementChild && $("c-chat").lastElementChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1138,13 +1205,14 @@ $("l-search").addEventListener("input", renderLib);
 
 /* ---------- render all ---------- */
 function renderAll() {
+  renderPicker();
   renderToday();
   const v = location.hash.slice(1);
   if (v === "log") renderLog();
   if (v === "test" && !S.test) renderTest();
   if (v === "talk" && !S.talk?.busy) { if (!S.talk || !S.talk.turns.length) S.talk = null; renderTalk(); }
   const dot = (tab, on) => { const a = document.querySelector(`nav.tabs a[data-tab="${tab}"]`); const d = a.querySelector(".dot"); if (on && !d) a.insertAdjacentHTML("beforeend", '<span class="dot"></span>'); if (!on && d) d.remove(); };
-  const p = prog(TODAY); const has = !!S.days[TODAY];
+  const LD = lessonDate(); const p = prog(LD); const has = !!S.days[LD];
   dot("test", has && !(p.test && p.test.done));
   dot("talk", has && !(p.talk && p.talk.done));
 }
@@ -1178,9 +1246,10 @@ route(); renderAll();
   sub("cards", ensureCards);
   sub("meta");
   sub("reports");
-  db.doc(`talks/${TODAY}`).onSnapshot(snap => {
-    if (snap.exists) { S.talks[TODAY] = snap.data(); if (!S.talk || (!S.talk.busy && S.talk.turns.length < (snap.data().turns || []).length)) { S.talk = null; if (location.hash === "#talk") renderTalk(); } }
-  }, () => {});
+  sub("talks", () => {
+    const d = S.talk && S.talk.date; const saved = d && S.talks[d];
+    if (saved && !S.talk.busy && S.talk.turns.length < (saved.turns || []).length) S.talk = null;
+  });
 })();
 })();
 </script>
