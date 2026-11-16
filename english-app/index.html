@@ -179,6 +179,9 @@ textarea, input[type="search"] { width: 100%; font: inherit; color: var(--ink); 
 .lib .item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .lib .item .p { font-weight: 700; }
 .lib .item .e { font-size: 13px; color: var(--muted); grid-column: 1 / -1; }
+.mbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--g0); }
+.mbar i { display: block; height: 100%; }
+.report ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; max-width: calc(100% - 32px); }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp 0.8s linear infinite; }
 @keyframes sp { to { transform: rotate(360deg); } }
@@ -256,13 +259,22 @@ textarea, input[type="search"] { width: 100%; font: inherit; color: var(--ink); 
     <div id="c-start"></div>
     <div class="composer" id="c-composer" hidden>
       <button class="icon-btn" id="c-mic" type="button" aria-label="音声で入力" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-      <textarea id="c-input" rows="2" placeholder="英語で答える(マイクでもOK)"></textarea>
+      <textarea id="c-input" rows="2" placeholder="英語で答える(キーボードのマイクで話してもOK)"></textarea>
       <button class="btn primary" id="c-send" type="button">送信</button>
     </div>
   </section>
 
   <!-- LOG -->
   <section data-view="log" id="v-log" hidden>
+    <div class="panel">
+      <div class="toolbar"><div class="eyebrow">習得度</div><span class="chip" id="l-level"></span></div>
+      <div class="small muted" id="l-levelreason"></div>
+      <div class="mbar" id="l-mbar"></div>
+      <div class="legend" id="l-mlegend"></div>
+      <div class="small muted">習得 = テストで定着(4段階以上)し、会話でも自分から使えたパターン。「使えていない」は、テストでは言えるのに会話でまだ使っていないもの。会話の質問で優先して出ます。</div>
+      <div class="stats" id="l-week"></div>
+    </div>
+    <div class="panel" id="l-report" hidden></div>
     <div class="stats" id="l-stats"></div>
     <div class="panel">
       <div class="toolbar"><div class="eyebrow">90日カレンダー</div><div class="legend" id="l-legend"></div></div>
@@ -307,6 +319,13 @@ const WEEKS = [
   ["総仕上げ", ["総復習:意見と推測", "総復習:依頼と同意・反対", "総復習:気持ちと経験", "総復習:比較と相談", "総復習:会話を続ける", "総まとめ:自分の話をする"]],
 ];
 const INTERVALS = [0, 1, 3, 7, 14, 30]; // days by box
+const LEVELS = {
+  1: { ja: "基礎", en: "basic — very common core chunks; example sentences under 10 words; simplest vocabulary." },
+  2: { ja: "標準", en: "standard — common daily and work chunks; example sentences under 14 words; easy vocabulary." },
+  3: { ja: "応用", en: "intermediate — more colloquial variations and phrasal verbs; example sentences up to 18 words." },
+  4: { ja: "上級", en: "upper-intermediate — idiomatic chunks, pairs with different nuance (casual vs polite); natural longer sentences." },
+  5: { ja: "ネイティブ", en: "advanced — idioms, softening and indirect expressions natives use; longer, fully natural sentences." },
+};
 
 /* ---------- date helpers ---------- */
 const pad = n => String(n).padStart(2, "0");
@@ -327,7 +346,7 @@ const fmtJa = s => { const d = parse(s); return `${d.getMonth() + 1}月${d.getDa
 /* ---------- state ---------- */
 const S = {
   db: null, sample: null, tts: null, dict: null,
-  days: {}, progress: {}, cards: {}, talks: {},
+  days: {}, progress: {}, cards: {}, talks: {}, meta: {}, reports: {},
   loaded: { days: false, progress: false, cards: false },
   hideEn: false, listenMode: false,
   test: null, talk: null,
@@ -426,19 +445,30 @@ const ICON_MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 function learnedPatternList(limit = 400) {
   return Object.values(S.days).sort((a, b) => a.date < b.date ? -1 : 1).flatMap(d => d.patterns.map(p => p.pattern)).slice(-limit);
 }
+function curLevel() {
+  const m = S.meta.level || {};
+  return { level: Math.max(1, Math.min(5, Number(m.level) || 2)), mode: m.mode === "down" ? "down" : m.mode === "up" ? "up" : "keep", reason: m.reason_ja || "" };
+}
 function genPrompt(date) {
   const pl = planFor(date);
+  const lv = curLevel();
+  const nNew = lv.mode === "down" ? 7 : 10;
+  const weak = [...weakCards(), ...unusedCards()].slice(0, 6).map(c => `  - ${c.pattern}  (${c.func})`).join("\n");
   return `You are an English speaking coach for a Japanese adult learner. They can read English but struggle to speak: they keep reusing the same few frames ("I'm not sure...", "I would like to..."). The goal is to give them many reusable spoken chunks.
 
-Create today's lesson: 10 NEW speaking patterns (reusable sentence frames / chunks).
+Create today's lesson: 10 speaking patterns (reusable sentence frames / chunks).
 Day ${pl.n} of 90. Week theme: ${pl.theme}. Today's focus: ${pl.focus}.
+Learner level: Lv${lv.level} = ${LEVELS[lv.level].en}
+${nNew === 10 ? "All 10 are NEW patterns for today's focus." : `The first 7 are NEW patterns for today's focus. The last 3 are REVIEW items: for 3 of these struggling patterns, give a different, easier way to say the same thing, and set "review": true and "base": "<the struggling pattern>" on those 3.
+Struggling patterns:
+${weak || "  (none — then make all 10 new)"}`}
 
 Rules:
 - Natural spoken English that native speakers really use in daily life and at work. Mix casual and polite.
 - Each "pattern" is a reusable frame; mark the slot with "~" (e.g. "As far as I know, ~").
-- All 10 must be different from each other and from these already-learned patterns:
+- All must be different from each other and from these already-learned patterns:
 ${learnedPatternList().map(p => "  - " + p).join("\n") || "  (none yet)"}
-- Example sentences: short (under 14 words), about everyday life or work, easy vocabulary.
+- Example sentences follow the level above, about everyday life or work.
 - Japanese fields in natural Japanese.
 
 Reply with only JSON:
@@ -448,6 +478,7 @@ function talkPrompt(t) {
   const day = S.days[TODAY];
   const targets = day ? day.patterns.map(p => `- ${p.pattern}  (${p.func})`).join("\n") : "";
   const weak = weakCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
+  const unused = unusedCards().slice(0, 8).map(c => `- ${c.pattern}`).join("\n");
   const recent = Object.values(S.days).filter(d => d.date < TODAY).sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 3).flatMap(d => d.patterns.map(p => `- ${p.pattern}`)).slice(0, 12).join("\n");
   const convo = t.turns.map(x => x.role === "coach" ? `Coach: ${x.text}` : `Learner: ${x.text}`).join("\n");
   const last = t.turns[t.turns.length - 1];
@@ -456,9 +487,14 @@ function talkPrompt(t) {
 Today's target patterns:
 ${targets}
 
+HIGH PRIORITY — patterns they pass in tests but have never used in conversation (invite these too):
+${unused || "(none)"}
+
 Also try to recycle (older / weak patterns):
 ${weak || "(none)"}
 ${recent}
+
+Learner level: Lv${curLevel().level} = ${LEVELS[curLevel().level].en} Match your question length and vocabulary to it.
 
 Conversation so far:
 ${convo || "(not started)"}
@@ -492,7 +528,7 @@ async function generateToday(btn) {
     if (list.length < 5) throw { code: "bad" };
     const pl = planFor(TODAY);
     const doc = { date: TODAY, day: pl.n, week: pl.week, theme: pl.theme, focus: pl.focus, source: "app", createdAt: new Date().toISOString(),
-      patterns: list.map((p, i) => ({ id: `${TODAY}-${pad(i + 1)}`, func: String(p.func || ""), pattern: String(p.pattern), meaning: String(p.meaning || ""), en: String(p.en), ja: String(p.ja || ""), note: String(p.note || "") })) };
+      patterns: list.map((p, i) => ({ id: `${TODAY}-${pad(i + 1)}`, func: String(p.func || ""), pattern: String(p.pattern), meaning: String(p.meaning || ""), en: String(p.en), ja: String(p.ja || ""), note: String(p.note || ""), ...(p.review ? { review: true, base: String(p.base || "") } : {}) })), level: curLevel().level };
     await save(`days/${TODAY}`, doc);
     ensureCards(); renderAll();
   } catch (e) {
@@ -513,6 +549,44 @@ function ensureCards() {
 }
 function weakCards() {
   return Object.values(S.cards).filter(c => c.lapses >= 2 || (c.reviews > 0 && c.box <= 1 && c.lapses >= 1)).sort((a, b) => b.lapses - a.lapses);
+}
+// 習得 = テストで定着(段階4以上) かつ 会話で1回以上使えた
+function mastery(c) {
+  const used = c.usedCount || 0;
+  if ((c.lapses || 0) >= 2 || (c.reviews > 0 && c.box <= 1 && (c.lapses || 0) >= 1)) return "weak";
+  if (c.box >= 4 && used >= 1) return "mastered";
+  if (c.box >= 3 && used === 0) return "unused";
+  return "learning";
+}
+const MASTERY = {
+  mastered: { ja: "習得", cls: "good", color: "var(--good)" },
+  unused: { ja: "使えていない", cls: "warn", color: "var(--warn)" },
+  learning: { ja: "練習中", cls: "", color: "var(--g2)" },
+  weak: { ja: "苦手", cls: "bad", color: "var(--bad)" },
+};
+function unusedCards() {
+  return Object.values(S.cards).filter(c => mastery(c) === "unused").sort((a, b) => b.box - a.box);
+}
+function markUsed(patterns) {
+  const keys = new Set((patterns || []).map(s => String(s).toLowerCase().trim()));
+  if (!keys.size) return;
+  for (const c of Object.values(S.cards)) {
+    if (!keys.has(c.pattern.toLowerCase().trim())) continue;
+    save(`cards/${c.id}`, { ...c, usedCount: (c.usedCount || 0) + 1, lastUsed: TODAY });
+  }
+}
+function weekStats(end = TODAY) {
+  let correct = 0, total = 0, active = 0, talkDays = 0;
+  const dates = []; for (let i = 6; i >= 0; i--) dates.push(addDays(end, -i));
+  for (const d of dates) {
+    const p = S.progress[d]; if (!p) continue;
+    if (level(d) > 0) active++;
+    if (p.test && p.test.total) { correct += p.test.correct || 0; total += p.test.total; }
+    if (p.talk && p.talk.turns) talkDays++;
+  }
+  const recent = Object.values(S.cards).filter(c => c.date >= dates[0] && c.reviews > 0);
+  const used = recent.filter(c => (c.usedCount || 0) > 0).length;
+  return { acc: total ? correct / total : null, usedRatio: recent.length ? used / recent.length : null, active, talkDays };
 }
 function rateCard(c, r) {
   const n = { ...c, reviews: (c.reviews || 0) + 1, last: TODAY };
@@ -545,7 +619,7 @@ function renderToday() {
   $("daypill").textContent = dayNum(TODAY) > 90 ? `Day ${dayNum(TODAY)} · 修了後` : `Day ${pl.n} / 90`;
   $("t-week").textContent = `Week ${pl.week} · ${day ? day.theme : pl.theme}`;
   $("t-focus").textContent = day ? day.focus : pl.focus;
-  $("t-date").textContent = fmtJa(TODAY);
+  $("t-date").textContent = `${fmtJa(TODAY)} ・ Lv${(day && day.level) || curLevel().level} ${LEVELS[(day && day.level) || curLevel().level].ja}`;
 
   // alerts: yesterday + missed
   const al = [];
@@ -589,7 +663,8 @@ function renderToday() {
   root.innerHTML = day.patterns.map(x => `
     <article class="pcard ${readSet.has(x.id) ? "read" : ""}" data-id="${esc(x.id)}">
       <div style="min-width:0;display:flex;flex-direction:column;gap:4px">
-        <div class="func">${esc(x.func)}</div>
+        <div class="func">${x.review ? '<span class="chip warn">復習の言い換え</span> ' : ""}${esc(x.func)}</div>
+        ${x.review && x.base ? `<div class="small muted">← ${esc(x.base)} の別の言い方</div>` : ""}
         <div class="pat">${esc(x.pattern)}</div>
         <div class="meaning">${esc(x.meaning)}</div>
       </div>
@@ -682,7 +757,7 @@ function renderTest() {
       </div>
       <div class="row" style="align-items:flex-end;flex-wrap:nowrap">
         <button class="icon-btn" id="q-mic" type="button" aria-label="音声で入力" hidden>${ICON_MIC}</button>
-        <textarea id="q-input" rows="2" placeholder="言った英語を残す(任意・マイクでもOK)"></textarea>
+        <textarea id="q-input" rows="2" placeholder="言った英語を残す(任意・キーボードのマイクでもOK)"></textarea>
       </div>
       ${t.revealed ? `
       <div class="answer">
@@ -773,7 +848,7 @@ async function talkStep() {
   t.busy = true; renderTalk();
   try {
     const r = await S.sample.json(talkPrompt(t), { modelTier: "default", cache: false });
-    if (t.turns.length && t.turns[t.turns.length - 1].role === "me") t.feedback.push(r.feedback || null);
+    if (t.turns.length && t.turns[t.turns.length - 1].role === "me") { t.feedback.push(r.feedback || null); if (r.feedback && Array.isArray(r.feedback.used)) markUsed(r.feedback.used); }
     t.turns.push({ role: "coach", text: String(r.reply || "Tell me more about that."), hint: String(r.hint_ja || "") });
     t.busy = false;
     const userTurns = t.turns.filter(x => x.role === "me").length;
@@ -819,7 +894,33 @@ function calcStreak() {
   cur = run;
   return { cur, best };
 }
+function renderMastery() {
+  const lv = curLevel();
+  $("l-level").textContent = `Lv${lv.level} ${LEVELS[lv.level].ja}`;
+  $("l-levelreason").textContent = lv.reason || "毎朝、直近7日のテスト正答率と会話での使用率を見て、レベルを自動で上げ下げします。";
+  const counts = { mastered: 0, unused: 0, learning: 0, weak: 0 };
+  const cards = Object.values(S.cards);
+  cards.forEach(c => counts[mastery(c)]++);
+  const n = cards.length || 1;
+  $("l-mbar").innerHTML = Object.keys(counts).map(k => counts[k] ? `<i style="width:${counts[k] / n * 100}%;background:${MASTERY[k].color}" title="${MASTERY[k].ja} ${counts[k]}"></i>` : "").join("");
+  $("l-mlegend").innerHTML = Object.keys(counts).map(k => `<span><i style="background:${MASTERY[k].color}"></i>${MASTERY[k].ja} <b class="num">${counts[k]}</b></span>`).join("");
+  const w = weekStats();
+  const pct = v => v == null ? "—" : Math.round(v * 100) + "%";
+  $("l-week").innerHTML = [[pct(w.acc), "7日のテスト正答率"], [pct(w.usedRatio), "会話での使用率"], [w.active + "/7", "取り組んだ日"], [w.talkDays + "/7", "会話した日"]]
+    .map(([v, k]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
+  const reps = Object.values(S.reports).sort((a, b) => a.date < b.date ? 1 : -1);
+  const r = reps[0]; const box = $("l-report");
+  if (!r) { box.hidden = true; return; }
+  const li = a => (a || []).length ? `<ul>${a.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<div class="small muted">なし</div>`;
+  box.hidden = false; box.className = "panel report";
+  box.innerHTML = `<div class="toolbar"><div class="eyebrow">週間レポート</div><span class="small muted">${fmtJa(r.date)}</span></div>
+    ${r.summary_ja ? `<div>${esc(r.summary_ja)}</div>` : ""}
+    <div class="small"><b>習得したパターン</b></div>${li(r.mastered)}
+    <div class="small"><b>まだ会話で使えていないパターン</b></div>${li(r.unused)}
+    <div class="small"><b>来週の重点</b></div>${li(r.focus_next)}`;
+}
 function renderLog() {
+  renderMastery();
   const st = calcStreak();
   const cards = Object.values(S.cards);
   const mastered = cards.filter(c => c.box >= 4).length;
@@ -855,8 +956,8 @@ function renderLib() {
   const all = Object.values(S.cards).sort((a, b) => a.id < b.id ? 1 : -1);
   const list = q ? all.filter(c => (c.pattern + " " + c.en + " " + c.ja + " " + c.func).toLowerCase().includes(q)) : all;
   $("l-libcount").textContent = `${list.length}件`;
-  const boxLabel = b => b >= 4 ? '<span class="chip good">定着</span>' : b >= 2 ? '<span class="chip">練習中</span>' : '<span class="chip warn">新しい</span>';
-  $("l-lib").innerHTML = list.slice(0, 200).map(c => `<div class="item"><span class="p">${esc(c.pattern)}</span>${boxLabel(c.box)}<span class="e">${esc(c.en)} / ${esc(c.ja)}</span></div>`).join("") || `<div class="muted small">該当なし</div>`;
+  const label = c => { const m = MASTERY[mastery(c)]; return `<span class="chip ${m.cls}">${m.ja}</span>`; };
+  $("l-lib").innerHTML = list.slice(0, 200).map(c => `<div class="item"><span class="p">${esc(c.pattern)}</span>${label(c)}<span class="e">${esc(c.en)} / ${esc(c.ja)}${c.usedCount ? ` ・会話で${c.usedCount}回使用` : ""}</span></div>`).join("") || `<div class="muted small">該当なし</div>`;
 }
 $("l-search").addEventListener("input", renderLib);
 
@@ -900,6 +1001,8 @@ route(); renderAll();
   sub("days", ensureCards);
   sub("progress");
   sub("cards", ensureCards);
+  sub("meta");
+  sub("reports");
   db.doc(`talks/${TODAY}`).onSnapshot(snap => {
     if (snap.exists) { S.talks[TODAY] = snap.data(); if (!S.talk || (!S.talk.busy && S.talk.turns.length < (snap.data().turns || []).length)) { S.talk = null; if (location.hash === "#talk") renderTalk(); } }
   }, () => {});
