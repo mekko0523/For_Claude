@@ -93,7 +93,7 @@ section[data-view] { display: flex; flex-direction: column; gap: 16px; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .mark { background: linear-gradient(transparent 50%, var(--mark) 50%); color: inherit; padding: 0 2px; }
-textarea, input[type="search"] { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical; }
+textarea, input[type="search"] { width: 100%; font: inherit; font-size: 16px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical; }
 
 /* today */
 .hero { display: flex; flex-direction: column; gap: 6px; }
@@ -131,6 +131,15 @@ textarea, input[type="search"] { width: 100%; font: inherit; color: var(--ink); 
 @keyframes shrink { to { transform: scaleX(0); } }
 .answer { border-top: 1px dashed var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .answer .en { font-size: 19px; font-family: var(--display); font-weight: 500; }
+.speak-btn { align-self: center; display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 999px; width: 132px; height: 132px; justify-content: center; font-weight: 700; font-size: 15px; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.speak-btn svg { width: 40px; height: 40px; }
+.speak-btn:active { transform: scale(.97); }
+.listen { display: flex; flex-direction: column; gap: 8px; }
+.voicebox { font-size: 18px !important; min-height: 64px; }
+.said { font-size: 17px; font-family: var(--display); }
+.btn.big { width: 100%; justify-content: center; min-height: 48px; font-size: 16px; }
+.mic-big { width: 48px; height: 48px; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.mic-big.on { background: var(--bad); border-color: var(--bad); }
 .rate { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .rate button { border-radius: 12px; padding: 10px 6px; font-weight: 700; border: 1px solid var(--line); background: var(--surface); }
 .rate .r2 { border-color: var(--good); color: var(--good); }
@@ -258,7 +267,7 @@ textarea, input[type="search"] { width: 100%; font: inherit; color: var(--ink); 
     <div class="chat" id="c-chat"></div>
     <div id="c-start"></div>
     <div class="composer" id="c-composer" hidden>
-      <button class="icon-btn" id="c-mic" type="button" aria-label="音声で入力" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button class="icon-btn mic-big" id="c-mic" type="button" aria-label="話して答える"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
       <textarea id="c-input" rows="2" placeholder="英語で答える(キーボードのマイクで話してもOK)"></textarea>
       <button class="btn primary" id="c-send" type="button">送信</button>
     </div>
@@ -402,32 +411,78 @@ function pickVoice() {
   } catch (e) {}
 }
 try { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; } catch (e) {}
-async function say(text, rate = 1) {
-  if (S.tts) {
-    try { await S.tts.speak([{ text, language: "en" }], { rate }); return; }
-    catch (e) { if (e && (e.code === "stopped")) return; }
-  }
-  try {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; u.rate = rate * 0.95; if (browserVoice) u.voice = browserVoice;
-    await new Promise(r => { u.onend = r; u.onerror = r; speechSynthesis.speak(u); });
-  } catch (e) { toast("音声を再生できませんでした"); }
+// iPhone / iPad: speech must start synchronously inside the tap, so the
+// device's own voice is used there (Claude's voice is not offered in Safari).
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const SS = (() => { try { return window.speechSynthesis || null; } catch (e) { return null; } })();
+let ttsBroken = false, speechUnlocked = false;
+function unlockSpeech() {
+  if (speechUnlocked || !SS) return;
+  speechUnlocked = true;
+  try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; u.lang = "en-US"; SS.speak(u); } catch (e) {}
 }
-function stopSay() { try { S.tts && S.tts.stop(); } catch (e) {} try { speechSynthesis.cancel(); } catch (e) {} }
+document.addEventListener("touchend", unlockSpeech, { once: true, capture: true });
+document.addEventListener("click", unlockSpeech, { once: true, capture: true });
+function utter(text, rate) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-US"; u.rate = IOS ? Math.max(0.5, rate * 0.9) : rate * 0.95;
+  if (browserVoice) u.voice = browserVoice;
+  return u;
+}
+let silentTimer = null;
+function nativeSay(list, rate) {
+  if (!SS) { toast("この端末では音声を再生できません"); return; }
+  const go = () => {
+    let started = false;
+    list.forEach((text, i) => { const u = utter(text, rate); if (i === 0) u.onstart = () => { started = true; }; SS.speak(u); });
+    try { if (SS.paused) SS.resume(); } catch (e) {}
+    clearTimeout(silentTimer);
+    silentTimer = setTimeout(() => { if (!started && !SS.speaking) toast("音声が出ないときは、消音モード(本体横のスイッチ)と音量を確認してください"); }, 2500);
+  };
+  if (SS.speaking || SS.pending) { SS.cancel(); setTimeout(go, 120); } else go();
+}
+// Called directly from a tap: never await before speaking.
+function say(text, rate = 1) { sayMany([text], rate); }
+function sayMany(list, rate = 1) {
+  unlockSpeech();
+  if (S.tts && !IOS && !ttsBroken) {
+    S.tts.speak(list.map(text => ({ text, language: "en" })), { rate }).catch(e => {
+      if (e && e.code === "stopped") return;
+      ttsBroken = true; nativeSay(list, rate);
+    });
+    return;
+  }
+  nativeSay(list, rate);
+}
+function stopSay() { try { S.tts && S.tts.stop(); } catch (e) {} try { SS && SS.cancel(); } catch (e) {} }
 
-let dictTarget = null, dictBase = "";
-function bindMic(btn, ta) {
-  if (!S.dict) { btn.hidden = true; return; }
-  btn.hidden = false;
-  btn.onclick = () => {
-    if (S.dict.active() && dictTarget === ta) { S.dict.stop().catch(() => {}); return; }
-    dictTarget = ta; dictBase = ta.value ? ta.value.trim() + " " : "";
+/* voice answers: one-tap mic where the viewer offers it (Chrome / desktop app),
+   otherwise the phone keyboard's own dictation key. */
+let dictTarget = null, dictBase = "", dictDone = null;
+function startVoice(ta, onDone, hintEl) {
+  stopSay();
+  if (S.dict) {
+    dictTarget = ta; dictBase = ""; ta.value = ""; dictDone = onDone;
     S.dict.start({ language: "en" }).catch(e => {
-      if (e && e.code === "not_granted") { toast("マイクが許可されていません。入力欄に打ち込んでください"); document.querySelectorAll("[data-mic]").forEach(b => b.hidden = true); }
+      if (e && e.code === "not_granted") { S.dict = null; toast("マイクが許可されていません。キーボードのマイクで話してください"); startVoice(ta, onDone, hintEl); }
       else if (e && e.code !== "stopped") toast("音声入力を開始できませんでした");
     });
+    if (hintEl) hintEl.textContent = "聞いています… 話し終わったら「判定する」";
+    return;
+  }
+  ta.value = "";
+  ta.focus();
+  if (hintEl) hintEl.innerHTML = "キーボードの <b>マイクボタン</b> を押して英語で話してください。話し終えて少し待つと自動で判定します。";
+  let timer = null;
+  ta.oninput = () => {
+    clearTimeout(timer);
+    if (!onDone || !ta.value.trim()) return;
+    timer = setTimeout(() => { ta.blur(); onDone(ta.value.trim()); }, 2600);
   };
-  btn.setAttribute("data-mic", "");
+}
+function stopVoice() {
+  try { if (S.dict && S.dict.active()) return S.dict.stop(); } catch (e) {}
+  return Promise.resolve();
 }
 function initDictation() {
   if (!S.dict) return;
@@ -512,10 +567,13 @@ function gradePrompt(card, said) {
 Japanese: ${card.ja}
 Target pattern: ${card.pattern}
 Model answer: ${card.en}
-Learner said: ${said}
+Learner said (SPOKEN, transcribed by phone speech recognition — ignore punctuation and capitalization): ${said}
 
-Judge meaning and naturalness, not exact wording. Reply with only JSON:
-{"verdict":"good|ok|retry","comment_ja":"日本語で1〜2文のコメント","natural":"a natural version of what the learner said, using the target pattern"}`;
+Judge whether they conveyed the meaning naturally, ideally with the target pattern; do not require the exact model wording.
+"good" = meaning right and natural (target pattern or an equally natural chunk); "ok" = understandable but with a grammar slip, unnatural wording, or the target pattern missing; "retry" = meaning wrong, mostly Japanese, or far off.
+If a transcribed word is odd in a way that suggests mispronunciation (e.g. "rice" for "like", "sink" for "think"), say which word to practice in "pronunciation_ja"; otherwise "".
+Reply with only JSON:
+{"verdict":"good|ok|retry","comment_ja":"日本語で1〜2文のコメント","natural":"a natural version of what the learner said, using the target pattern","pronunciation_ja":""}`;
 }
 
 /* ---------- Claude calls ---------- */
@@ -696,10 +754,9 @@ $("t-cards").addEventListener("click", e => {
   if (card && S.hideEn) card.classList.toggle("peek");
 });
 $("t-hide").onclick = () => { S.hideEn = !S.hideEn; try { localStorage.setItem("cd.hideEn", S.hideEn ? "1" : "0"); } catch (e) {} renderToday(); };
-$("t-playall").onclick = async () => {
+$("t-playall").onclick = () => {
   const day = S.days[TODAY]; if (!day) return;
-  if (S.tts) { S.tts.speak(day.patterns.map(p => ({ text: p.en, language: "en" }))).catch(() => {}); return; }
-  for (const p of day.patterns) await say(p.en);
+  sayMany(day.patterns.map(p => p.en));
 };
 
 /* ---------- TEST ---------- */
@@ -719,7 +776,7 @@ function renderTest() {
     root.innerHTML = `${doneNote}<div class="panel">
       <div class="eyebrow">瞬間英作文テスト</div>
       <h2 style="font-size:22px">日本語を見て、1〜2秒で英語を<span class="mark">声に出す</span></h2>
-      <div class="muted small">青いバーが消えるまで(6秒)に言い始めるのが目標。言えたかどうかは自分で判定します。間違えたパターンは翌日にまた出ます。</div>
+      <div class="muted small">「タップして話す」を押して、青いバーが消えるまで(6秒)に言い始めるのが目標。話した英語をClaudeが判定し、お手本の音声が流れます。言えなかったパターンは翌日にまた出ます。</div>
       <div class="stats" style="grid-template-columns:repeat(2,minmax(0,1fr))">
         <div class="stat"><span class="v">${q.fresh}</span><span class="k">今日の新しいパターン</span></div>
         <div class="stat"><span class="v">${q.reviews}</span><span class="k">復習(忘れかけ)</span></div>
@@ -727,7 +784,7 @@ function renderTest() {
       ${q.list.length ? `<div><button class="btn primary" id="q-start" type="button">テストを始める(${q.list.length}問)</button></div>` : `<div class="muted">出題できるパターンがまだありません。「今日」タブでパターンを受け取ってください。</div>`}
     </div>`;
     const s = $("q-start");
-    if (s) s.onclick = () => { S.test = { list: q.list.map(c => c.id), i: 0, correct: 0, results: [], revealed: false, fresh: q.fresh }; renderTest(); };
+    if (s) s.onclick = () => { S.test = { list: q.list.map(c => c.id), i: 0, correct: 0, results: [], phase: "ask", fresh: q.fresh }; renderTest(); };
     return;
   }
   if (t.i >= t.list.length) {
@@ -744,62 +801,92 @@ function renderTest() {
   const c = S.cards[t.list[t.i]];
   if (!c) { t.i++; renderTest(); return; }
   const isNew = c.date === TODAY;
+  const ph = t.phase || "ask";
+  const RL = { 2: "すぐ言えた", 1: "あやしい", 0: "出てこない" };
+  const g = t.grade;
+  const tone = g && g.verdict === "good" ? "good" : g && g.verdict === "ok" ? "warn" : "bad";
+  const resultHTML = ph !== "result" ? "" : `
+      <div class="answer">
+        ${t.said ? `<div class="small muted">あなたの英語(聞き取り結果)</div><div class="said">${esc(t.said)}</div>` : ""}
+        ${g && !g.error ? `<div class="fb"><div><span class="chip ${tone}">${g.verdict === "good" ? "いいね" : g.verdict === "ok" ? "惜しい" : "もう一度"}</span></div><div>${esc(g.comment_ja)}</div>${g.natural ? `<div><b>自然な言い方:</b> ${esc(g.natural)}</div>` : ""}${g.pronunciation_ja ? `<div><b>発音:</b> ${esc(g.pronunciation_ja)}</div>` : ""}</div>` : ""}
+        <div class="eyebrow">お手本</div>
+        <div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div class="en" style="flex:1;min-width:0">${esc(c.en)}</div><button class="icon-btn" id="q-say" type="button" aria-label="お手本を聞く">${ICON_SPK}</button></div>
+        <div class="small"><span class="mark">${esc(c.pattern)}</span> ・お手本を聞いて、同じように1回まねして言ってから次へ</div>
+        ${t.suggest != null ? `<button class="btn primary big" id="q-next" type="button">次へ(判定:${RL[t.suggest]})</button>
+        <div class="small muted">判定を変える:</div>` : ""}
+        <div class="rate">
+          <button class="r2" data-r="2" type="button">すぐ言えた</button>
+          <button class="r1" data-r="1" type="button">あやしい</button>
+          <button class="r0" data-r="0" type="button">出てこない</button>
+        </div>
+        <div><button class="btn ghost small" id="q-retry" type="button">もう一度話す</button></div>
+      </div>`;
   root.innerHTML = `
     <div class="row" style="justify-content:space-between"><span class="small muted num">${t.i + 1} / ${t.list.length}</span><span class="chip ${isNew ? "" : "warn"}">${isNew ? "今日" : "復習"}</span></div>
     <div class="progressbar"><i style="width:${(t.i / t.list.length) * 100}%"></i></div>
     <div class="qcard">
       <div class="func small" style="color:var(--accent);font-weight:700">${esc(c.func)}</div>
       <div class="qja">${esc(c.ja)}</div>
-      <div class="timer ${t.revealed ? "" : "run"}"><i></i></div>
-      <div class="row">
+      ${ph === "ask" || ph === "listen" ? `<div class="timer ${ph === "ask" ? "run" : ""}"><i></i></div>` : ""}
+      ${ph === "ask" || ph === "listen" ? `<div class="row">
         <button class="btn ghost small" id="q-hint" type="button">ヒント:パターンを見る</button>
         <span id="q-hinttext" class="mark" hidden>${esc(c.pattern)}</span>
+      </div>` : ""}
+      ${ph === "ask" ? `<button class="speak-btn" id="q-speak" type="button" data-mic>${ICON_MIC}<span>タップして話す</span></button>
+      <div class="row" style="justify-content:center"><button class="btn ghost small" id="q-giveup" type="button">出てこない・お手本を聞く</button></div>` : ""}
+      <div id="q-listen" class="listen" ${ph === "listen" ? "" : "hidden"}>
+        <div class="small" id="q-voicehint"></div>
+        <textarea id="q-input" class="voicebox" rows="2" placeholder="ここに話した英語が出ます" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+        <div class="row"><button class="btn primary" id="q-judge" type="button">判定する</button><button class="btn ghost" id="q-cancel" type="button">やめる</button></div>
       </div>
-      <div class="row" style="align-items:flex-end;flex-wrap:nowrap">
-        <button class="icon-btn" id="q-mic" type="button" aria-label="音声で入力" hidden>${ICON_MIC}</button>
-        <textarea id="q-input" rows="2" placeholder="言った英語を残す(任意・キーボードのマイクでもOK)"></textarea>
-      </div>
-      ${t.revealed ? `
-      <div class="answer">
-        <div class="eyebrow">答え</div>
-        <div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div class="en" style="flex:1;min-width:0">${esc(c.en)}</div><button class="icon-btn" id="q-say" type="button" aria-label="答えを聞く">${ICON_SPK}</button></div>
-        <div class="small"><span class="mark">${esc(c.pattern)}</span></div>
-        <div id="q-fb"></div>
-        ${S.sample && t.said ? `<div><button class="btn small" id="q-grade" type="button">Claudeに添削してもらう</button></div>` : ""}
-        <div class="rate">
-          <button class="r2" data-r="2" type="button">すぐ言えた</button>
-          <button class="r1" data-r="1" type="button">あやしい</button>
-          <button class="r0" data-r="0" type="button">出てこない</button>
-        </div>
-      </div>` : `<div><button class="btn primary" id="q-show" type="button">答えを見る</button></div>`}
+      ${ph === "grading" ? `<div class="row muted"><span class="spin"></span> Claudeが判定しています…</div>` : ""}
+      ${resultHTML}
     </div>`;
-  const ta = $("q-input"); ta.value = t.said || "";
-  bindMic($("q-mic"), ta);
-  ta.oninput = () => { t.said = ta.value; };
-  $("q-hint").onclick = () => { $("q-hinttext").hidden = false; $("q-hint").hidden = true; };
-  if (!t.revealed) {
-    $("q-show").onclick = () => { t.said = ta.value.trim(); t.revealed = true; try { S.dict && S.dict.active() && S.dict.stop(); } catch (e) {} renderTest(); say(c.en); };
-    return;
-  }
-  $("q-say").onclick = () => say(c.en);
-  const g = $("q-grade");
-  if (g) g.onclick = async () => {
-    g.disabled = true; g.innerHTML = '<span class="spin"></span> 添削中';
+
+  const ta = $("q-input");
+  const hint = $("q-hint"); if (hint) hint.onclick = () => { $("q-hinttext").hidden = false; hint.hidden = true; };
+  const showResult = () => { t.phase = "result"; renderTest(); say(c.en); };
+  const judge = async (text) => {
+    if (t.phase !== "listen") return;
+    await stopVoice();
+    const said = (ta.value || text || "").trim();
+    if (!said) { toast("聞き取れませんでした。もう一度話してください"); return; }
+    t.said = said;
+    if (!S.sample) { t.grade = null; t.suggest = null; showResult(); return; }
+    t.phase = "grading"; renderTest();
     try {
-      const r = await S.sample.json(gradePrompt(c, t.said), { modelTier: "quick" });
-      const tone = r.verdict === "good" ? "good" : r.verdict === "ok" ? "warn" : "bad";
-      $("q-fb").innerHTML = `<div class="fb"><div><span class="chip ${tone}">${r.verdict === "good" ? "いいね" : r.verdict === "ok" ? "惜しい" : "もう一度"}</span></div><div>${esc(r.comment_ja)}</div>${r.natural ? `<div><b>自然な言い方:</b> ${esc(r.natural)}</div>` : ""}</div>`;
-      g.remove();
-    } catch (e) { g.disabled = false; g.textContent = "添削をやり直す"; toast(e && e.code === "not_granted" ? "Claudeの利用が許可されませんでした" : "添削できませんでした"); }
+      const r = await S.sample.json(gradePrompt(c, said), { modelTier: "quick", cache: false });
+      t.grade = r; t.suggest = r.verdict === "good" ? 2 : r.verdict === "ok" ? 1 : 0;
+    } catch (e) {
+      t.grade = null; t.suggest = null;
+      toast(e && e.code === "not_granted" ? "Claudeの利用が許可されませんでした。自分で判定してください" : "判定できませんでした。自分で判定してください");
+    }
+    showResult();
   };
-  root.querySelectorAll(".rate button").forEach(b => b.onclick = () => {
-    const r = Number(b.dataset.r);
+  const sp = $("q-speak");
+  if (sp) sp.onclick = () => {
+    t.phase = "listen";
+    sp.hidden = true; const gu = $("q-giveup"); if (gu) gu.parentElement.hidden = true;
+    root.querySelector(".timer").classList.remove("run");
+    $("q-listen").hidden = false;
+    startVoice(ta, judge, $("q-voicehint"));
+  };
+  const gu = $("q-giveup");
+  if (gu) gu.onclick = () => { t.said = ""; t.grade = null; t.suggest = 0; showResult(); };
+  const jb = $("q-judge"); if (jb) jb.onclick = () => judge(ta.value);
+  const cb = $("q-cancel"); if (cb) cb.onclick = () => { stopVoice(); ta.blur(); t.phase = "ask"; renderTest(); };
+  if (ph !== "result") return;
+  $("q-say").onclick = () => say(c.en);
+  const apply = r => {
     rateCard(c, r);
     t.results.push({ id: c.id, r }); if (r === 2) t.correct++;
-    t.i++; t.revealed = false; t.said = "";
+    t.i++; t.phase = "ask"; t.said = ""; t.grade = null; t.suggest = null;
     if (t.i >= t.list.length) setProg(TODAY, { test: { done: true, correct: t.correct, total: t.list.length, at: new Date().toISOString() } });
-    renderTest(); renderToday();
-  });
+    stopSay(); renderTest(); renderToday();
+  };
+  const nx = $("q-next"); if (nx) nx.onclick = () => apply(t.suggest);
+  root.querySelectorAll(".rate button").forEach(b => b.onclick = () => apply(Number(b.dataset.r)));
+  $("q-retry").onclick = () => { t.phase = "ask"; t.said = ""; t.grade = null; t.suggest = null; stopSay(); renderTest(); };
 }
 
 /* ---------- TALK ---------- */
@@ -873,6 +960,22 @@ $("c-send").onclick = () => {
   if (t.retry) { t.turns.pop(); t.retry = false; }
   t.turns.push({ role: "me", text }); ta.value = ""; dictBase = "";
   talkStep();
+};
+let micTipShown = false;
+$("c-mic").onclick = () => {
+  const ta = $("c-input");
+  stopSay();
+  if (S.dict) {
+    if (S.dict.active()) { S.dict.stop().catch(() => {}); return; }
+    dictTarget = ta; dictBase = ta.value ? ta.value.trim() + " " : "";
+    S.dict.start({ language: "en" }).catch(e => {
+      if (e && e.code === "not_granted") { S.dict = null; ta.focus(); toast("キーボードのマイクボタンで話してください"); }
+      else if (e && e.code !== "stopped") toast("音声入力を開始できませんでした");
+    });
+    return;
+  }
+  ta.focus();
+  if (!micTipShown) { micTipShown = true; toast("キーボードのマイクボタンを押して話し、終わったら「送信」"); }
 };
 $("c-input").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("c-send").click(); });
 $("c-chat").addEventListener("click", e => {
@@ -983,7 +1086,7 @@ route(); renderAll();
   const [db, sample, tts, dict] = await Promise.all(["db", "sample", "tts", "dictation"].map(n => c.use(n).catch(() => null)));
   S.sample = sample; S.tts = tts; S.dict = dict;
   initDictation();
-  bindMic($("c-mic"), $("c-input"));
+  $("c-mic").setAttribute("data-mic", "");
   if (!db) {
     $("sysbanner").innerHTML = `<div class="banner warn">記録を保存できない環境です。今日の練習はできますが、閉じると記録が消えます。</div>`;
     renderAll(); return;
