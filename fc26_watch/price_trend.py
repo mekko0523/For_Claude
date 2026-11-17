@@ -47,6 +47,7 @@ from .config import (
     LEAK_CONTENT_KEYWORDS,
     LEAK_SIGNAL_KEYWORDS,
     MOMENTUM_BASE_WINDOW_HOURS,
+    MOMENTUM_MAX_PRICE,
     MOMENTUM_MID_WINDOW_HOURS,
     MOMENTUM_MIN_PRICE,
     MOMENTUM_MIN_RISE_PCT,
@@ -124,7 +125,7 @@ def collect_price_trend_items() -> list[Item]:
         price = item.get("currentDbPrice")
         if base_pct is None or price is None:
             continue
-        if base_pct < MOMENTUM_MIN_RISE_PCT or price < MOMENTUM_MIN_PRICE:
+        if base_pct < MOMENTUM_MIN_RISE_PCT or price < MOMENTUM_MIN_PRICE or price > MOMENTUM_MAX_PRICE:
             continue
 
         mid_pct = mid_pct_by_id.get(item["id"])
