@@ -199,6 +199,7 @@ MOMENTUM_MID_WINDOW_HOURS = 12
 MOMENTUM_SHORT_WINDOW_HOURS = 6
 MOMENTUM_MIN_RISE_PCT = 8.0  # ignore noise below this (true, sign-corrected) %
 MOMENTUM_MIN_PRICE = 5000  # ignore cheap fodder cards that swing wildly on thin volume
+MOMENTUM_MAX_PRICE = 200000  # keep picks affordable -- skip anything pricier than this
 
 # Second pick type for 価格トレンド情報 (see price_trend.collect_leak_expectation_items):
 # surfaces already-fetched general news headlines (not the official EVO/SBC
