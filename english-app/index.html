@@ -339,20 +339,98 @@ body.typing .composer { position: static; }
 
 /* ---------- curriculum ---------- */
 const START = "2026-11-16";
-const WEEKS = [
-  ["意見・考えを言う", ["意見の切り出し(I think 以外)", "控えめに意見を言う", "はっきり主張する", "自分の見方・立場を示す", "相手の意見を聞く", "要するに・結論を言う", "応用:カジュアルな意見表現"]],
-  ["確信度・推測", ["わからない・自信がない(I'm not sure 以外)", "たぶん・おそらく", "推測する・〜みたい", "確信している", "記憶があいまい", "可能性を述べる", "応用:ぼかし表現"]],
-  ["希望・予定・意図", ["〜したい(I would like to 以外)", "〜するつもり・予定", "迷っている・検討中", "楽しみにしている", "気が進まない・やりたくない", "目標・夢を語る", "応用:願望のカジュアル表現"]],
-  ["依頼・提案・誘い", ["丁寧にお願いする", "気軽に頼む", "提案する", "誘う", "誘いを受ける・断る", "許可を求める", "応用:相手に配慮した頼み方"]],
-  ["同意・反対", ["強く同意する", "部分的に同意する", "やんわり反対する", "はっきり反対する", "保留・どちらとも言えない", "相手を立てつつ意見する", "応用:議論でのやりとり"]],
-  ["理由・説明・つなぎ", ["理由を言う", "例を挙げる", "順序立てて説明する", "話を付け足す", "逆接・とはいえ", "話題を変える・戻す", "応用:長く話すためのつなぎ"]],
-  ["気持ち・リアクション", ["驚き", "喜び・感動", "がっかり・残念", "イライラ・不満", "共感・相づち", "励ます・慰める", "応用:感想を詳しく言う"]],
-  ["経験・ストーリー", ["経験を話す", "昔の習慣", "出来事を時系列で話す", "オチ・結果を言う", "思い出す・懐かしむ", "後悔・〜すればよかった", "応用:エピソードトーク"]],
-  ["比較・好み・選択", ["好みを言う", "比べる", "どちらでもいい・こだわらない", "おすすめする", "選んだ理由を言う", "条件付きで選ぶ", "応用:迷いを言葉にする"]],
-  ["問題・トラブル・相談", ["問題を伝える", "謝る", "相談する", "アドバイスする", "解決策を出す", "催促・確認する", "応用:困った状況を切り抜ける"]],
-  ["会話を続ける技術", ["聞き返す", "言い直す・言い換える", "言葉が出ないとき", "確認する・要約し返す", "質問を広げる", "時間をかせぐ", "応用:パラフレーズ"]],
-  ["仕事・議論", ["会議で発言する", "進捗・状況を報告する", "優先順位・判断を伝える", "懸念を伝える", "合意形成・まとめ", "フィードバックする", "応用:プレゼン・説明"]],
-  ["総仕上げ", ["総復習:意見と推測", "総復習:依頼と同意・反対", "総復習:気持ちと経験", "総復習:比較と相談", "総復習:会話を続ける", "総まとめ:自分の話をする"]],
+// One business unit per day (day 1 = index 0). Ordered by how often it comes up at work, mixed so neighbouring days differ.
+const CURR = [
+  ["意見", "意見の切り出し(I think 以外)"],
+  ["意見", "控えめに意見を言う"],
+  ["意見", "はっきり主張する"],
+  ["自己紹介", "自己紹介・自分の役割を説明する"],
+  ["会議", "会議を始める・進める"],
+  ["確認", "聞き返す・確認する"],
+  ["依頼", "丁寧にお願いする"],
+  ["調整", "日程を調整する"],
+  ["報告", "進捗を報告する"],
+  ["議論", "賛成する・同意する"],
+  ["雑談", "週末・最近の出来事の雑談"],
+  ["オンライン", "オンライン会議の定番表現"],
+  ["議論", "やんわり反対する"],
+  ["説明", "理由を説明する"],
+  ["調整", "締め切り・期限を話す"],
+  ["問題対応", "問題を報告する"],
+  ["対人", "謝る・お詫びする"],
+  ["議論", "提案する"],
+  ["会議", "要点をまとめる"],
+  ["対人", "感謝を伝える・ねぎらう"],
+  ["確認", "言い換える・説明し直す"],
+  ["確認", "念を押す・合意を確認する"],
+  ["依頼", "角を立てずに断る"],
+  ["判断", "優先順位を話す"],
+  ["説明", "数字・データを説明する"],
+  ["プレゼン", "プレゼンを始める"],
+  ["プレゼン", "話をつなぐ・次に進む"],
+  ["プレゼン", "質問を受ける・答える"],
+  ["確認", "わからないと言う・調べて返す"],
+  ["会議", "会議後のフォローアップ"],
+  ["雑談", "仕事の近況を話す"],
+  ["議論", "懸念・リスクを伝える"],
+  ["判断", "選択肢を比べる"],
+  ["判断", "決定を伝える"],
+  ["交渉", "条件を提示する"],
+  ["交渉", "譲歩する・落としどころを探す"],
+  ["会議", "話に割り込む"],
+  ["会議", "話を戻す・脱線を止める"],
+  ["フィードバック", "良い点を伝える"],
+  ["フィードバック", "改善点を伝える"],
+  ["フィードバック", "フィードバックを受け止める"],
+  ["対人", "手伝いを申し出る"],
+  ["依頼", "助けを求める"],
+  ["指示", "タスクを割り振る"],
+  ["説明", "背景・状況を説明する"],
+  ["報告", "変更を伝える"],
+  ["報告", "遅れを伝える"],
+  ["依頼", "催促する"],
+  ["電話", "電話をかける・受ける"],
+  ["電話", "伝言を残す・頼む"],
+  ["対人", "初対面のあいさつ"],
+  ["雑談", "関係づくり・ネットワーキング"],
+  ["対人", "褒める・お祝いする"],
+  ["雑談", "ランチや飲みに誘う"],
+  ["会議", "会議を締める・次のステップを決める"],
+  ["説明", "例を挙げる"],
+  ["説明", "前提・条件を話す"],
+  ["判断", "見通し・予測を話す"],
+  ["自己紹介", "経験・実績を話す"],
+  ["自己紹介", "強み・得意を話す"],
+  ["計画", "目標を話す"],
+  ["計画", "計画を説明する"],
+  ["説明", "手順を説明する"],
+  ["問題対応", "原因を分析する"],
+  ["問題対応", "解決策を話し合う"],
+  ["会議", "合意をまとめる"],
+  ["議論", "意見が割れたときの進め方"],
+  ["顧客", "クレームに対応する"],
+  ["顧客", "顧客にわかりやすく説明する"],
+  ["交渉", "価格・コストを話す"],
+  ["交渉", "契約・条件を確認する"],
+  ["調整", "社内で根回しする"],
+  ["相談", "上司に相談する"],
+  ["指示", "部下・後輩に指示する"],
+  ["リモート", "リモートワークの連絡"],
+  ["リモート", "チャットで使う口語表現"],
+  ["出張", "出張・移動の会話"],
+  ["雑談", "会食での会話"],
+  ["自己紹介", "自社・自分の仕事を紹介する"],
+  ["雑談", "業界・トレンドを話す"],
+  ["会議", "ブレスト・アイデア出し"],
+  ["議論", "反論に答える"],
+  ["議論", "説得する"],
+  ["会話術", "考える時間をかせぐ"],
+  ["会話術", "丁寧さを使い分ける"],
+  ["対人", "励ます・気づかう"],
+  ["対人", "異動・退職のあいさつ"],
+  ["振り返り", "うまくいったことを話す"],
+  ["振り返り", "次に活かすことを話す"],
+  ["総まとめ", "自分の仕事を5分で話す"],
 ];
 const INTERVALS = [0, 1, 3, 7, 14, 30]; // days by box
 const LEVELS = {
@@ -373,9 +451,8 @@ let TODAY = iso(new Date());
 const dayNum = s => diffDays(START, s) + 1;
 function planFor(s) {
   const n = Math.max(1, Math.min(90, dayNum(s)));
-  const w = Math.min(WEEKS.length - 1, Math.floor((n - 1) / 7));
-  const f = WEEKS[w][1][Math.min(WEEKS[w][1].length - 1, (n - 1) % 7)];
-  return { n, week: w + 1, theme: WEEKS[w][0], focus: f };
+  const [theme, focus] = CURR[n - 1];
+  return { n, week: Math.ceil(n / 7), theme, focus };
 }
 const fmtJa = s => { const d = parse(s); return `${d.getMonth() + 1}月${d.getDate()}日(${"日月火水木金土"[d.getDay()]})`; };
 
@@ -594,20 +671,20 @@ function genPrompt(date) {
   return `You are an English speaking coach for a Japanese adult learner. They can read English but struggle to speak: they keep reusing the same few frames ("I'm not sure...", "I would like to..."). The goal is to give them many reusable spoken chunks.
 
 Create today's lesson: 10 speaking patterns (reusable sentence frames / chunks).
-Day ${pl.n} of 90. Week theme: ${pl.theme}. Today's focus: ${pl.focus}.
+Day ${pl.n} of 90. Category: ${pl.theme}. Today's unit: ${pl.focus}.
 Learner level: Lv${lv.level} = ${LEVELS[lv.level].en}
 ${nNew === 10 ? "All 10 are NEW patterns for today's focus." : `The first 7 are NEW patterns for today's focus. The last 3 are REVIEW items: for 3 of these struggling patterns, give a different, easier way to say the same thing, and set "review": true and "base": "<the struggling pattern>" on those 3.
 Struggling patterns:
 ${weak || "  (none — then make all 10 new)"}`}
 
 Rules:
-- Natural spoken English that native speakers really use in daily life and at work. Mix casual and polite.
+- Business English: natural spoken chunks that native speakers really use at work (meetings, calls, chats with coworkers, clients). Mix casual-professional and polite.
 - Each "pattern" is a reusable frame; mark the slot with "~" (e.g. "As far as I know, ~").
 - All must be different from each other and from these already-learned patterns:
 ${learnedPatternList().map(p => "  - " + p).join("\n") || "  (none yet)"}
-- Example sentences follow the level above, about everyday life or work.
+- Example sentences follow the level above and are set in realistic work situations.
 - Japanese fields in natural Japanese.
-- Also write 10 conversation "questions" (one per pattern, same order): a short, natural question to the learner about their own life, work or opinions that invites them to answer with that pattern. Under 18 words, everyday vocabulary. Give "ja" (natural Japanese translation) and "target" (the pattern text).
+- Also write 10 conversation "questions" (one per pattern, same order): a short, natural question about the learner's own work (their job, team, meetings, projects) or a quick work scenario that invites them to answer with that pattern. Under 18 words, everyday vocabulary. Give "ja" (natural Japanese translation) and "target" (the pattern text).
 
 Reply with only JSON:
 {"questions":[{"id":"q1","en":"What do you think of working from home?","ja":"在宅勤務についてどう思う?","target":"Personally, I feel like ~"}],"patterns":[{"func":"言いたいこと(日本語・15字以内)","pattern":"As far as I know, ~","meaning":"意味とニュアンス(日本語・40字以内)","en":"As far as I know, the shop is closed on Mondays.","ja":"私の知る限り、その店は月曜休みだよ。","note":"使い分けのコツ(日本語・1文)"}]}`;
