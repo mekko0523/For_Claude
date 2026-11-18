@@ -565,15 +565,92 @@ function nativeSay(list, rate) {
 /* Recorded audio (MP3 made for each pattern) plays through an <audio> element,
    which iPhone allows inside the claude.ai frame; the built-in speech voice is
    muted there. Speech synthesis stays as the fallback for text with no file. */
-const AUD = new Audio();
-AUD.preload = "auto";
-let audQueue = [], audRate = 1;
-AUD.addEventListener("playing", () => slog("audio playing"));
-AUD.addEventListener("ended", () => {
-  slog("audio end");
-  if (audQueue.length) { AUD.src = audQueue.shift(); AUD.playbackRate = audRate; AUD.play().catch(e => slog("audio次 失敗: " + e.name)); }
-});
-AUD.addEventListener("error", () => { slog("audio error " + (AUD.error && AUD.error.code)); toast("音声ファイルを読み込めませんでした"); });
+/* Audio clips: each one is downloaded once and kept in memory as a blob: URL,
+   so repeated taps never hit the network again. One <audio> element is reused;
+   if it gets stuck or errors, it is replaced by a fresh one and the clip retried. */
+const audCache = new Map();           // asset url -> blob: url (string) or pending Promise
+function prefetchAudio(url) {
+  if (!url || audCache.has(url)) return;
+  const job = (async () => {
+    for (let i = 0; i < 3; i++) {
+      try {
+        const r = await fetch(url, { credentials: "same-origin" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const b = await r.blob();
+        const obj = URL.createObjectURL(new Blob([b], { type: "audio/mp4" }));
+        audCache.set(url, obj);
+        return obj;
+      } catch (e) {
+        slog(`先読み失敗(${i + 1}) ${e.message}`);
+        await new Promise(res => setTimeout(res, 800 * (i + 1)));
+      }
+    }
+    audCache.delete(url);
+    return null;
+  })();
+  audCache.set(url, job);
+}
+const prefetchedDays = new Set();
+function prefetchDay(date) {
+  const d = S.days[date];
+  if (!d || prefetchedDays.has(date)) return;
+  prefetchedDays.add(date);
+  [...(d.patterns || []), ...(d.questions || [])].forEach(x => prefetchAudio(x.audio));
+}
+let blobBlocked = false;   // set if this viewer refuses blob: audio; then play from the server
+function srcFor(url) { const v = audCache.get(url); return !blobBlocked && typeof v === "string" ? v : url; }
+
+let AUD = null, audQueue = [], audRate = 1, audCur = null, audWatch = null, audRetried = false;
+function makeAudio() {
+  if (AUD) { try { AUD.pause(); AUD.removeAttribute("src"); AUD.load(); } catch (e) {} }
+  const a = new Audio();
+  a.preload = "auto";
+  a.addEventListener("playing", () => { clearTimeout(audWatch); slog("audio playing"); });
+  a.addEventListener("ended", () => {
+    slog("audio end");
+    if (a !== AUD) return;
+    if (audQueue.length) startClip(audQueue.shift(), false);
+  });
+  a.addEventListener("error", () => {
+    if (a !== AUD) return;
+    slog("audio error " + (a.error && a.error.code) + " src=" + (a.currentSrc || "").slice(0, 30));
+    recover("error");
+  });
+  AUD = a;
+  return a;
+}
+makeAudio();
+function recover(why) {
+  clearTimeout(audWatch);
+  if (!audCur || audRetried) { if (why !== "abort") toast("音声を再生できませんでした。もう一度🔊を押してください"); return; }
+  audRetried = true;
+  if (AUD && (AUD.currentSrc || AUD.src || "").startsWith("blob:") && why === "error") { blobBlocked = true; slog("blob再生不可→サーバーから再生"); }
+  // drop a possibly bad cached copy and play straight from the server on a fresh element
+  const v = audCache.get(audCur); if (typeof v === "string") { try { URL.revokeObjectURL(v); } catch (e) {} audCache.delete(audCur); }
+  slog("再試行 (" + why + ")");
+  makeAudio();
+  startClip(audCur, true, true);
+}
+function startClip(url, first, direct) {
+  audCur = url;
+  if (first) audRetried = !!direct;
+  const a = AUD;
+  try { a.pause(); } catch (e) {}
+  a.src = direct ? url : srcFor(url);
+  a.defaultPlaybackRate = audRate; a.playbackRate = audRate;
+  try { a.preservesPitch = true; } catch (e) {}
+  const pr = a.play();
+  if (pr) pr.catch(e => {
+    if (a !== AUD) return;
+    if (e.name === "AbortError") { slog("audio 中断(次の再生へ)"); return; }
+    slog("audio play 失敗: " + e.name + " " + e.message);
+    if (e.name === "NotAllowedError") { toast("もう一度🔊を押してください"); return; }
+    recover(e.name);
+  });
+  clearTimeout(audWatch);
+  audWatch = setTimeout(() => { if (a === AUD && a.paused && a.currentTime === 0) { slog("5秒たっても再生されない"); recover("stall"); } }, 5000);
+  prefetchAudio(url);
+}
 function audioFor(text) {
   for (const d of Object.values(S.days)) for (const p of [...(d.patterns || []), ...(d.questions || [])]) if (p.en === text && p.audio) return p.audio;
   return null;
@@ -581,13 +658,8 @@ function audioFor(text) {
 function playUrls(urls, rate) {
   try { SS && SS.cancel(); } catch (e) {}
   audRate = rate; audQueue = urls.slice(1);
-  AUD.pause();
-  AUD.src = urls[0];
-  AUD.defaultPlaybackRate = rate; AUD.playbackRate = rate;
-  try { AUD.preservesPitch = true; } catch (e) {}
-  slog(`audio play x${urls.length} rate=${rate}`);
-  const pr = AUD.play();
-  if (pr) pr.catch(e => { slog("audio play 失敗: " + e.name + " " + e.message); toast("音声を再生できませんでした(" + e.name + ")"); });
+  slog(`audio play x${urls.length} rate=${rate} cached=${urls.filter(u => typeof audCache.get(u) === "string").length}`);
+  startClip(urls[0], true, false);
 }
 // Called directly from a tap: never await before speaking.
 function say(text, rate = 1) { sayMany([text], rate); }
@@ -604,7 +676,7 @@ function sayMany(list, rate = 1) {
   }
   nativeSay(list, rate);
 }
-function stopSay() { audQueue = []; try { AUD.pause(); } catch (e) {} try { S.tts && S.tts.stop(); } catch (e) {} try { SS && SS.cancel(); } catch (e) {} }
+function stopSay() { audQueue = []; clearTimeout(audWatch); try { AUD.pause(); } catch (e) {} try { S.tts && S.tts.stop(); } catch (e) {} try { SS && SS.cancel(); } catch (e) {} }
 
 /* While the phone keyboard is open, free the sticky header and scroll the
    prompt + answer box to the top of what is still visible. */
@@ -1354,6 +1426,7 @@ $("l-search").addEventListener("input", renderLib);
 /* ---------- render all ---------- */
 function renderAll() {
   renderPicker();
+  try { prefetchDay(lessonDate()); } catch (e) {}
   renderToday();
   const v = location.hash.slice(1);
   if (v === "log") renderLog();
