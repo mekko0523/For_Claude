@@ -32,6 +32,7 @@
   <main id="log" class="log" aria-live="polite">
     <p id="empty" class="empty">「開始」を押して、相手に話してもらってください。<br>聞こえた英語と、あなたが読み上げる返事の候補がここに出ます。</p>
     <div id="live" class="turn them live" hidden><div class="en"></div><div class="ja"></div></div>
+    <button id="jumpBtn" class="jump-btn" type="button" hidden>⬇ 最新</button>
   </main>
 
   <section class="suggest" aria-label="返答候補">
@@ -108,6 +109,7 @@
         <h2 id="histTitle">会話の記録</h2>
         <button id="histClose" class="chip" type="button">閉じる</button>
       </div>
+      <button id="histDiagNow" class="chip" type="button">🩺 今の会話の診断ログを送る</button>
       <div id="histList" class="hist-list"></div>
       <div id="histView" hidden>
         <div id="histUsage" class="hist-usage"></div>

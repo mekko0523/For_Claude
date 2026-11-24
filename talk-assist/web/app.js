@@ -97,6 +97,7 @@ const histText = $("histText");
 const histUsage = $("histUsage");
 const usageEl = $("usage");
 const histTitle = $("histTitle");
+const jumpBtn = $("jumpBtn");
 
 // ===== 状態 =====
 let state = "idle";              // idle | connecting | live
@@ -111,6 +112,8 @@ let uttFinal = "";               // 話し中の発言の確定部分
 let uttJa = "";                  // 話し中の発言の和訳(確定部分)
 let uttStarted = false;          // 前の発言の区切りのあと、次の発言の原文が届き始めたか
 let liveText = "";
+let followLog = true;            // 会話ログを最新に合わせて動かすか(上にスクロールして読んでいる間は動かさない)
+let composing = false;           // 日本語入力の変換中(変換を確定する Enter を「送る」と間違えないため)
 let heard = [];                  // 聞こえた発言と時刻 [{ at, who, en }](直前30秒を取り出すため。相づちも含む)
 let cardLockUntil = 0;           // 押して出した返答案を守る期限(待っている間の「えーっと」などで消さない)
 const prefetch = { job: null, key: "", timer: null, lastAt: 0, blockedUntil: 0 };               // 話している途中の英語(💬 を押したときは、これも返答案作りに使う)
@@ -166,13 +169,26 @@ for (const box of [profileInput, memoryInput]) {
 }
 // 💬: ここまでの話(相手が話している途中ならその分も)を踏まえた返答案を作る
 regenBtn.addEventListener("click", () => requestSuggestions({ reason: "button" }));
+intentInput.addEventListener("compositionstart", () => { composing = true; });
+intentInput.addEventListener("compositionend", () => { composing = false; });
+intentInput.addEventListener("keydown", (e) => {
+  // 変換を確定する Enter では送らない(確定したあとの Enter / ➤ で送る)
+  if (e.key === "Enter" && (e.isComposing || composing || e.keyCode === 229)) e.preventDefault();
+});
 intentForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const intent = intentInput.value.trim();
+  diag("intentSubmit", { intent, composing });
   if (!intent) return;
   intentInput.blur();
   requestSuggestions({ intent, reason: "intent" });
 });
+logEl.addEventListener("scroll", () => {
+  followLog = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  jumpBtn.hidden = followLog;
+}, { passive: true });
+jumpBtn.addEventListener("click", () => scrollToBottom(true));
+$("histDiagNow").addEventListener("click", () => sendDiag(conv));
 settings.addEventListener("close", saveSettings);
 showJa.addEventListener("change", applyShowJa);
 document.addEventListener("visibilitychange", onVisibility);
@@ -1105,7 +1121,7 @@ function addTurn({ who, en, ja = "", spk: label = null, db = null, conn = null }
   turns.push(t);
   if (turns.length > MAX_TURNS) {
     const old = turns.shift();
-    logEl.querySelector(`[data-id="${old.id}"]`)?.remove();
+    removeKeepingView(logEl.querySelector(`[data-id="${old.id}"]`));
   }
   if (turns.length === 1) conv.scene = sceneText();
   saveTurns();
@@ -1384,9 +1400,20 @@ function updateEmpty() {
   emptyEl.hidden = turns.length > 0 || !liveEl.hidden;
 }
 
+// 最新が見える位置にいるときだけ下まで動かす(上にスクロールして読んでいるときは動かさない)
 function scrollToBottom(force = false) {
-  const near = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 160;
-  if (force || near) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+  if (force) followLog = true;
+  if (!followLog) return;
+  requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+}
+
+// 会話が上限の数を超えて一番古い発言を消すとき、読んでいる場所がずれないよう、消した分だけ戻す
+function removeKeepingView(node) {
+  if (!node) return;
+  const next = node.nextElementSibling;
+  const before = next?.getBoundingClientRect().top;
+  node.remove();
+  if (!followLog && next) logEl.scrollTop += next.getBoundingClientRect().top - before;
 }
 
 // ===== 画面の状態 =====
