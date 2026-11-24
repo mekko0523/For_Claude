@@ -10,6 +10,7 @@ from .config import (
     CATEGORY_EA_OFFICIAL,
     CATEGORY_EVO,
     CATEGORY_PLAYER_INFO,
+    CATEGORY_PRICE_TREND,
     CATEGORY_TREND,
     CATEGORY_UPDATE_NEWS,
 )
@@ -29,6 +30,7 @@ NEWS_CHANNELS = [
     CATEGORY_PLAYER_INFO,
     CATEGORY_EA_OFFICIAL,
     CATEGORY_TREND,
+    CATEGORY_PRICE_TREND,
 ]
 
 RECRUIT_CATEGORY = "対戦・チームメイト募集"
@@ -91,6 +93,11 @@ TOPICS: dict[str, str] = {
     CATEGORY_TREND: (
         "X（旧Twitter）などでFC27関連の話題になっている投稿を、運営が手動でピックアップして"
         "共有するチャンネルです（Botによる自動投稿ではありません）。"
+    ),
+    CATEGORY_PRICE_TREND: (
+        "fut.ggの価格モメンタムデータから、Botが値上がり傾向の選手カードを自動で検出・投稿する"
+        "専用チャンネルです。手動での書き込みはできません。あくまで値動きの参考情報であり、"
+        "購入の最終判断はご自身でお願いします。"
     ),
     "クラブ": _RECRUIT_TOPIC.format(mode="クラブ"),
     "グラウンズ": _RECRUIT_TOPIC.format(mode="グラウンズ"),

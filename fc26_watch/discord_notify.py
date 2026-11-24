@@ -95,7 +95,12 @@ def send_discord_notification(items: list[Item]) -> None:
         for item in cat_items:
             # Title is translated to Japanese for readability; the link
             # itself always points at the original (untranslated) article.
-            lines.append(f"- [{translate_to_japanese(item.title)}](<{item.url}>)")
+            # Discord doesn't render `[text](url)` masked links as tappable
+            # in plain message content (only in embeds) -- it just shows the
+            # literal brackets. A bare URL (wrapped in <> to suppress the
+            # auto-embed preview card) is always auto-linked, so put it on
+            # its own line instead.
+            lines.append(f"- {translate_to_japanese(item.title)}\n  <{item.url}>")
 
         post_chunked_message(channel_id, lines)
         log.info("Posted %d item(s) to Discord channel %s", len(cat_items), category)
